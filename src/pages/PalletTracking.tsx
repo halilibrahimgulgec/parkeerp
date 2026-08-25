@@ -71,7 +71,7 @@ export default function PalletTracking() {
   const [reconSite, setReconSite] = useState('');
   const [reconStartDate, setReconStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [reconEndDate, setReconEndDate] = useState(new Date().toISOString().split('T')[0]);
-  const [reconProducts, setReconProducts] = useState<{ name: string; quantity: number; unit: string }[]>([]);
+  const [reconProducts, setReconProducts] = useState<{ name: string; quantity: number; unit: string; pallets: number }[]>([]);
   const [reconPallets, setReconPallets] = useState<Record<string, { opening: number; sent: number; returned: number; ending: number }>>({
     tahta: { opening: 0, sent: 0, returned: 0, ending: 0 },
     sevkiyat: { opening: 0, sent: 0, returned: 0, ending: 0 },
@@ -105,7 +105,7 @@ export default function PalletTracking() {
     try {
       // 1. Shipped products
       const shipQuery = supabase.from('shipments')
-        .select('id, shipment_items(product_id, m2, unit, products(name))')
+        .select('id, shipment_items(product_id, pallets, m2, unit, products(name))')
         .eq('customer_id', reconCustomer)
         .gte('shipment_date', reconStartDate)
         .lte('shipment_date', reconEndDate);
@@ -116,7 +116,7 @@ export default function PalletTracking() {
       
       const { data: shipmentsData } = await shipQuery;
 
-      const productMap: Record<string, { name: string; quantity: number; unit: string }> = {};
+      const productMap: Record<string, { name: string; quantity: number; unit: string; pallets: number }> = {};
       shipmentsData?.forEach(s => {
         s.shipment_items?.forEach((item: any) => {
           const key = `${item.product_id}-${item.unit}`;
@@ -124,10 +124,12 @@ export default function PalletTracking() {
             productMap[key] = {
               name: item.products?.name || 'Bilinmeyen Ürün',
               quantity: 0,
-              unit: item.unit === 'm2' ? 'm²' : item.unit === 'adet' ? 'Adet' : item.unit === 'metre' ? 'Metre' : item.unit
+              unit: item.unit === 'm2' ? 'm²' : item.unit === 'adet' ? 'Adet' : item.unit === 'metre' ? 'Metre' : item.unit,
+              pallets: 0
             };
           }
           productMap[key].quantity += item.m2 || 0;
+          productMap[key].pallets += item.pallets || 0;
         });
       });
       setReconProducts(Object.values(productMap));
@@ -792,19 +794,21 @@ export default function PalletTracking() {
                   <table className="w-full text-xs text-left">
                     <thead>
                       <tr className="text-slate-500 bg-slate-50 border-b border-slate-200 font-medium">
-                        <th className="px-4 py-2 w-3/4">Ürün Adı</th>
+                        <th className="px-4 py-2 w-1/2">Ürün Adı</th>
+                        <th className="px-4 py-2 text-right w-1/4">Sevk Edilen Palet</th>
                         <th className="px-4 py-2 text-right w-1/4">Toplam Sevk Miktarı</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {reconProducts.length === 0 ? (
                         <tr>
-                          <td colSpan={2} className="px-4 py-4 text-center text-slate-400">Bu dönemde sevk edilmiş ürün bulunmamaktadır.</td>
+                          <td colSpan={3} className="px-4 py-4 text-center text-slate-400">Bu dönemde sevk edilmiş ürün bulunmamaktadır.</td>
                         </tr>
                       ) : (
                         reconProducts.map((p, i) => (
                           <tr key={i} className="hover:bg-slate-50/30">
                             <td className="px-4 py-2 font-medium text-slate-800">{p.name}</td>
+                            <td className="px-4 py-2 text-right font-semibold text-slate-600">{p.pallets} adet</td>
                             <td className="px-4 py-2 text-right font-bold text-slate-700">{p.quantity.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {p.unit}</td>
                           </tr>
                         ))
