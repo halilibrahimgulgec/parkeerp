@@ -18,6 +18,7 @@ interface ShipmentFormData {
   logistics_cost: number;
   shipment_date: string;
   notes: string;
+  pallet_type: 'tahta' | 'sevkiyat' | 'uretim';
   items: { product_id: string; pallets: number; m2: number; unit: string }[];
 }
 
@@ -34,6 +35,7 @@ const EMPTY_FORM: ShipmentFormData = {
   logistics_cost: 0,
   shipment_date: new Date().toISOString().split('T')[0],
   notes: '',
+  pallet_type: 'sevkiyat',
   items: [{ product_id: '', pallets: 0, m2: 0, unit: 'm2' }],
 };
 
@@ -58,11 +60,27 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
     logistics_cost: initial.logistics_cost,
     shipment_date: initial.shipment_date,
     notes: initial.notes || '',
+    pallet_type: 'sevkiyat',
     items: [],
   } : { ...EMPTY_FORM });
   const [sites, setSites] = useState<Site[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (initial) {
+      supabase.from('pallet_transactions')
+        .select('pallet_type')
+        .eq('shipment_id', initial.id)
+        .eq('transaction_type', 'sent')
+        .maybeSingle()
+        .then(({ data }) => {
+          if (data) {
+            setForm(f => ({ ...f, pallet_type: data.pallet_type as any }));
+          }
+        });
+    }
+  }, [initial]);
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
 
   useEffect(() => {
@@ -148,9 +166,27 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
       notes: form.notes,
     };
 
+    const totalPallets = form.items.reduce((s, i) => s + (Number(i.pallets) || 0), 0);
+
     if (initial) {
       const { error: shipErr } = await supabase.from('shipments').update(shipPayload).eq('id', initial.id);
       if (shipErr) { setError(shipErr.message); setSaving(false); return; }
+
+      // Update pallet transaction
+      await supabase.from('pallet_transactions').delete().eq('shipment_id', initial.id);
+      if (totalPallets > 0) {
+        await supabase.from('pallet_transactions').insert({
+          date: form.shipment_date,
+          customer_id: form.customer_id,
+          site_id: form.site_id || null,
+          shipment_id: initial.id,
+          transaction_type: 'sent',
+          pallet_type: form.pallet_type,
+          quantity: totalPallets,
+          notes: `${form.invoice_no} no'lu sevkiyat ile gönderildi.`,
+          created_by: user?.id,
+        });
+      }
     } else {
       const { data: shipData, error: shipErr } = await supabase.from('shipments').insert({
         ...shipPayload, status: 'completed', created_by: user?.id,
@@ -166,6 +202,21 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
       }));
       const { error: itemsErr } = await supabase.from('shipment_items').insert(itemsToInsert);
       if (itemsErr) { setError(itemsErr.message); setSaving(false); return; }
+
+      // Insert new pallet transaction
+      if (totalPallets > 0) {
+        await supabase.from('pallet_transactions').insert({
+          date: form.shipment_date,
+          customer_id: form.customer_id,
+          site_id: form.site_id || null,
+          shipment_id: shipData.id,
+          transaction_type: 'sent',
+          pallet_type: form.pallet_type,
+          quantity: totalPallets,
+          notes: `${form.invoice_no} no'lu sevkiyat ile gönderildi.`,
+          created_by: user?.id,
+        });
+      }
     }
 
     setSaving(false);
@@ -207,7 +258,7 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Araç Plaka *</label>
           <input type="text" value={form.vehicle_plate} onChange={e => setForm(f => ({ ...f, vehicle_plate: e.target.value.toUpperCase() }))}
@@ -219,6 +270,15 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
           <input type="text" value={form.driver_name} onChange={e => setForm(f => ({ ...f, driver_name: e.target.value }))}
             className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
             placeholder="Ad Soyad" />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Palet Tipi *</label>
+          <select value={form.pallet_type} onChange={e => setForm(f => ({ ...f, pallet_type: e.target.value as any }))}
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400" required>
+            <option value="sevkiyat">Sevkiyat Paleti</option>
+            <option value="tahta">Tahta Palet</option>
+            <option value="uretim">Üretim Paleti</option>
+          </select>
         </div>
       </div>
 

@@ -11,8 +11,9 @@ import Costs from './pages/Costs';
 import Definitions from './pages/Definitions';
 import Reports from './pages/Reports';
 import AdminUsers from './pages/AdminUsers';
+import PalletTracking from './pages/PalletTracking';
 
-type Page = 'dashboard' | 'production' | 'shipment' | 'costs' | 'definitions' | 'reports' | 'admin_users';
+type Page = 'dashboard' | 'production' | 'shipment' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking';
 
 function AppContent() {
   const { user, loading, pendingApproval } = useAuth();
@@ -60,6 +61,7 @@ function AppContent() {
     definitions: <Definitions />,
     reports: <Reports />,
     admin_users: <AdminUsers />,
+    pallet_tracking: <PalletTracking />,
   };
 
   return (

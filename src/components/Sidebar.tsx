@@ -1,10 +1,10 @@
 import { useAuth } from '../contexts/AuthContext';
 import {
   LayoutDashboard, Factory, Truck, DollarSign, Package,
-  BarChart3, LogOut, ChevronRight, ShieldCheck, Users
+  BarChart3, LogOut, ChevronRight, ShieldCheck, Users, Boxes
 } from 'lucide-react';
 
-type Page = 'dashboard' | 'production' | 'shipment' | 'costs' | 'definitions' | 'reports' | 'admin_users';
+type Page = 'dashboard' | 'production' | 'shipment' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking';
 
 interface SidebarProps {
   currentPage: Page;
@@ -30,6 +30,7 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
     { id: 'dashboard' as Page, label: 'Dashboard', icon: LayoutDashboard, access: true },
     { id: 'production' as Page, label: 'Üretim', icon: Factory, access: isFieldManager() },
     { id: 'shipment' as Page, label: 'Sevkiyat / Kantar', icon: Truck, access: isWeighbridge() },
+    { id: 'pallet_tracking' as Page, label: 'Palet Takibi', icon: Boxes, access: true },
     { id: 'costs' as Page, label: 'Maliyet Giderleri', icon: DollarSign, access: isAdmin() },
     { id: 'definitions' as Page, label: 'Tanımlamalar', icon: Package, access: isAdmin() },
     { id: 'reports' as Page, label: 'Raporlar', icon: BarChart3, access: true },

@@ -1,7 +1,7 @@
 import { ReactNode } from 'react';
 import Sidebar from './Sidebar';
 
-type Page = 'dashboard' | 'production' | 'shipment' | 'costs' | 'definitions' | 'reports' | 'admin_users';
+type Page = 'dashboard' | 'production' | 'shipment' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking';
 
 interface LayoutProps {
   children: ReactNode;
