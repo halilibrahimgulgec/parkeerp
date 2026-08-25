@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { ProductionEntry, Product } from '../types';
 import Modal from '../components/Modal';
-import { Plus, Factory, Search, Filter, Calendar, CreditCard as Edit2, AlertCircle } from 'lucide-react';
+import { Plus, Factory, Search, Filter, Calendar, CreditCard as Edit2, AlertCircle, Trash2 } from 'lucide-react';
 
 interface ProductionFormData {
   date: string;
@@ -193,6 +193,7 @@ export default function Production() {
   const [editEntry, setEditEntry] = useState<ProductionEntry | undefined>();
   const [search, setSearch] = useState('');
   const [filterDate, setFilterDate] = useState('');
+  const [deleting, setDeleting] = useState<string | undefined>(undefined);
 
   const load = async () => {
     setLoading(true);
@@ -218,6 +219,20 @@ export default function Production() {
 
   const totalProduced = filtered.reduce((s, e) => s + e.net_m2, 0);
   const totalWaste = filtered.reduce((s, e) => s + e.waste_m2, 0);
+
+  const handleDelete = async (entry: ProductionEntry) => {
+    if (!confirm(`${entry.products?.name} için ${entry.date} tarihli üretim kaydını silmek istediğinize emin misiniz?`)) return;
+    setDeleting(entry.id);
+    try {
+      const { error } = await supabase.from('production_entries').delete().eq('id', entry.id);
+      if (error) throw error;
+      await load();
+    } catch (err: any) {
+      alert(`Silme hatası: ${err.message}`);
+    } finally {
+      setDeleting(undefined);
+    }
+  };
 
   return (
     <div className="p-8">
@@ -316,10 +331,19 @@ export default function Production() {
                     <td className="px-4 py-3 font-semibold text-amber-700">{entry.net_m2.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}</td>
                     <td className="px-4 py-3 font-mono text-slate-500 text-xs">{entry.lot_number}</td>
                     <td className="px-4 py-3">
-                      <button onClick={() => { setEditEntry(entry); setShowModal(true); }}
-                        className="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-colors">
-                        <Edit2 size={14} />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => { setEditEntry(entry); setShowModal(true); }}
+                          className="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-colors">
+                          <Edit2 size={14} />
+                        </button>
+                        <button onClick={() => handleDelete(entry)} disabled={deleting === entry.id}
+                          className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Sil">
+                          {deleting === entry.id
+                            ? <div className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                            : <Trash2 size={14} />}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
