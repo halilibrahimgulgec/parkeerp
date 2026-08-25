@@ -153,6 +153,19 @@ export default function PalletTracking() {
     window.print();
   };
 
+  const totalSummary = transactions.reduce((acc, t) => {
+    const qty = t.quantity || 0;
+    if (!acc[t.pallet_type]) {
+      acc[t.pallet_type] = { sent: 0, returned: 0 };
+    }
+    if (t.transaction_type === 'sent') {
+      acc[t.pallet_type].sent += qty;
+    } else {
+      acc[t.pallet_type].returned += qty;
+    }
+    return acc;
+  }, {} as Record<string, { sent: number; returned: number }>);
+
   return (
     <div className="p-8 space-y-6">
       {/* ── STYLE TAG FOR A4 PRINTING ── */}
@@ -161,6 +174,7 @@ export default function PalletTracking() {
           body {
             background: white !important;
             color: black !important;
+            font-size: 11px !important;
           }
           aside, button, form, .no-print, header, nav {
             display: none !important;
@@ -171,6 +185,15 @@ export default function PalletTracking() {
             box-shadow: none !important;
             border: none !important;
             width: 100% !important;
+          }
+          table {
+            width: 100% !important;
+            table-layout: auto !important;
+          }
+          th, td {
+            padding: 5px 6px !important;
+            font-size: 10px !important;
+            word-break: break-word !important;
           }
           .print-only {
             display: block !important;
@@ -490,6 +513,39 @@ export default function PalletTracking() {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Rapor Toplamları */}
+        <div className="mt-6 border-t border-slate-300 pt-4">
+          <h3 className="text-sm font-bold text-slate-800 mb-3">Seçilen Dönem Toplam Hareket Özeti</h3>
+          <div className="grid grid-cols-3 gap-4">
+            {['sevkiyat', 'tahta', 'uretim'].map((type) => {
+              const sent = totalSummary[type]?.sent || 0;
+              const returned = totalSummary[type]?.returned || 0;
+              const net = sent - returned;
+              return (
+                <div key={type} className="border border-slate-300 rounded-xl p-3 bg-slate-50 text-xs">
+                  <p className="font-bold text-slate-800 border-b border-slate-200 pb-1 mb-1.5 uppercase tracking-wide">
+                    {PALLET_LABELS[type]}
+                  </p>
+                  <div className="flex justify-between text-slate-600 font-medium">
+                    <span>Toplam Giden (Zimmet):</span>
+                    <span className="text-red-600">+{sent}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-600 font-medium mt-1">
+                    <span>Toplam Gelen (İade):</span>
+                    <span className="text-green-600">-{returned}</span>
+                  </div>
+                  <div className="flex justify-between border-t border-slate-300 mt-2 pt-1.5 font-bold text-slate-900 text-sm">
+                    <span>Net Değişim:</span>
+                    <span className={net >= 0 ? 'text-red-700' : 'text-green-700'}>
+                      {net >= 0 ? `+${net}` : net} adet
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         {/* Footer print layout info */}
