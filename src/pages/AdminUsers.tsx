@@ -17,62 +17,73 @@ export default function AdminUsers() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [tab, setTab] = useState<'pending' | 'approved'>('pending');
 
-  const adminFetch = useCallback(async (method: string, body?: object) => {
-    const { data: { session } } = await supabase.auth.getSession();
-    return fetch(
-      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-get-users`,
-      {
-        method,
-        headers: {
-          Authorization: `Bearer ${session?.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: body ? JSON.stringify(body) : undefined,
-      }
-    );
-  }, []);
-
   const fetchUsers = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await adminFetch('GET');
-      const data = res.ok ? await res.json() : [];
-      setUsers(Array.isArray(data) ? data : []);
-    } catch {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setUsers(data || []);
+    } catch (err) {
+      console.error('Kullanıcılar yüklenirken hata oluştu:', err);
       setUsers([]);
     }
     setLoading(false);
-  }, [adminFetch]);
+  }, []);
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
   const approve = async (userId: string) => {
     setActionLoading(userId + '_approve');
-    await adminFetch('PATCH', {
-      id: userId,
-      is_approved: true,
-      approved_at: new Date().toISOString(),
-      approved_by: profile?.id,
-    });
-    await fetchUsers();
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({
+          is_approved: true,
+          approved_at: new Date().toISOString(),
+          approved_by: profile?.id,
+        })
+        .eq('id', userId);
+      if (error) throw error;
+      await fetchUsers();
+    } catch (err) {
+      console.error('Kullanıcı onaylanırken hata oluştu:', err);
+    }
     setActionLoading(null);
   };
 
   const revoke = async (userId: string) => {
     setActionLoading(userId + '_revoke');
-    await adminFetch('PATCH', {
-      id: userId,
-      is_approved: false,
-      approved_at: null,
-      approved_by: null,
-    });
-    await fetchUsers();
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({
+          is_approved: false,
+          approved_at: null,
+          approved_by: null,
+        })
+        .eq('id', userId);
+      if (error) throw error;
+      await fetchUsers();
+    } catch (err) {
+      console.error('Kullanıcı yetkisi kaldırılırken hata oluştu:', err);
+    }
     setActionLoading(null);
   };
 
-  const changeRole = async (userId: string, role: string) => {
-    await adminFetch('PATCH', { id: userId, role });
-    await fetchUsers();
+  const changeRole = async (userId: string, role: any) => {
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({ role })
+        .eq('id', userId);
+      if (error) throw error;
+      await fetchUsers();
+    } catch (err) {
+      console.error('Rol değiştirilirken hata oluştu:', err);
+    }
   };
 
   const pending = users.filter(u => !u.is_approved && u.id !== profile?.id);
