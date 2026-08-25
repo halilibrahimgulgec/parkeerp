@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { Shipment, ShipmentItem, Customer, Site, Product } from '../types';
+import { Shipment, Customer, Site, Product } from '../types';
 import Modal from '../components/Modal';
 import { Plus, Truck, Search, Filter, AlertCircle, Trash2, Eye, Pencil, PackageX } from 'lucide-react';
 
@@ -18,8 +18,14 @@ interface ShipmentFormData {
   logistics_cost: number;
   shipment_date: string;
   notes: string;
-  pallet_type: 'tahta' | 'sevkiyat' | 'uretim';
-  items: { product_id: string; pallets: number; m2: number; unit: string }[];
+  pallet_type: 'tahta' | 'sevkiyat' | 'uretim' | 'dokme';
+  items: { 
+    product_id: string; 
+    pallets: number; 
+    pallet_type: 'tahta' | 'sevkiyat' | 'uretim' | 'dokme';
+    m2: number; 
+    unit: string;
+  }[];
 }
 
 const EMPTY_FORM: ShipmentFormData = {
@@ -36,7 +42,7 @@ const EMPTY_FORM: ShipmentFormData = {
   shipment_date: new Date().toISOString().split('T')[0],
   notes: '',
   pallet_type: 'sevkiyat',
-  items: [{ product_id: '', pallets: 0, m2: 0, unit: 'm2' }],
+  items: [{ product_id: '', pallets: 0, pallet_type: 'sevkiyat', m2: 0, unit: 'm2' }],
 };
 
 function ShipmentForm({ customers, products, initial, onSave, onClose }: {
@@ -73,6 +79,7 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
         .select('pallet_type')
         .eq('shipment_id', initial.id)
         .eq('transaction_type', 'sent')
+        .limit(1)
         .maybeSingle()
         .then(({ data }) => {
           if (data) {
@@ -96,7 +103,7 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
     const fetchStock = async () => {
       const [stockRes, initialItemsRes] = await Promise.all([
         supabase.from('v_product_stock').select('*'),
-        initial ? supabase.from('shipment_items').select('product_id, m2').eq('shipment_id', initial.id) : Promise.resolve({ data: [] }),
+        initial ? supabase.from('shipment_items').select('product_id, m2, pallets, unit, pallet_type').eq('shipment_id', initial.id) : Promise.resolve({ data: [] }),
       ]);
       const map: Record<string, number> = {};
       for (const p of products) {
@@ -107,16 +114,31 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
         for (const row of initialItemsRes.data) {
           map[row.product_id] = (map[row.product_id] || 0) + (row.m2 || 0);
         }
+        if (initial) {
+          setForm(f => ({
+            ...f,
+            items: initialItemsRes.data.map((x: any) => ({
+              product_id: x.product_id,
+              pallets: Number(x.pallets) || 0,
+              pallet_type: (x.pallet_type || 'sevkiyat') as any,
+              m2: Number(x.m2) || 0,
+              unit: x.unit || 'm2',
+            }))
+          }));
+        }
       }
       setStockMap(map);
     };
     fetchStock();
-  }, [products]);
+  }, [products, initial]);
 
   const setItem = (idx: number, field: string, value: any) => {
     setForm(f => {
       const items = [...f.items];
       items[idx] = { ...items[idx], [field]: value };
+      if (field === 'pallet_type' && value === 'dokme') {
+        items[idx].pallets = 0;
+      }
       if (field === 'pallets' || field === 'product_id') {
         const p = products.find(x => x.id === (field === 'product_id' ? value : items[idx].product_id));
         if (p) items[idx].m2 = items[idx].pallets * p.m2_per_pallet;
@@ -125,7 +147,7 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
     });
   };
 
-  const addItem = () => setForm(f => ({ ...f, items: [...f.items, { product_id: '', pallets: 0, m2: 0, unit: 'm2' }] }));
+  const addItem = () => setForm(f => ({ ...f, items: [...f.items, { product_id: '', pallets: 0, pallet_type: f.pallet_type, m2: 0, unit: 'm2' }] }));
   const removeItem = (idx: number) => setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
 
   const totalM2 = form.items.reduce((s, i) => s + i.m2, 0);
@@ -166,26 +188,43 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
       notes: form.notes,
     };
 
-    const totalPallets = form.items.reduce((s, i) => s + (Number(i.pallets) || 0), 0);
-
     if (initial) {
       const { error: shipErr } = await supabase.from('shipments').update(shipPayload).eq('id', initial.id);
       if (shipErr) { setError(shipErr.message); setSaving(false); return; }
 
-      // Update pallet transaction
+      // Update shipment items (Delete and re-insert)
+      await supabase.from('shipment_items').delete().eq('shipment_id', initial.id);
+      const itemsToInsert = form.items.filter(i => i.product_id).map(i => ({
+        shipment_id: initial.id,
+        product_id: i.product_id,
+        pallets: i.pallets,
+        pallet_type: i.pallet_type,
+        m2: i.m2,
+        unit: i.unit,
+      }));
+      const { error: itemsErr } = await supabase.from('shipment_items').insert(itemsToInsert);
+      if (itemsErr) { setError(itemsErr.message); setSaving(false); return; }
+
+      // Update pallet transactions (Delete and re-insert)
       await supabase.from('pallet_transactions').delete().eq('shipment_id', initial.id);
-      if (totalPallets > 0) {
-        await supabase.from('pallet_transactions').insert({
+      
+      const palletTransactions = form.items
+        .filter(i => i.product_id && (Number(i.pallets) || 0) > 0 && i.pallet_type !== 'dokme')
+        .map(i => ({
           date: form.shipment_date,
           customer_id: form.customer_id,
           site_id: form.site_id || null,
           shipment_id: initial.id,
           transaction_type: 'sent',
-          pallet_type: form.pallet_type,
-          quantity: totalPallets,
+          pallet_type: i.pallet_type,
+          quantity: Number(i.pallets) || 0,
           notes: `${form.invoice_no} no'lu sevkiyat ile gönderildi.`,
           created_by: user?.id,
-        });
+        }));
+
+      if (palletTransactions.length > 0) {
+        const { error: transErr } = await supabase.from('pallet_transactions').insert(palletTransactions);
+        if (transErr) { setError(transErr.message); setSaving(false); return; }
       }
     } else {
       const { data: shipData, error: shipErr } = await supabase.from('shipments').insert({
@@ -193,35 +232,45 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
       }).select().single();
       if (shipErr) { setError(shipErr.message); setSaving(false); return; }
 
-      const itemsToInsert = form.items.map(i => ({
+      const itemsToInsert = form.items.filter(i => i.product_id).map(i => ({
         shipment_id: shipData.id,
         product_id: i.product_id,
         pallets: i.pallets,
+        pallet_type: i.pallet_type,
         m2: i.m2,
         unit: i.unit,
       }));
       const { error: itemsErr } = await supabase.from('shipment_items').insert(itemsToInsert);
       if (itemsErr) {
-        // CLEANUP: Delete the created shipment row if items insertion fails (avoid duplicate shipments)
+        // CLEANUP: Delete the created shipment row if items insertion fails
         await supabase.from('shipments').delete().eq('id', shipData.id);
         setError(itemsErr.message);
         setSaving(false);
         return;
       }
 
-      // Insert new pallet transaction
-      if (totalPallets > 0) {
-        await supabase.from('pallet_transactions').insert({
+      // Insert pallet transactions
+      const palletTransactions = form.items
+        .filter(i => i.product_id && (Number(i.pallets) || 0) > 0 && i.pallet_type !== 'dokme')
+        .map(i => ({
           date: form.shipment_date,
           customer_id: form.customer_id,
           site_id: form.site_id || null,
           shipment_id: shipData.id,
           transaction_type: 'sent',
-          pallet_type: form.pallet_type,
-          quantity: totalPallets,
+          pallet_type: i.pallet_type,
+          quantity: Number(i.pallets) || 0,
           notes: `${form.invoice_no} no'lu sevkiyat ile gönderildi.`,
           created_by: user?.id,
-        });
+        }));
+
+      if (palletTransactions.length > 0) {
+        const { error: transErr } = await supabase.from('pallet_transactions').insert(palletTransactions);
+        if (transErr) {
+          setError(transErr.message);
+          setSaving(false);
+          return;
+        }
       }
     }
 
@@ -278,12 +327,13 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
             placeholder="Ad Soyad" />
         </div>
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Palet Tipi *</label>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Varsayılan Palet Tipi *</label>
           <select value={form.pallet_type} onChange={e => setForm(f => ({ ...f, pallet_type: e.target.value as any }))}
             className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400" required>
             <option value="sevkiyat">Sevkiyat Paleti</option>
             <option value="tahta">Tahta Palet</option>
             <option value="uretim">Üretim Paleti</option>
+            <option value="dokme">Dökme (Paletsiz)</option>
           </select>
         </div>
       </div>
@@ -328,7 +378,7 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
             return (
             <div key={idx} className="space-y-1">
             <div className="grid grid-cols-12 gap-2 items-end">
-              <div className="col-span-4">
+              <div className="col-span-3">
                 {idx === 0 && <label className="block text-xs font-medium text-slate-500 mb-1">Ürün</label>}
                 <select value={item.product_id} onChange={e => setItem(idx, 'product_id', e.target.value)}
                   className="w-full border border-slate-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
@@ -343,7 +393,18 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
                 {idx === 0 && <label className="block text-xs font-medium text-slate-500 mb-1">Palet</label>}
                 <input type="number" min="0" value={item.pallets}
                   onChange={e => setItem(idx, 'pallets', Number(e.target.value))}
-                  className="w-full border border-slate-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  disabled={item.pallet_type === 'dokme'}
+                  className="w-full border border-slate-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-slate-100 disabled:text-slate-400" />
+              </div>
+              <div className="col-span-2">
+                {idx === 0 && <label className="block text-xs font-medium text-slate-500 mb-1">Palet Tipi</label>}
+                <select value={item.pallet_type} onChange={e => setItem(idx, 'pallet_type', e.target.value as any)}
+                  className="w-full border border-slate-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+                  <option value="sevkiyat">Sevkiyat Paleti</option>
+                  <option value="tahta">Tahta Palet</option>
+                  <option value="uretim">Üretim Paleti</option>
+                  <option value="dokme">Dökme (Paletsiz)</option>
+                </select>
               </div>
               <div className="col-span-2">
                 {idx === 0 && <label className="block text-xs font-medium text-slate-500 mb-1">Birim</label>}
@@ -354,7 +415,7 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
                   <option value="metre">Metre</option>
                 </select>
               </div>
-              <div className="col-span-3">
+              <div className="col-span-2">
                 {idx === 0 && <label className="block text-xs font-medium text-slate-500 mb-1">Miktar ({unitLabel})</label>}
                 <input type="number" min="0" step="0.01" value={item.m2}
                   onChange={e => setItem(idx, 'm2', Number(e.target.value))}
@@ -430,12 +491,19 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
   );
 }
 
+const PALLET_LABELS: Record<string, string> = {
+  sevkiyat: 'Sevkiyat Paleti',
+  tahta: 'Tahta Palet',
+  uretim: 'Üretim Paleti',
+  dokme: 'Dökme (Paletsiz)',
+};
+
 function ShipmentDetail({ shipment, onClose }: { shipment: Shipment; onClose: () => void }) {
-  const [items, setItems] = useState<ShipmentItem[]>([]);
+  const [items, setItems] = useState<any[]>([]);
 
   useEffect(() => {
     supabase.from('shipment_items').select('*, products(*)').eq('shipment_id', shipment.id)
-      .then(({ data }) => setItems((data || []) as ShipmentItem[]));
+      .then(({ data }) => setItems(data || []));
   }, [shipment.id]);
 
   const totalRevenue = shipment.sale_price_per_m2 * shipment.total_m2;
@@ -458,16 +526,20 @@ function ShipmentDetail({ shipment, onClose }: { shipment: Shipment; onClose: ()
           <thead className="bg-slate-50">
             <tr>
               <th className="px-4 py-2 text-left font-medium text-slate-600">Ürün</th>
-              <th className="px-4 py-2 text-right font-medium text-slate-600">Palet</th>
-              <th className="px-4 py-2 text-right font-medium text-slate-600">m²</th>
+              <th className="px-4 py-2 text-left font-medium text-slate-600">Palet Tipi</th>
+              <th className="px-4 py-2 text-right font-medium text-slate-600">Palet Sayısı</th>
+              <th className="px-4 py-2 text-right font-medium text-slate-600">Miktar</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {items.map(item => (
               <tr key={item.id}>
                 <td className="px-4 py-2">{item.products?.name} ({item.products?.thickness}/{item.products?.color})</td>
-                <td className="px-4 py-2 text-right">{item.pallets}</td>
-                <td className="px-4 py-2 text-right font-semibold">{item.m2}</td>
+                <td className="px-4 py-2 text-slate-600 text-xs">{PALLET_LABELS[item.pallet_type] || 'Sevkiyat Paleti'}</td>
+                <td className="px-4 py-2 text-right">{item.pallet_type === 'dokme' ? '-' : `${item.pallets} adet`}</td>
+                <td className="px-4 py-2 text-right font-semibold">
+                  {item.m2} {item.unit === 'm2' ? 'm²' : item.unit === 'adet' ? 'Adet' : item.unit === 'metre' ? 'Metre' : item.unit}
+                </td>
               </tr>
             ))}
           </tbody>

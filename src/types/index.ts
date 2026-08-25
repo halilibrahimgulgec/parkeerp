@@ -83,6 +83,7 @@ export interface ShipmentItem {
   shipment_id: string;
   product_id: string;
   pallets: number;
+  pallet_type?: string;
   m2: number;
   unit: string;
   products?: Product;
