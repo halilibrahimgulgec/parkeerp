@@ -68,6 +68,7 @@ export default function PalletTracking() {
     customer_id: '',
     site_id: '',
     pallet_type: 'sevkiyat' as 'tahta' | 'sevkiyat' | 'uretim',
+    transaction_type: 'returned' as 'sent' | 'returned',
     quantity: '',
     notes: '',
     date: new Date().toISOString().split('T')[0],
@@ -122,15 +123,15 @@ export default function PalletTracking() {
       date: form.date,
       customer_id: form.customer_id,
       site_id: form.site_id || null,
-      transaction_type: 'returned',
+      transaction_type: form.transaction_type,
       pallet_type: form.pallet_type,
       quantity: parseInt(form.quantity),
-      notes: form.notes || 'Palet iade girişi',
+      notes: form.notes || (form.transaction_type === 'sent' ? 'Manuel palet çıkışı / Devir' : 'Palet iade girişi'),
       created_by: user?.id,
     });
 
     if (error) {
-      alert(`İade kaydedilirken hata oluştu: ${error.message}`);
+      alert(`İşlem kaydedilirken hata oluştu: ${error.message}`);
     } else {
       setForm(f => ({ ...f, quantity: '', notes: '' }));
       await loadData();
@@ -203,13 +204,26 @@ export default function PalletTracking() {
       ) : (
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           
-          {/* ── SECTION 1: PALLET RETURN FORM (no-print) ── */}
+          {/* ── SECTION 1: PALLET ENTRY FORM (no-print) ── */}
           <div className="space-y-6 xl:col-span-1 no-print">
             <div className="bg-white rounded-2xl border border-slate-200 p-6">
               <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-                <Plus size={18} className="text-emerald-500" /> İade Girişi
+                <Plus size={18} className="text-emerald-500" /> Manuel Palet & Devir Girişi
               </h2>
               <form onSubmit={handleSubmitReturn} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">İşlem Tipi *</label>
+                  <select
+                    value={form.transaction_type}
+                    onChange={e => setForm(f => ({ ...f, transaction_type: e.target.value as any }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 font-semibold"
+                    required
+                  >
+                    <option value="returned">İADE GİRİŞİ (Müşteriden Bize Gelen)</option>
+                    <option value="sent">ZİMMET / ÇIKIŞ / DEVİR (Bizden Müşteriye Giden)</option>
+                  </select>
+                </div>
+
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Müşteri *</label>
                   <select
@@ -266,7 +280,7 @@ export default function PalletTracking() {
 
                 <div className="grid grid-cols-1 gap-3">
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">İade Tarihi *</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">İşlem Tarihi *</label>
                     <input
                       type="date"
                       value={form.date}
@@ -284,7 +298,7 @@ export default function PalletTracking() {
                     value={form.notes}
                     onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
-                    placeholder="Örn: Şantiyeden tırla iade geldi."
+                    placeholder="Örn: Geçmişten devir bakiyesi"
                   />
                 </div>
 
@@ -293,7 +307,7 @@ export default function PalletTracking() {
                   disabled={submitting}
                   className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
                 >
-                  <Save size={16} /> İadeyi Kaydet
+                  <Save size={16} /> Kaydı Tamamla
                 </button>
               </form>
             </div>
