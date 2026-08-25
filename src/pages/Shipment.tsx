@@ -208,19 +208,23 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
       // Update pallet transactions (Delete and re-insert)
       await supabase.from('pallet_transactions').delete().eq('shipment_id', initial.id);
       
-      const palletTransactions = form.items
-        .filter(i => i.product_id && (Number(i.pallets) || 0) > 0 && i.pallet_type !== 'dokme')
-        .map(i => ({
-          date: form.shipment_date,
-          customer_id: form.customer_id,
-          site_id: form.site_id || null,
-          shipment_id: initial.id,
-          transaction_type: 'sent',
-          pallet_type: i.pallet_type,
-          quantity: Number(i.pallets) || 0,
-          notes: `${form.invoice_no} no'lu sevkiyat ile gönderildi.`,
-          created_by: user?.id,
-        }));
+      const palletGroups: Record<string, number> = {};
+      form.items.forEach(i => {
+        if (!i.product_id || (Number(i.pallets) || 0) <= 0 || i.pallet_type === 'dokme') return;
+        palletGroups[i.pallet_type] = (palletGroups[i.pallet_type] || 0) + Number(i.pallets);
+      });
+
+      const palletTransactions = Object.entries(palletGroups).map(([type, qty]) => ({
+        date: form.shipment_date,
+        customer_id: form.customer_id,
+        site_id: form.site_id || null,
+        shipment_id: initial.id,
+        transaction_type: 'sent',
+        pallet_type: type,
+        quantity: qty,
+        notes: `${form.invoice_no} no'lu sevkiyat ile gönderildi.`,
+        created_by: user?.id,
+      }));
 
       if (palletTransactions.length > 0) {
         const { error: transErr } = await supabase.from('pallet_transactions').insert(palletTransactions);
@@ -250,19 +254,23 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
       }
 
       // Insert pallet transactions
-      const palletTransactions = form.items
-        .filter(i => i.product_id && (Number(i.pallets) || 0) > 0 && i.pallet_type !== 'dokme')
-        .map(i => ({
-          date: form.shipment_date,
-          customer_id: form.customer_id,
-          site_id: form.site_id || null,
-          shipment_id: shipData.id,
-          transaction_type: 'sent',
-          pallet_type: i.pallet_type,
-          quantity: Number(i.pallets) || 0,
-          notes: `${form.invoice_no} no'lu sevkiyat ile gönderildi.`,
-          created_by: user?.id,
-        }));
+      const palletGroups: Record<string, number> = {};
+      form.items.forEach(i => {
+        if (!i.product_id || (Number(i.pallets) || 0) <= 0 || i.pallet_type === 'dokme') return;
+        palletGroups[i.pallet_type] = (palletGroups[i.pallet_type] || 0) + Number(i.pallets);
+      });
+
+      const palletTransactions = Object.entries(palletGroups).map(([type, qty]) => ({
+        date: form.shipment_date,
+        customer_id: form.customer_id,
+        site_id: form.site_id || null,
+        shipment_id: shipData.id,
+        transaction_type: 'sent',
+        pallet_type: type,
+        quantity: qty,
+        notes: `${form.invoice_no} no'lu sevkiyat ile gönderildi.`,
+        created_by: user?.id,
+      }));
 
       if (palletTransactions.length > 0) {
         const { error: transErr } = await supabase.from('pallet_transactions').insert(palletTransactions);
