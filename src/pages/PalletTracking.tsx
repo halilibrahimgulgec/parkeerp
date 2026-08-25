@@ -28,6 +28,14 @@ interface PalletTransaction {
   notes: string;
   customers?: { name: string };
   sites?: { name: string };
+  shipments?: {
+    invoice_no: string;
+    shipment_items: {
+      m2: number;
+      unit: string;
+      products: { name: string };
+    }[];
+  } | null;
 }
 
 const PALLET_LABELS: Record<string, string> = {
@@ -49,8 +57,9 @@ export default function PalletTracking() {
   const [sites, setSites] = useState<Site[]>([]);
   const [transactions, setTransactions] = useState<PalletTransaction[]>([]);
   
-  // Date filter for the Daily Report
-  const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
+  // Date range filter for the Report
+  const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
@@ -71,8 +80,22 @@ export default function PalletTracking() {
       supabase.from('customers').select('*').eq('is_active', true).order('name'),
       supabase.from('sites').select('*').eq('is_active', true).order('name'),
       supabase.from('pallet_transactions')
-        .select('*, customers(name), sites(name)')
-        .eq('date', reportDate)
+        .select(`
+          *, 
+          customers(name), 
+          sites(name),
+          shipments (
+            invoice_no,
+            shipment_items (
+              m2,
+              unit,
+              products (name)
+            )
+          )
+        `)
+        .gte('date', startDate)
+        .lte('date', endDate)
+        .order('date', { ascending: false })
         .order('created_at', { ascending: false }),
     ]);
 
@@ -81,7 +104,7 @@ export default function PalletTracking() {
     setSites(sitesRes.data || []);
     setTransactions(transRes.data || []);
     setLoading(false);
-  }, [reportDate]);
+  }, [startDate, endDate]);
 
   useEffect(() => {
     loadData();
@@ -336,23 +359,35 @@ export default function PalletTracking() {
       <div className="bg-white rounded-2xl border border-slate-200 p-6 print-container">
         
         {/* Filter Controls (no-print) */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-100 pb-4 mb-6 no-print">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-slate-100 pb-4 mb-6 no-print">
           <div>
             <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-              <Calendar size={18} className="text-blue-500" /> Günlük Sevkiyat & İade Raporu
+              <Calendar size={18} className="text-blue-500" /> Palet Sevkiyat & İade Raporu
             </h2>
-            <p className="text-slate-400 text-xs mt-1">Seçilen tarihe ait tüm palet hareketleri</p>
+            <p className="text-slate-400 text-xs mt-1">Seçilen tarih aralığına ait tüm palet hareketleri ve sevk edilen malzemeler</p>
           </div>
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <input
-              type="date"
-              value={reportDate}
-              onChange={e => setReportDate(e.target.value)}
-              className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-slate-500">Başlangıç:</span>
+              <input
+                type="date"
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
+                className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-slate-500">Bitiş:</span>
+              <input
+                type="date"
+                value={endDate}
+                onChange={e => setEndDate(e.target.value)}
+                className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
             <button
               onClick={handlePrint}
-              className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold transition-colors shadow-md"
+              className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold transition-colors shadow-md ml-auto md:ml-0"
             >
               <Printer size={16} /> Yazdır / PDF
             </button>
@@ -361,8 +396,10 @@ export default function PalletTracking() {
 
         {/* PRINT ONLY HEADER (visible only during print) */}
         <div className="hidden print-only mb-6 text-center border-b-2 border-slate-800 pb-4">
-          <h1 className="text-2xl font-bold text-slate-900">PARKE ERP — GÜNLÜK PALET RAPORU</h1>
-          <p className="text-sm text-slate-500 mt-1">Rapor Tarihi: {new Date(reportDate).toLocaleDateString('tr-TR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+          <h1 className="text-2xl font-bold text-slate-900">PARKE ERP — PALET VE SEVKİYAT RAPORU</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Rapor Tarih Aralığı: {new Date(startDate).toLocaleDateString('tr-TR')} - {new Date(endDate).toLocaleDateString('tr-TR')}
+          </p>
         </div>
 
         {/* Daily Report Data Table */}
@@ -370,11 +407,13 @@ export default function PalletTracking() {
           <table className="w-full text-sm text-left">
             <thead>
               <tr className="text-slate-500 bg-slate-50 border-b border-slate-200 text-xs uppercase font-medium">
+                <th className="px-4 py-3">Tarih</th>
                 <th className="px-4 py-3">Müşteri</th>
                 <th className="px-4 py-3">Şantiye/Saha</th>
                 <th className="px-4 py-3">Palet Tipi</th>
                 <th className="px-4 py-3">Hareket</th>
                 <th className="px-4 py-3 text-right">Adet</th>
+                <th className="px-4 py-3">Giden Ürünler</th>
                 <th className="px-4 py-3">Açıklama</th>
                 <th className="px-4 py-3 text-right no-print">İşlem</th>
               </tr>
@@ -382,11 +421,12 @@ export default function PalletTracking() {
             <tbody className="divide-y divide-slate-100">
               {transactions.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-slate-400">Seçilen tarihte herhangi bir palet hareketi bulunmamaktadır.</td>
+                  <td colSpan={9} className="px-4 py-8 text-center text-slate-400">Seçilen tarih aralığında herhangi bir palet hareketi bulunmamaktadır.</td>
                 </tr>
               ) : (
                 transactions.map((t) => (
                   <tr key={t.id} className="hover:bg-slate-50/30">
+                    <td className="px-4 py-3.5 text-slate-600 whitespace-nowrap">{new Date(t.date).toLocaleDateString('tr-TR')}</td>
                     <td className="px-4 py-3.5 font-semibold text-slate-800">{t.customers?.name || '-'}</td>
                     <td className="px-4 py-3.5 text-slate-600">{t.sites?.name || 'Direkt Sevkiyat'}</td>
                     <td className="px-4 py-3.5">
@@ -407,6 +447,19 @@ export default function PalletTracking() {
                       t.transaction_type === 'sent' ? 'text-red-600' : 'text-green-600'
                     }`}>
                       {t.transaction_type === 'sent' ? '+' : '-'}{t.quantity}
+                    </td>
+                    <td className="px-4 py-3.5">
+                      {t.shipments?.shipment_items && t.shipments.shipment_items.length > 0 ? (
+                        <div className="flex flex-col gap-1 max-w-[250px]">
+                          {t.shipments.shipment_items.map((item, i) => (
+                            <span key={i} className="text-xs text-slate-700 bg-slate-100 rounded px-1.5 py-0.5 w-max font-medium truncate">
+                              {item.m2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {item.unit} - {item.products?.name}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-slate-400 text-xs">-</span>
+                      )}
                     </td>
                     <td className="px-4 py-3.5 text-slate-500 text-xs italic">{t.notes}</td>
                     <td className="px-4 py-3.5 text-right no-print">
