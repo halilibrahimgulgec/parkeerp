@@ -201,7 +201,13 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
         unit: i.unit,
       }));
       const { error: itemsErr } = await supabase.from('shipment_items').insert(itemsToInsert);
-      if (itemsErr) { setError(itemsErr.message); setSaving(false); return; }
+      if (itemsErr) {
+        // CLEANUP: Delete the created shipment row if items insertion fails (avoid duplicate shipments)
+        await supabase.from('shipments').delete().eq('id', shipData.id);
+        setError(itemsErr.message);
+        setSaving(false);
+        return;
+      }
 
       // Insert new pallet transaction
       if (totalPallets > 0) {
