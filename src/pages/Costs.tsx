@@ -48,8 +48,10 @@ const SUB_TYPES: Record<CostType, { value: string; label: string; unit?: string 
   ],
   operasyonel: [
     { value: 'elektrik', label: 'Elektrik', unit: 'kWh' },
-    { value: 'yakit', label: 'Yakıt', unit: 'litre' },
+    { value: 'yakit', label: 'Genel Yakıt / Mazot', unit: 'litre' },
+    { value: 'forklift_mazot', label: 'Forklift Mazot Gideri', unit: 'litre' },
     { value: 'personel', label: 'Personel Maaşları', unit: 'kişi' },
+    { value: 'iscilik', label: 'İşçilik Giderleri' },
     { value: 'bakim', label: 'Bakım - Onarım' },
     { value: 'diger_operasyonel', label: 'Diğer Operasyonel' },
   ],
