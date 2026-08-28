@@ -5,6 +5,13 @@ import { Shipment, Customer, Site, Product } from '../types';
 import Modal from '../components/Modal';
 import { Plus, Truck, Search, Filter, AlertCircle, Trash2, Eye, Pencil, PackageX } from 'lucide-react';
 
+const getLocalDateString = () => {
+  const now = new Date();
+  const offset = now.getTimezoneOffset();
+  const localDate = new Date(now.getTime() - (offset * 60 * 1000));
+  return localDate.toISOString().split('T')[0];
+};
+
 interface ShipmentFormData {
   invoice_no: string;
   customer_id: string;
@@ -18,7 +25,6 @@ interface ShipmentFormData {
   logistics_cost: number;
   shipment_date: string;
   notes: string;
-  pallet_type: 'tahta' | 'sevkiyat' | 'uretim' | 'dokme';
   items: { 
     product_id: string; 
     pallets: number; 
@@ -28,7 +34,7 @@ interface ShipmentFormData {
   }[];
 }
 
-const EMPTY_FORM: ShipmentFormData = {
+const getEmptyForm = (): ShipmentFormData => ({
   invoice_no: '',
   customer_id: '',
   site_id: '',
@@ -39,11 +45,10 @@ const EMPTY_FORM: ShipmentFormData = {
   tare_weight: 0,
   sale_price_per_m2: 0,
   logistics_cost: 0,
-  shipment_date: new Date().toISOString().split('T')[0],
+  shipment_date: getLocalDateString(),
   notes: '',
-  pallet_type: 'sevkiyat',
   items: [{ product_id: '', pallets: 0, pallet_type: 'sevkiyat', m2: 0, unit: 'm2' }],
-};
+});
 
 function ShipmentForm({ customers, products, initial, onSave, onClose }: {
   customers: Customer[];
@@ -53,7 +58,7 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
   onClose: () => void;
 }) {
   const { user } = useAuth();
-  const [form, setForm] = useState<ShipmentFormData>(initial ? {
+  const [form, setForm] = useState<ShipmentFormData>(() => initial ? {
     invoice_no: initial.invoice_no,
     customer_id: initial.customer_id,
     site_id: initial.site_id || '',
@@ -66,28 +71,11 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
     logistics_cost: initial.logistics_cost,
     shipment_date: initial.shipment_date,
     notes: initial.notes || '',
-    pallet_type: 'sevkiyat',
     items: [],
-  } : { ...EMPTY_FORM });
+  } : getEmptyForm());
   const [sites, setSites] = useState<Site[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-
-  useEffect(() => {
-    if (initial) {
-      supabase.from('pallet_transactions')
-        .select('pallet_type')
-        .eq('shipment_id', initial.id)
-        .eq('transaction_type', 'sent')
-        .limit(1)
-        .maybeSingle()
-        .then(({ data }) => {
-          if (data) {
-            setForm(f => ({ ...f, pallet_type: data.pallet_type as any }));
-          }
-        });
-    }
-  }, [initial]);
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
 
   useEffect(() => {
@@ -147,7 +135,7 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
     });
   };
 
-  const addItem = () => setForm(f => ({ ...f, items: [...f.items, { product_id: '', pallets: 0, pallet_type: f.pallet_type, m2: 0, unit: 'm2' }] }));
+  const addItem = () => setForm(f => ({ ...f, items: [...f.items, { product_id: '', pallets: 0, pallet_type: f.items[f.items.length - 1]?.pallet_type || 'sevkiyat', m2: 0, unit: 'm2' }] }));
   const removeItem = (idx: number) => setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
 
   const totalM2 = form.items.reduce((s, i) => s + i.m2, 0);
@@ -321,7 +309,7 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Araç Plaka *</label>
           <input type="text" value={form.vehicle_plate} onChange={e => setForm(f => ({ ...f, vehicle_plate: e.target.value.toUpperCase() }))}
@@ -333,16 +321,6 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
           <input type="text" value={form.driver_name} onChange={e => setForm(f => ({ ...f, driver_name: e.target.value }))}
             className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
             placeholder="Ad Soyad" />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Varsayılan Palet Tipi *</label>
-          <select value={form.pallet_type} onChange={e => setForm(f => ({ ...f, pallet_type: e.target.value as any }))}
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400" required>
-            <option value="sevkiyat">Sevkiyat Paleti</option>
-            <option value="tahta">Tahta Palet</option>
-            <option value="uretim">Üretim Paleti</option>
-            <option value="dokme">Dökme (Paletsiz)</option>
-          </select>
         </div>
       </div>
 
