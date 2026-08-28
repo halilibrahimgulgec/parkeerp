@@ -19,6 +19,7 @@ interface StockItem {
   min_stock_alert: number;
   color: string;
   thickness: string;
+  unit: string;
 }
 
 interface CostBreakdown {
@@ -148,6 +149,7 @@ export default function Dashboard() {
         min_stock_alert: p.min_stock_alert,
         color: p.color,
         thickness: p.thickness,
+        unit: p.unit,
       }));
 
       const lowStockCount = stockItems.filter(s => s.current_stock <= s.min_stock_alert).length;
@@ -249,6 +251,7 @@ export default function Dashboard() {
                   ? Math.min((item.current_stock / (item.min_stock_alert * 3)) * 100, 100)
                   : 100;
                 const isLow = item.current_stock <= item.min_stock_alert;
+                const itemUnit = item.unit === 'm2' ? 'm²' : item.unit === 'adet' ? 'Adet' : item.unit === 'metre' ? 'Metre' : item.unit;
                 return (
                   <div key={item.product_id} className="flex items-center gap-4">
                     <div className="flex-1 min-w-0">
@@ -259,7 +262,7 @@ export default function Dashboard() {
                         <div className="flex items-center gap-2 ml-2">
                           {isLow && <AlertTriangle size={14} className="text-red-500 flex-shrink-0" />}
                           <span className={`text-sm font-semibold ${isLow ? 'text-red-600' : 'text-slate-900'}`}>
-                            {item.current_stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²
+                            {item.current_stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {itemUnit}
                           </span>
                         </div>
                       </div>
@@ -269,7 +272,7 @@ export default function Dashboard() {
                           style={{ width: `${Math.max(pct, 2)}%` }}
                         />
                       </div>
-                      <p className="text-xs text-slate-400 mt-0.5">Min. uyarı: {item.min_stock_alert} m²</p>
+                      <p className="text-xs text-slate-400 mt-0.5">Min. uyarı: {item.min_stock_alert} {itemUnit}</p>
                     </div>
                   </div>
                 );
