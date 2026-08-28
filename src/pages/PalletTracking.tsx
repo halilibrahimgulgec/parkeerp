@@ -278,13 +278,13 @@ export default function PalletTracking() {
     }
     return acc;
   }, {} as Record<string, { sent: number; returned: number }>);
-
   return (
-    <div className="p-4 md:p-8 space-y-6">      <style>{`
+    <div className="p-4 md:p-8 space-y-6">
+      <style>{`
         @media print {
           @page {
             size: A4 portrait;
-            margin: 1.5cm !important;
+            margin: 1.2cm !important;
           }
           body, html, #root, main, main > div {
             display: block !important;
@@ -299,12 +299,12 @@ export default function PalletTracking() {
             display: none !important;
           }
           .print-container {
-            margin: 0 !important;
+            margin: 0 auto !important;
             padding: 0 !important;
             box-shadow: none !important;
             border: none !important;
-            width: 100% !important;
-            max-width: 100% !important;
+            width: 96% !important;
+            max-width: 96% !important;
             display: block !important;
             overflow: visible !important;
           }
