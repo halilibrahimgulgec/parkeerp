@@ -41,10 +41,8 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
       )}
 
       {/* Sidebar Sliding Drawer */}
-      <div className={`
-        fixed inset-y-0 left-0 z-50 w-64 transform transition-transform duration-300 md:relative md:translate-x-0 md:flex h-full
-        ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-      `}>
+      <div className={`no-print fixed inset-y-0 left-0 z-50 w-64 transform transition-transform duration-300 md:relative md:translate-x-0 md:flex h-full
+        ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <Sidebar currentPage={currentPage} onNavigate={handleNavigate} />
       </div>
 

@@ -281,23 +281,30 @@ export default function PalletTracking() {
 
   return (
     <div className="p-4 md:p-8 space-y-6">
-      {/* ── STYLE TAG FOR A4 PRINTING ── */}
       <style>{`
         @media print {
+          @page {
+            size: A4 portrait;
+            margin: 1.2cm !important;
+          }
           body {
             background: white !important;
             color: black !important;
             font-size: 11px !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
           }
           aside, button, form, .no-print, header, nav {
             display: none !important;
           }
-          main, .print-container {
+          main, main > div, .print-container {
             margin: 0 !important;
             padding: 0 !important;
             box-shadow: none !important;
             border: none !important;
             width: 100% !important;
+            max-width: 100% !important;
           }
           table {
             width: 100% !important;
