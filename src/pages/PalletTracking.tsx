@@ -280,38 +280,45 @@ export default function PalletTracking() {
   }, {} as Record<string, { sent: number; returned: number }>);
 
   return (
-    <div className="p-4 md:p-8 space-y-6">
-      <style>{`
+    <div className="p-4 md:p-8 space-y-6">      <style>{`
         @media print {
           @page {
             size: A4 portrait;
-            margin: 1.2cm !important;
+            margin: 1.5cm !important;
           }
-          body {
-            background: white !important;
-            color: black !important;
-            font-size: 11px !important;
+          body, html, #root, main, main > div {
+            display: block !important;
+            width: 100% !important;
+            max-width: 100% !important;
             margin: 0 !important;
             padding: 0 !important;
-            width: 100% !important;
+            background: white !important;
+            overflow: visible !important;
           }
           aside, button, form, .no-print, header, nav {
             display: none !important;
           }
-          main, main > div, .print-container {
+          .print-container {
             margin: 0 !important;
             padding: 0 !important;
             box-shadow: none !important;
             border: none !important;
             width: 100% !important;
             max-width: 100% !important;
+            display: block !important;
+            overflow: visible !important;
+          }
+          .overflow-x-auto {
+            overflow: visible !important;
+            width: 100% !important;
           }
           table {
             width: 100% !important;
             table-layout: auto !important;
+            border-collapse: collapse !important;
           }
           th, td {
-            padding: 5px 6px !important;
+            padding: 6px 8px !important;
             font-size: 10px !important;
             word-break: break-word !important;
           }
