@@ -280,7 +280,7 @@ export default function PalletTracking() {
   }, {} as Record<string, { sent: number; returned: number }>);
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-4 md:p-8 space-y-6">
       {/* ── STYLE TAG FOR A4 PRINTING ── */}
       <style>{`
         @media print {
