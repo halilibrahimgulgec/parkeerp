@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import {
   Factory, Truck, AlertTriangle, TrendingUp, Package,
-  DollarSign, BarChart2, Calendar
+  DollarSign, BarChart2, Calendar, Printer
 } from 'lucide-react';
 
 interface KPI {
@@ -195,53 +195,62 @@ export default function Dashboard() {
 
   return (
     <div className="p-8">
-      <div className="mb-8 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
-          <p className="text-slate-500 text-sm mt-1">
-            <Calendar size={14} className="inline mr-1" />
-            {new Date().toLocaleDateString('tr-TR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-          </p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <KPICard
-          title="Bugünkü Üretim"
-          value={`${kpi.todayProduction.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`}
-          sub="Net üretim (fire düşülmüş)"
-          icon={Factory}
-          color="bg-amber-500"
-        />
-        <KPICard
-          title="Bugünkü Sevkiyat"
-          value={`${kpi.todayShipment.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`}
-          sub="Tamamlanan çıkışlar"
-          icon={Truck}
-          color="bg-blue-500"
-        />
-        <KPICard
-          title="Aylık Toplam Gider"
-          value={`₺${kpi.monthCost.toLocaleString('tr-TR', { minimumFractionDigits: 0 })}`}
-          sub={`${new Date().toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' })}`}
-          icon={DollarSign}
-          color="bg-emerald-500"
-        />
-        <KPICard
-          title="Kritik Stok Uyarısı"
-          value={String(kpi.lowStockCount)}
-          sub="Minimum seviyenin altındaki ürünler"
-          icon={AlertTriangle}
-          color={kpi.lowStockCount > 0 ? 'bg-red-500' : 'bg-slate-400'}
-        />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-        <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Package size={18} className="text-slate-600" />
-            <h2 className="font-semibold text-slate-900">Anlık Stok Durumu</h2>
+      <div className="no-print space-y-6">
+        <div className="mb-8 flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
+            <p className="text-slate-500 text-sm mt-1">
+              <Calendar size={14} className="inline mr-1" />
+              {new Date().toLocaleDateString('tr-TR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            </p>
           </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <KPICard
+            title="Bugünkü Üretim"
+            value={`${kpi.todayProduction.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`}
+            sub="Net üretim (fire düşülmüş)"
+            icon={Factory}
+            color="bg-amber-500"
+          />
+          <KPICard
+            title="Bugünkü Sevkiyat"
+            value={`${kpi.todayShipment.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`}
+            sub="Tamamlanan çıkışlar"
+            icon={Truck}
+            color="bg-blue-500"
+          />
+          <KPICard
+            title="Aylık Toplam Gider"
+            value={`₺${kpi.monthCost.toLocaleString('tr-TR', { minimumFractionDigits: 0 })}`}
+            sub={`${new Date().toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' })}`}
+            icon={DollarSign}
+            color="bg-emerald-500"
+          />
+          <KPICard
+            title="Kritik Stok Uyarısı"
+            value={String(kpi.lowStockCount)}
+            sub="Minimum seviyenin altındaki ürünler"
+            icon={AlertTriangle}
+            color={kpi.lowStockCount > 0 ? 'bg-red-500' : 'bg-slate-400'}
+          />
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+          <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Package size={18} className="text-slate-600" />
+                <h2 className="font-semibold text-slate-900">Anlık Stok Durumu</h2>
+              </div>
+              <button
+                onClick={() => window.print()}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors shadow-sm"
+              >
+                <Printer size={13} /> Yazdır
+              </button>
+            </div>
           {stocks.length === 0 ? (
             <p className="text-slate-400 text-sm py-8 text-center">Ürün tanımı bulunamadı.</p>
           ) : (
@@ -332,6 +341,97 @@ export default function Dashboard() {
             </table>
           </div>
         )}
+      </div>
+      </div>
+
+      {/* ── STYLE TAG FOR A4 PRINTING ── */}
+      <style>{`
+        @media print {
+          @page {
+            size: A4 portrait;
+            margin: 1.2cm !important;
+          }
+          body, html, #root, main, main > div {
+            display: block !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: white !important;
+            overflow: visible !important;
+          }
+          aside, button, form, .no-print, header, nav, .no-print * {
+            display: none !important;
+          }
+          .print-container {
+            margin: 0 auto !important;
+            padding: 0 !important;
+            box-shadow: none !important;
+            border: none !important;
+            width: 96% !important;
+            max-width: 96% !important;
+            display: block !important;
+            overflow: visible !important;
+          }
+          table {
+            width: 100% !important;
+            table-layout: auto !important;
+            border-collapse: collapse !important;
+          }
+          th, td {
+            padding: 6px 8px !important;
+            font-size: 10px !important;
+            word-break: break-word !important;
+            border: 1px solid #e2e8f0 !important;
+          }
+        }
+      `}</style>
+
+      {/* ── PRINT VIEW FOR STOCKS ── */}
+      <div className="hidden print:block print-container space-y-6">
+        <div className="text-center border-b-2 border-slate-800 pb-4">
+          <h1 className="text-2xl font-bold text-slate-900">ANLIK FİİLİ STOK DURUMU RAPORU</h1>
+          <p className="text-xs text-slate-400 mt-1">
+            Rapor Tarihi: {new Date().toLocaleDateString('tr-TR')} {new Date().toLocaleTimeString('tr-TR')}
+          </p>
+        </div>
+
+        <table className="w-full text-xs text-left border-collapse">
+          <thead>
+            <tr className="text-slate-700 bg-slate-100 border-b-2 border-slate-300 font-bold">
+              <th className="px-4 py-2">Ürün Adı</th>
+              <th className="px-4 py-2">Kalınlık</th>
+              <th className="px-4 py-2">Renk</th>
+              <th className="px-4 py-2 text-right">Mevcut Stok</th>
+              <th className="px-4 py-2 text-right">Min. Uyarı Seviyesi</th>
+              <th className="px-4 py-2 text-center">Durum</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-200">
+            {stocks.map((item, idx) => {
+              const isLow = item.current_stock <= item.min_stock_alert;
+              const itemUnit = item.unit === 'm2' ? 'm²' : item.unit === 'adet' ? 'Adet' : item.unit === 'metre' ? 'Metre' : item.unit;
+              return (
+                <tr key={idx} className={isLow ? 'bg-red-50/50' : ''}>
+                  <td className="px-4 py-2 font-medium text-slate-900">{item.product_name}</td>
+                  <td className="px-4 py-2 text-slate-600">{item.thickness}</td>
+                  <td className="px-4 py-2 text-slate-600">{item.color}</td>
+                  <td className={`px-4 py-2 text-right font-bold ${isLow ? 'text-red-700' : 'text-slate-800'}`}>
+                    {item.current_stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {itemUnit}
+                  </td>
+                  <td className="px-4 py-2 text-right text-slate-600">
+                    {item.min_stock_alert.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {itemUnit}
+                  </td>
+                  <td className="px-4 py-2 text-center font-bold">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] ${isLow ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                      {isLow ? 'KRİTİK' : 'NORMAL'}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
