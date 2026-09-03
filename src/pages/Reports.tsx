@@ -43,16 +43,25 @@ interface DailyShipment {
   m2: number;
 }
 
-function BarChartSimple({ data, maxVal, color }: { data: { label: string; value: number }[]; maxVal: number; color: string }) {
+function BarChartSimple({ data, maxVal, color }: { data: { label: string; value: number; formattedValue?: string }[]; maxVal: number; color: string }) {
   return (
-    <div className="flex items-end gap-2 h-40">
+    <div className="flex items-end gap-2 h-44 pt-4 pb-2">
       {data.map((d, i) => {
         const height = maxVal > 0 ? (d.value / maxVal) * 100 : 0;
         return (
-          <div key={i} className="flex-1 flex flex-col items-center gap-1">
-            <span className="text-xs text-slate-500 font-medium">{d.value > 0 ? d.value.toFixed(0) : ''}</span>
-            <div className="w-full rounded-t-md transition-all" style={{ height: `${Math.max(height, 1)}%`, backgroundColor: color }} />
-            <span className="text-xs text-slate-400 text-center leading-tight">{d.label}</span>
+          <div key={i} className="flex-1 flex flex-col items-center gap-1 h-full justify-end">
+            <span className="text-[11px] text-slate-600 font-semibold truncate">
+              {d.value > 0 ? (d.formattedValue || d.value.toLocaleString('tr-TR')) : '0'}
+            </span>
+            <div
+              className="w-full rounded-t-md transition-all duration-300 hover:opacity-80"
+              style={{
+                height: `${Math.max(height, d.value > 0 ? 4 : 2)}%`,
+                backgroundColor: d.value > 0 ? color : '#e2e8f0',
+              }}
+              title={`${d.label}: ${d.formattedValue || d.value}`}
+            />
+            <span className="text-xs text-slate-500 font-medium text-center leading-tight mt-1">{d.label}</span>
           </div>
         );
       })}
@@ -109,6 +118,7 @@ export default function Reports() {
   const [dailyShipments, setDailyShipments] = useState<DailyShipment[]>([]);
   const [unitCost, setUnitCost] = useState(0);
   const [monthlyProduction, setMonthlyProduction] = useState(0);
+  const [shipmentUnit, setShipmentUnit] = useState<'m2' | 'ton'>('m2');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -195,6 +205,7 @@ export default function Reports() {
   const avgMargin = profitItems.length > 0 ? profitItems.reduce((s, p) => s + p.margin_pct, 0) / profitItems.length : 0;
   const lowStocks = stocks.filter(s => s.current_stock <= s.min_stock_alert);
   const maxDailyTonnage = Math.max(...dailyShipments.map(d => d.tonnage), 1);
+  const maxDailyM2 = Math.max(...dailyShipments.map(d => d.m2), 1);
 
   return (
     <div className="p-8">
@@ -245,21 +256,60 @@ export default function Reports() {
 
           <div className="grid grid-cols-2 gap-6">
             <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
-              <h2 className="font-semibold text-slate-900 mb-1 flex items-center gap-2">
-                <Truck size={16} className="text-blue-500" /> Günlük Sevkiyat Tonajı
-              </h2>
-              <p className="text-xs text-slate-400 mb-4">Son 15 gün (ton cinsinden)</p>
+              <div className="flex items-center justify-between mb-1">
+                <h2 className="font-semibold text-slate-900 flex items-center gap-2">
+                  <Truck size={16} className="text-blue-500" /> Günlük Sevkiyat {shipmentUnit === 'm2' ? 'Miktarı' : 'Tonajı'}
+                </h2>
+                <div className="flex bg-slate-100 p-0.5 rounded-lg text-xs font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => setShipmentUnit('m2')}
+                    className={`px-2.5 py-1 rounded-md transition-all ${
+                      shipmentUnit === 'm2'
+                        ? 'bg-white text-blue-600 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    m²
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShipmentUnit('ton')}
+                    className={`px-2.5 py-1 rounded-md transition-all ${
+                      shipmentUnit === 'ton'
+                        ? 'bg-white text-blue-600 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    Ton
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs text-slate-400 mb-4">
+                Son 15 gün ({shipmentUnit === 'm2' ? 'm² cinsinden' : 'kantar tartım net tonajı'})
+              </p>
               {dailyShipments.length === 0 ? (
-                <div className="flex items-center justify-center h-40 text-slate-400 text-sm">Bu dönemde sevkiyat yok.</div>
+                <div className="flex items-center justify-center h-44 text-slate-400 text-sm">Bu dönemde sevkiyat yok.</div>
               ) : (
                 <BarChartSimple
-                  data={dailyShipments.map(d => ({
-                    label: new Date(d.date).toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit' }),
-                    value: parseFloat(d.tonnage.toFixed(2)),
-                  }))}
-                  maxVal={maxDailyTonnage}
+                  data={dailyShipments.map(d => {
+                    const val = shipmentUnit === 'm2' ? d.m2 : d.tonnage;
+                    return {
+                      label: new Date(d.date).toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit' }),
+                      value: shipmentUnit === 'm2' ? Math.round(val) : parseFloat(val.toFixed(2)),
+                      formattedValue: shipmentUnit === 'm2'
+                        ? `${Math.round(val).toLocaleString('tr-TR')} m²`
+                        : `${parseFloat(val.toFixed(2)).toLocaleString('tr-TR')} t`,
+                    };
+                  })}
+                  maxVal={shipmentUnit === 'm2' ? maxDailyM2 : maxDailyTonnage}
                   color="#3b82f6"
                 />
+              )}
+              {shipmentUnit === 'ton' && dailyShipments.some(d => d.tonnage === 0 && d.m2 > 0) && (
+                <p className="text-[11px] text-amber-600 mt-2 bg-amber-50 rounded-lg px-2.5 py-1.5">
+                  💡 Kantar tartımı (Brüt/Dara) girilmemiş sevkiyatlar 0 ton olarak görünür. Sevk edilen metrekareyi görmek için yukarıdan <strong>m²</strong> seçiniz.
+                </p>
               )}
             </div>
 
