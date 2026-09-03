@@ -9,6 +9,7 @@ interface StockItem {
   product_name: string;
   thickness: string;
   color: string;
+  unit: string;
   total_produced: number;
   total_shipped: number;
   current_stock: number;
@@ -41,6 +42,8 @@ interface DailyShipment {
   date: string;
   tonnage: number;
   m2: number;
+  metre: number;
+  adet: number;
 }
 
 function BarChartSimple({ data, maxVal, color }: { data: { label: string; value: number; formattedValue?: string }[]; maxVal: number; color: string }) {
@@ -118,7 +121,7 @@ export default function Reports() {
   const [dailyShipments, setDailyShipments] = useState<DailyShipment[]>([]);
   const [unitCost, setUnitCost] = useState(0);
   const [monthlyProduction, setMonthlyProduction] = useState(0);
-  const [shipmentUnit, setShipmentUnit] = useState<'m2' | 'ton'>('m2');
+  const [shipmentUnit, setShipmentUnit] = useState<'m2' | 'metre' | 'adet' | 'ton'>('m2');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -130,7 +133,7 @@ export default function Reports() {
 
       const [prodMonthRes, shipMonthRes, stocksRes, costsRes, shipmentsRes] = await Promise.all([
         supabase.from('production_entries').select('product_id, net_m2, date').gte('date', startDate).lte('date', endDate),
-        supabase.from('shipment_items').select('product_id, m2, shipments!inner(shipment_date, status)').eq('shipments.status', 'completed').gte('shipments.shipment_date', startDate).lte('shipments.shipment_date', endDate),
+        supabase.from('shipment_items').select('product_id, m2, unit, shipments!inner(shipment_date, status)').eq('shipments.status', 'completed').gte('shipments.shipment_date', startDate).lte('shipments.shipment_date', endDate),
         supabase.from('v_product_stock').select('*'),
         supabase.from('cost_entries').select('cost_type, total_amount').eq('period_month', selectedMonth).eq('period_year', selectedYear),
         supabase.from('shipments').select('*, customers(name)').gte('shipment_date', startDate).lte('shipment_date', endDate).eq('status', 'completed'),
@@ -151,6 +154,7 @@ export default function Reports() {
         product_name: p.product_name,
         thickness: p.thickness,
         color: p.color,
+        unit: p.unit || 'm2',
         total_produced: productMap[p.product_id] || 0,
         total_shipped: shipMap[p.product_id] || 0,
         current_stock: p.current_stock || 0,
@@ -185,13 +189,24 @@ export default function Reports() {
       });
       setProfitItems(profItems);
 
-      const dailyMap: Record<string, { tonnage: number; m2: number }> = {};
+      const dailyMap: Record<string, { tonnage: number; m2: number; metre: number; adet: number }> = {};
       (shipData as any[]).forEach(s => {
         const d = s.shipment_date;
-        if (!dailyMap[d]) dailyMap[d] = { tonnage: 0, m2: 0 };
+        if (!dailyMap[d]) dailyMap[d] = { tonnage: 0, m2: 0, metre: 0, adet: 0 };
         dailyMap[d].tonnage += (s.net_weight || 0) / 1000;
-        dailyMap[d].m2 += s.total_m2;
       });
+
+      (shipMonthRes.data || []).forEach((item: any) => {
+        const d = item.shipments?.shipment_date;
+        if (!d) return;
+        if (!dailyMap[d]) dailyMap[d] = { tonnage: 0, m2: 0, metre: 0, adet: 0 };
+        const u = item.unit || 'm2';
+        const qty = Number(item.m2) || 0;
+        if (u === 'metre') dailyMap[d].metre += qty;
+        else if (u === 'adet') dailyMap[d].adet += qty;
+        else dailyMap[d].m2 += qty;
+      });
+
       const dailyArr = Object.entries(dailyMap).map(([date, v]) => ({ date, ...v })).sort((a, b) => a.date.localeCompare(b.date));
       setDailyShipments(dailyArr.slice(-15));
 
@@ -206,6 +221,8 @@ export default function Reports() {
   const lowStocks = stocks.filter(s => s.current_stock <= s.min_stock_alert);
   const maxDailyTonnage = Math.max(...dailyShipments.map(d => d.tonnage), 1);
   const maxDailyM2 = Math.max(...dailyShipments.map(d => d.m2), 1);
+  const maxDailyMetre = Math.max(...dailyShipments.map(d => d.metre), 1);
+  const maxDailyAdet = Math.max(...dailyShipments.map(d => d.adet), 1);
 
   return (
     <div className="p-8">
@@ -258,57 +275,75 @@ export default function Reports() {
             <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
               <div className="flex items-center justify-between mb-1">
                 <h2 className="font-semibold text-slate-900 flex items-center gap-2">
-                  <Truck size={16} className="text-blue-500" /> Günlük Sevkiyat {shipmentUnit === 'm2' ? 'Miktarı' : 'Tonajı'}
+                  <Truck size={16} className="text-blue-500" /> Günlük Sevkiyat {
+                    shipmentUnit === 'metre' ? 'Metrajı (Metre)' :
+                    shipmentUnit === 'adet' ? 'Miktarı (Adet)' :
+                    shipmentUnit === 'ton' ? 'Tonajı (Ton)' : 'Miktarı (m²)'
+                  }
                 </h2>
-                <div className="flex bg-slate-100 p-0.5 rounded-lg text-xs font-semibold">
-                  <button
-                    type="button"
-                    onClick={() => setShipmentUnit('m2')}
-                    className={`px-2.5 py-1 rounded-md transition-all ${
-                      shipmentUnit === 'm2'
-                        ? 'bg-white text-blue-600 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    m²
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShipmentUnit('ton')}
-                    className={`px-2.5 py-1 rounded-md transition-all ${
-                      shipmentUnit === 'ton'
-                        ? 'bg-white text-blue-600 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    Ton
-                  </button>
+                <div className="flex bg-slate-100 p-0.5 rounded-lg text-xs font-semibold gap-0.5">
+                  {[
+                    { key: 'm2', label: 'm²' },
+                    { key: 'metre', label: 'Metre' },
+                    { key: 'adet', label: 'Adet' },
+                    { key: 'ton', label: 'Ton' },
+                  ].map(tab => (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => setShipmentUnit(tab.key as any)}
+                      className={`px-2.5 py-1 rounded-md transition-all ${
+                        shipmentUnit === tab.key
+                          ? 'bg-white text-blue-600 shadow-sm font-bold'
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
                 </div>
               </div>
               <p className="text-xs text-slate-400 mb-4">
-                Son 15 gün ({shipmentUnit === 'm2' ? 'm² cinsinden' : 'kantar tartım net tonajı'})
+                Son 15 gün ({
+                  shipmentUnit === 'metre' ? 'Bordür vb. metre cinsinden ürünler' :
+                  shipmentUnit === 'adet' ? 'Oluk vb. adetli ürünler' :
+                  shipmentUnit === 'ton' ? 'Kantar tartım net tonajı' : 'Parke vb. m² cinsinden ürünler'
+                })
               </p>
               {dailyShipments.length === 0 ? (
                 <div className="flex items-center justify-center h-44 text-slate-400 text-sm">Bu dönemde sevkiyat yok.</div>
               ) : (
                 <BarChartSimple
                   data={dailyShipments.map(d => {
-                    const val = shipmentUnit === 'm2' ? d.m2 : d.tonnage;
+                    let val = d.m2;
+                    let fmt = `${Math.round(d.m2).toLocaleString('tr-TR')} m²`;
+                    if (shipmentUnit === 'metre') {
+                      val = d.metre;
+                      fmt = `${Math.round(d.metre).toLocaleString('tr-TR')} m`;
+                    } else if (shipmentUnit === 'adet') {
+                      val = d.adet;
+                      fmt = `${Math.round(d.adet).toLocaleString('tr-TR')} adet`;
+                    } else if (shipmentUnit === 'ton') {
+                      val = d.tonnage;
+                      fmt = `${parseFloat(d.tonnage.toFixed(1)).toLocaleString('tr-TR')} t`;
+                    }
                     return {
                       label: new Date(d.date).toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit' }),
-                      value: shipmentUnit === 'm2' ? Math.round(val) : parseFloat(val.toFixed(2)),
-                      formattedValue: shipmentUnit === 'm2'
-                        ? `${Math.round(val).toLocaleString('tr-TR')} m²`
-                        : `${parseFloat(val.toFixed(2)).toLocaleString('tr-TR')} t`,
+                      value: shipmentUnit === 'ton' ? parseFloat(val.toFixed(2)) : Math.round(val),
+                      formattedValue: fmt,
                     };
                   })}
-                  maxVal={shipmentUnit === 'm2' ? maxDailyM2 : maxDailyTonnage}
+                  maxVal={
+                    shipmentUnit === 'metre' ? maxDailyMetre :
+                    shipmentUnit === 'adet' ? maxDailyAdet :
+                    shipmentUnit === 'ton' ? maxDailyTonnage : maxDailyM2
+                  }
                   color="#3b82f6"
                 />
               )}
-              {shipmentUnit === 'ton' && dailyShipments.some(d => d.tonnage === 0 && d.m2 > 0) && (
+              {shipmentUnit === 'ton' && dailyShipments.some(d => d.tonnage === 0 && (d.m2 > 0 || d.metre > 0 || d.adet > 0)) && (
                 <p className="text-[11px] text-amber-600 mt-2 bg-amber-50 rounded-lg px-2.5 py-1.5">
-                  💡 Kantar tartımı (Brüt/Dara) girilmemiş sevkiyatlar 0 ton olarak görünür. Sevk edilen metrekareyi görmek için yukarıdan <strong>m²</strong> seçiniz.
+                  💡 Kantar tartımı (Brüt/Dara) girilmemiş sevkiyatlar 0 ton görünür. Sevk edilen ürün adet, metre veya m² detayını görmek için yukarıdaki birim butonlarını seçebilirsiniz.
                 </p>
               )}
             </div>
@@ -332,18 +367,23 @@ export default function Reports() {
                 <AlertTriangle size={18} className="text-red-500" /> Kritik Stok Uyarısı ({lowStocks.length} ürün)
               </h2>
               <div className="grid grid-cols-2 gap-3">
-                {lowStocks.map(s => (
-                  <div key={s.product_id} className="bg-white rounded-xl p-4 flex items-center justify-between">
-                    <div>
-                      <p className="font-medium text-slate-800 text-sm">{s.product_name}</p>
-                      <p className="text-xs text-slate-400">{s.thickness} / {s.color}</p>
+                {lowStocks.map(s => {
+                  const uLabel = s.unit === 'm2' ? 'm²' : s.unit === 'metre' ? 'Metre' : s.unit === 'adet' ? 'Adet' : s.unit;
+                  return (
+                    <div key={s.product_id} className="bg-white rounded-xl p-4 flex items-center justify-between">
+                      <div>
+                        <p className="font-medium text-slate-800 text-sm">{s.product_name}</p>
+                        <p className="text-xs text-slate-400">{s.thickness} / {s.color}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-lg font-bold text-red-600">
+                          {s.current_stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {uLabel}
+                        </p>
+                        <p className="text-xs text-slate-400">Min: {s.min_stock_alert} {uLabel}</p>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-lg font-bold text-red-600">{s.current_stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²</p>
-                      <p className="text-xs text-slate-400">Min: {s.min_stock_alert} m²</p>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -423,7 +463,7 @@ export default function Reports() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-slate-500 bg-slate-50 border-b border-slate-100">
-                    {['Ürün', 'Kalınlık', 'Renk', 'Üretilen m²', 'Sevk Edilen m²', 'Mevcut Stok', 'Min. Uyarı', 'Durum'].map((h, i) => (
+                    {['Ürün', 'Kalınlık', 'Renk', 'Birim', 'Üretilen Miktar', 'Sevk Edilen Miktar', 'Mevcut Stok', 'Min. Uyarı', 'Durum'].map((h, i) => (
                       <th key={i} className="px-4 py-3 font-medium text-xs uppercase tracking-wider">{h}</th>
                     ))}
                   </tr>
@@ -431,17 +471,19 @@ export default function Reports() {
                 <tbody className="divide-y divide-slate-50">
                   {stocks.map(s => {
                     const isLow = s.current_stock <= s.min_stock_alert;
+                    const uLabel = s.unit === 'm2' ? 'm²' : s.unit === 'metre' ? 'Metre' : s.unit === 'adet' ? 'Adet' : s.unit;
                     return (
                       <tr key={s.product_id} className={`hover:bg-slate-50/50 ${isLow ? 'bg-red-50/30' : ''}`}>
                         <td className="px-4 py-3 font-medium text-slate-800">{s.product_name}</td>
                         <td className="px-4 py-3 text-slate-600">{s.thickness}</td>
                         <td className="px-4 py-3 text-slate-600">{s.color}</td>
-                        <td className="px-4 py-3 text-amber-700 font-semibold">{s.total_produced.toLocaleString('tr-TR', { maximumFractionDigits: 1 })}</td>
-                        <td className="px-4 py-3 text-blue-700">{s.total_shipped.toLocaleString('tr-TR', { maximumFractionDigits: 1 })}</td>
+                        <td className="px-4 py-3 text-slate-500 font-medium">{uLabel}</td>
+                        <td className="px-4 py-3 text-amber-700 font-semibold">{s.total_produced.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {uLabel}</td>
+                        <td className="px-4 py-3 text-blue-700">{s.total_shipped.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {uLabel}</td>
                         <td className="px-4 py-3 font-bold" style={{ color: isLow ? '#dc2626' : '#16a34a' }}>
-                          {s.current_stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²
+                          {s.current_stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {uLabel}
                         </td>
-                        <td className="px-4 py-3 text-slate-500">{s.min_stock_alert} m²</td>
+                        <td className="px-4 py-3 text-slate-500">{s.min_stock_alert} {uLabel}</td>
                         <td className="px-4 py-3">
                           {isLow
                             ? <span className="flex items-center gap-1 text-xs font-medium text-red-600"><AlertTriangle size={12} /> Kritik</span>
