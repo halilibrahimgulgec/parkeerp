@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import {
   Factory, Truck, AlertTriangle, TrendingUp, Package,
-  DollarSign, BarChart2, Calendar, Printer
+  DollarSign, BarChart2, Calendar, Printer, Search
 } from 'lucide-react';
 
 interface KPI {
@@ -112,6 +112,8 @@ export default function Dashboard() {
   const [stocks, setStocks] = useState<StockItem[]>([]);
   const [costBreakdown, setCostBreakdown] = useState<CostBreakdown>({ hammadde: 0, operasyonel: 0, genel: 0 });
   const [recentShipments, setRecentShipments] = useState<RecentShipment[]>([]);
+  const [stockFilter, setStockFilter] = useState<'all' | 'm2' | 'metre' | 'adet'>('all');
+  const [stockSearch, setStockSearch] = useState('');
   const [loading, setLoading] = useState(true);
 
   const today = new Date().toISOString().split('T')[0];
@@ -193,6 +195,29 @@ export default function Dashboard() {
     cancelled: { label: 'İptal', cls: 'bg-red-100 text-red-700' },
   };
 
+  const totalStockM2 = stocks
+    .filter(s => (s.unit || 'm2') === 'm2')
+    .reduce((acc, s) => acc + (s.current_stock || 0), 0);
+
+  const totalStockMetre = stocks
+    .filter(s => s.unit === 'metre')
+    .reduce((acc, s) => acc + (s.current_stock || 0), 0);
+
+  const totalStockAdet = stocks
+    .filter(s => s.unit === 'adet')
+    .reduce((acc, s) => acc + (s.current_stock || 0), 0);
+
+  const filteredStocks = stocks.filter(item => {
+    const itemUnit = item.unit || 'm2';
+    const matchesFilter = stockFilter === 'all' || itemUnit === stockFilter;
+    const q = stockSearch.toLowerCase().trim();
+    const matchesSearch = !q ||
+      item.product_name.toLowerCase().includes(q) ||
+      (item.color || '').toLowerCase().includes(q) ||
+      (item.thickness || '').toLowerCase().includes(q);
+    return matchesFilter && matchesSearch;
+  });
+
   return (
     <div className="p-8">
       <div className="no-print space-y-6">
@@ -239,56 +264,122 @@ export default function Dashboard() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
           <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
               <div className="flex items-center gap-2">
-                <Package size={18} className="text-slate-600" />
-                <h2 className="font-semibold text-slate-900">Anlık Stok Durumu</h2>
+                <Package size={20} className="text-amber-500" />
+                <div>
+                  <h2 className="font-semibold text-slate-900">Anlık Stok Durumu</h2>
+                  <p className="text-xs text-slate-400">Tüm depo ve fabrika sahası stokları</p>
+                </div>
               </div>
               <button
                 onClick={() => window.print()}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors shadow-sm"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors shadow-sm self-start sm:self-auto"
               >
                 <Printer size={13} /> Yazdır
               </button>
             </div>
-          {stocks.length === 0 ? (
-            <p className="text-slate-400 text-sm py-8 text-center">Ürün tanımı bulunamadı.</p>
-          ) : (
-            <div className="space-y-3">
-              {stocks.map(item => {
-                const pct = item.min_stock_alert > 0
-                  ? Math.min((item.current_stock / (item.min_stock_alert * 3)) * 100, 100)
-                  : 100;
-                const isLow = item.current_stock <= item.min_stock_alert;
-                const itemUnit = item.unit === 'm2' ? 'm²' : item.unit === 'adet' ? 'Adet' : item.unit === 'metre' ? 'Metre' : item.unit;
-                return (
-                  <div key={item.product_id} className="flex items-center gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm font-medium text-slate-700 truncate">
-                          {item.product_name} — {item.thickness} / {item.color}
-                        </span>
-                        <div className="flex items-center gap-2 ml-2">
-                          {isLow && <AlertTriangle size={14} className="text-red-500 flex-shrink-0" />}
-                          <span className={`text-sm font-semibold ${isLow ? 'text-red-600' : 'text-slate-900'}`}>
-                            {item.current_stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {itemUnit}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="w-full bg-slate-100 rounded-full h-2">
-                        <div
-                          className={`h-2 rounded-full transition-all ${isLow ? 'bg-red-400' : 'bg-amber-400'}`}
-                          style={{ width: `${Math.max(pct, 2)}%` }}
-                        />
-                      </div>
-                      <p className="text-xs text-slate-400 mt-0.5">Min. uyarı: {item.min_stock_alert} {itemUnit}</p>
-                    </div>
-                  </div>
-                );
-              })}
+
+            {/* ── TOPLAM STOK ÖZET KARTLARI ── */}
+            <div className="grid grid-cols-3 gap-2.5 sm:gap-3 mb-5">
+              <div className="bg-blue-50/70 border border-blue-100 rounded-xl p-3 text-center transition-all hover:shadow-sm">
+                <span className="text-[11px] sm:text-xs text-blue-700 font-medium block mb-0.5">Toplam Parke</span>
+                <span className="text-base sm:text-xl font-bold text-blue-950">
+                  {totalStockM2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })}
+                </span>
+                <span className="text-[11px] font-semibold text-blue-600 ml-1">m²</span>
+              </div>
+              <div className="bg-emerald-50/70 border border-emerald-100 rounded-xl p-3 text-center transition-all hover:shadow-sm">
+                <span className="text-[11px] sm:text-xs text-emerald-700 font-medium block mb-0.5">Toplam Bordür</span>
+                <span className="text-base sm:text-xl font-bold text-emerald-950">
+                  {totalStockMetre.toLocaleString('tr-TR', { maximumFractionDigits: 1 })}
+                </span>
+                <span className="text-[11px] font-semibold text-emerald-600 ml-1">Metre</span>
+              </div>
+              <div className="bg-purple-50/70 border border-purple-100 rounded-xl p-3 text-center transition-all hover:shadow-sm">
+                <span className="text-[11px] sm:text-xs text-purple-700 font-medium block mb-0.5">Toplam Parça / Oluk</span>
+                <span className="text-base sm:text-xl font-bold text-purple-950">
+                  {totalStockAdet.toLocaleString('tr-TR', { maximumFractionDigits: 1 })}
+                </span>
+                <span className="text-[11px] font-semibold text-purple-600 ml-1">Adet</span>
+              </div>
             </div>
-          )}
-        </div>
+
+            {/* ── FİLTRE VE ARAMA ÇUBUĞU ── */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 mb-4">
+              <div className="flex bg-slate-100 p-0.5 rounded-lg text-xs font-semibold overflow-x-auto">
+                {[
+                  { key: 'all', label: 'Tümü' },
+                  { key: 'm2', label: 'Parkeler (m²)' },
+                  { key: 'metre', label: 'Bordürler (Metre)' },
+                  { key: 'adet', label: 'Adetli Ürünler' },
+                ].map(tab => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setStockFilter(tab.key as any)}
+                    className={`flex-1 sm:flex-none px-3 py-1.5 rounded-md transition-all whitespace-nowrap ${
+                      stockFilter === tab.key
+                        ? 'bg-white text-slate-900 shadow-sm font-bold'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+              <div className="relative">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Ürün veya renk ara..."
+                  value={stockSearch}
+                  onChange={e => setStockSearch(e.target.value)}
+                  className="w-full sm:w-48 text-xs border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                />
+              </div>
+            </div>
+
+            {stocks.length === 0 ? (
+              <p className="text-slate-400 text-sm py-8 text-center">Ürün tanımı bulunamadı.</p>
+            ) : filteredStocks.length === 0 ? (
+              <p className="text-slate-400 text-sm py-8 text-center">Filtreye veya aramaya uygun ürün bulunamadı.</p>
+            ) : (
+              <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
+                {filteredStocks.map(item => {
+                  const pct = item.min_stock_alert > 0
+                    ? Math.min((item.current_stock / (item.min_stock_alert * 3)) * 100, 100)
+                    : 100;
+                  const isLow = item.current_stock <= item.min_stock_alert;
+                  const itemUnit = item.unit === 'm2' ? 'm²' : item.unit === 'adet' ? 'Adet' : item.unit === 'metre' ? 'Metre' : item.unit;
+                  return (
+                    <div key={item.product_id} className="flex items-center gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-sm font-medium text-slate-700 truncate">
+                            {item.product_name} — {item.thickness} / {item.color}
+                          </span>
+                          <div className="flex items-center gap-2 ml-2">
+                            {isLow && <AlertTriangle size={14} className="text-red-500 flex-shrink-0" />}
+                            <span className={`text-sm font-semibold ${isLow ? 'text-red-600' : 'text-slate-900'}`}>
+                              {item.current_stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {itemUnit}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="w-full bg-slate-100 rounded-full h-2">
+                          <div
+                            className={`h-2 rounded-full transition-all ${isLow ? 'bg-red-400' : 'bg-amber-400'}`}
+                            style={{ width: `${Math.max(pct, 2)}%` }}
+                          />
+                        </div>
+                        <p className="text-xs text-slate-400 mt-0.5">Min. uyarı: {item.min_stock_alert} {itemUnit}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
           <div className="flex items-center gap-2 mb-4">
@@ -402,6 +493,7 @@ export default function Dashboard() {
               <th className="px-4 py-2">Ürün Adı</th>
               <th className="px-4 py-2">Kalınlık</th>
               <th className="px-4 py-2">Renk</th>
+              <th className="px-4 py-2">Birim</th>
               <th className="px-4 py-2 text-right">Mevcut Stok</th>
               <th className="px-4 py-2 text-right">Min. Uyarı Seviyesi</th>
               <th className="px-4 py-2 text-center">Durum</th>
@@ -416,6 +508,7 @@ export default function Dashboard() {
                   <td className="px-4 py-2 font-medium text-slate-900">{item.product_name}</td>
                   <td className="px-4 py-2 text-slate-600">{item.thickness}</td>
                   <td className="px-4 py-2 text-slate-600">{item.color}</td>
+                  <td className="px-4 py-2 text-slate-600 font-medium">{itemUnit}</td>
                   <td className={`px-4 py-2 text-right font-bold ${isLow ? 'text-red-700' : 'text-slate-800'}`}>
                     {item.current_stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {itemUnit}
                   </td>
@@ -431,6 +524,18 @@ export default function Dashboard() {
               );
             })}
           </tbody>
+          <tfoot className="border-t-2 border-slate-800 bg-slate-100 font-bold">
+            <tr>
+              <td colSpan={4} className="px-4 py-3 text-slate-900 text-sm font-bold">GENEL TOPLAM MEVCUT STOK</td>
+              <td colSpan={3} className="px-4 py-3 text-right">
+                <div className="space-y-0.5 text-xs text-slate-800">
+                  <div>Toplam Parke: <span className="font-bold text-slate-900">{totalStockM2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²</span></div>
+                  <div>Toplam Bordür: <span className="font-bold text-slate-900">{totalStockMetre.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Metre</span></div>
+                  <div>Toplam Parça/Oluk: <span className="font-bold text-slate-900">{totalStockAdet.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Adet</span></div>
+                </div>
+              </td>
+            </tr>
+          </tfoot>
         </table>
       </div>
     </div>

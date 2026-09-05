@@ -224,6 +224,18 @@ export default function Reports() {
   const maxDailyMetre = Math.max(...dailyShipments.map(d => d.metre), 1);
   const maxDailyAdet = Math.max(...dailyShipments.map(d => d.adet), 1);
 
+  const totalStockM2 = stocks.filter(s => (s.unit || 'm2') === 'm2').reduce((acc, s) => acc + s.current_stock, 0);
+  const totalStockMetre = stocks.filter(s => s.unit === 'metre').reduce((acc, s) => acc + s.current_stock, 0);
+  const totalStockAdet = stocks.filter(s => s.unit === 'adet').reduce((acc, s) => acc + s.current_stock, 0);
+
+  const totalProdM2 = stocks.filter(s => (s.unit || 'm2') === 'm2').reduce((acc, s) => acc + s.total_produced, 0);
+  const totalProdMetre = stocks.filter(s => s.unit === 'metre').reduce((acc, s) => acc + s.total_produced, 0);
+  const totalProdAdet = stocks.filter(s => s.unit === 'adet').reduce((acc, s) => acc + s.total_produced, 0);
+
+  const totalShipM2 = stocks.filter(s => (s.unit || 'm2') === 'm2').reduce((acc, s) => acc + s.total_shipped, 0);
+  const totalShipMetre = stocks.filter(s => s.unit === 'metre').reduce((acc, s) => acc + s.total_shipped, 0);
+  const totalShipAdet = stocks.filter(s => s.unit === 'adet').reduce((acc, s) => acc + s.total_shipped, 0);
+
   return (
     <div className="p-8">
       <div className="flex items-center justify-between mb-6">
@@ -454,10 +466,24 @@ export default function Reports() {
           </div>
 
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100">
-            <div className="p-6 border-b border-slate-100">
-              <h2 className="font-semibold text-slate-900 flex items-center gap-2">
-                <Package size={18} className="text-amber-500" /> Ürün Bazlı Stok Durumu
-              </h2>
+            <div className="p-6 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h2 className="font-semibold text-slate-900 flex items-center gap-2">
+                  <Package size={18} className="text-amber-500" /> Ürün Bazlı Stok Durumu
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">Dönem içi üretim, sevkiyat ve anlık mevcut stoklar</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <div className="bg-blue-50 text-blue-800 font-semibold px-3 py-1.5 rounded-lg border border-blue-100">
+                  Toplam Parke: <span className="font-bold">{totalStockM2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²</span>
+                </div>
+                <div className="bg-emerald-50 text-emerald-800 font-semibold px-3 py-1.5 rounded-lg border border-emerald-100">
+                  Toplam Bordür: <span className="font-bold">{totalStockMetre.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Metre</span>
+                </div>
+                <div className="bg-purple-50 text-purple-800 font-semibold px-3 py-1.5 rounded-lg border border-purple-100">
+                  Toplam Parça: <span className="font-bold">{totalStockAdet.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Adet</span>
+                </div>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -493,6 +519,31 @@ export default function Reports() {
                     );
                   })}
                 </tbody>
+                <tfoot className="border-t-2 border-slate-200 bg-slate-50 font-semibold text-xs">
+                  <tr>
+                    <td colSpan={4} className="px-4 py-2.5 text-slate-700">Parke Taşları Toplamı (m²)</td>
+                    <td className="px-4 py-2.5 text-amber-700 font-bold">{totalProdM2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²</td>
+                    <td className="px-4 py-2.5 text-blue-700 font-bold">{totalShipM2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²</td>
+                    <td className="px-4 py-2.5 text-slate-900 font-bold">{totalStockM2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²</td>
+                    <td colSpan={2} className="px-4 py-2.5"></td>
+                  </tr>
+                  <tr>
+                    <td colSpan={4} className="px-4 py-2.5 text-slate-700">Bordürler Toplamı (Metre)</td>
+                    <td className="px-4 py-2.5 text-amber-700 font-bold">{totalProdMetre.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Metre</td>
+                    <td className="px-4 py-2.5 text-blue-700 font-bold">{totalShipMetre.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Metre</td>
+                    <td className="px-4 py-2.5 text-slate-900 font-bold">{totalStockMetre.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Metre</td>
+                    <td colSpan={2} className="px-4 py-2.5"></td>
+                  </tr>
+                  {stocks.some(s => s.unit === 'adet') && (
+                    <tr>
+                      <td colSpan={4} className="px-4 py-2.5 text-slate-700">Adetli Ürünler Toplamı (Adet)</td>
+                      <td className="px-4 py-2.5 text-amber-700 font-bold">{totalProdAdet.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Adet</td>
+                      <td className="px-4 py-2.5 text-blue-700 font-bold">{totalShipAdet.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Adet</td>
+                      <td className="px-4 py-2.5 text-slate-900 font-bold">{totalStockAdet.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Adet</td>
+                      <td colSpan={2} className="px-4 py-2.5"></td>
+                    </tr>
+                  )}
+                </tfoot>
               </table>
             </div>
           </div>
