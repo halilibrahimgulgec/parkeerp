@@ -563,7 +563,7 @@ export default function ShipmentPage() {
     const [custRes, prodRes, shipRes] = await Promise.all([
       supabase.from('customers').select('*').eq('is_active', true).order('name'),
       supabase.from('products').select('*').eq('is_active', true).order('name'),
-      supabase.from('shipments').select('*, customers(*), sites(*)').order('shipment_date', { ascending: false }).order('created_at', { ascending: false }).limit(100),
+      supabase.from('shipments').select('*, customers(*), sites(*)').order('shipment_date', { ascending: false }).order('created_at', { ascending: false }),
     ]);
     setCustomers(custRes.data || []);
     setProducts(prodRes.data || []);

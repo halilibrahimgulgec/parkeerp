@@ -199,7 +199,7 @@ export default function Production() {
     setLoading(true);
     const [prodRes, prodListRes] = await Promise.all([
       supabase.from('products').select('*').eq('is_active', true).order('name'),
-      supabase.from('production_entries').select('*, products(*)').order('date', { ascending: false }).order('created_at', { ascending: false }).limit(100),
+      supabase.from('production_entries').select('*, products(*)').order('date', { ascending: false }).order('created_at', { ascending: false }),
     ]);
     setProducts(prodRes.data || []);
     setEntries((prodListRes.data || []) as ProductionEntry[]);
