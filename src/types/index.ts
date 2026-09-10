@@ -153,6 +153,7 @@ export interface Employee {
   overtime_multiplier: number;
   monthly_hours_divisor: number;
   iban: string;
+  default_shift?: 'Gündüz' | 'Gece';
   is_active: boolean;
   created_at: string;
 }
@@ -162,6 +163,7 @@ export interface AttendanceRecord {
   employee_id: string;
   date: string;
   status: 'full_day' | 'half_day' | 'leave' | 'absent' | 'holiday';
+  shift?: 'Gündüz' | 'Gece';
   overtime_hours: number;
   overtime_multiplier: number;
   notes: string;

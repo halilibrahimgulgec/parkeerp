@@ -7,7 +7,8 @@ import {
   Users, Calendar, Clock, DollarSign, Plus, Search,
   Edit2, Trash2, CheckCircle2, AlertCircle, Printer,
   FileSpreadsheet, ArrowRight, Wallet, TrendingUp,
-  ChevronLeft, ChevronRight, UserPlus, Save, RefreshCw
+  ChevronLeft, ChevronRight, UserPlus, Save, RefreshCw,
+  Sun, Moon
 } from 'lucide-react';
 
 type Tab = 'puantaj' | 'bordro' | 'avans' | 'personel';
@@ -47,11 +48,12 @@ export default function LaborTracking() {
   // Puantaj view states
   const [puantajView, setPuantajView] = useState<PuantajViewMode>('matrix');
   const [selectedDailyDate, setSelectedDailyDate] = useState(new Date().toISOString().split('T')[0]);
-  const [dailyForm, setDailyForm] = useState<Record<string, { status: string; overtime_hours: number; overtime_multiplier: number; notes: string }>>({});
+  const [dailyForm, setDailyForm] = useState<Record<string, { status: string; shift: 'Gündüz' | 'Gece'; overtime_hours: number; overtime_multiplier: number; notes: string }>>({});
   const [savingDaily, setSavingDaily] = useState(false);
+  const [shiftFilter, setShiftFilter] = useState<'all' | 'Gündüz' | 'Gece'>('all');
 
   // Cell quick edit modal for matrix
-  const [cellEdit, setCellEdit] = useState<{ empId: string; date: string; empName: string; status: string; overtime_hours: number; overtime_multiplier: number; notes: string } | null>(null);
+  const [cellEdit, setCellEdit] = useState<{ empId: string; date: string; empName: string; status: string; shift: 'Gündüz' | 'Gece'; overtime_hours: number; overtime_multiplier: number; notes: string } | null>(null);
 
   // Cost integration state
   const [transferringCost, setTransferringCost] = useState(false);
@@ -119,6 +121,7 @@ export default function LaborTracking() {
       const existing = attMap[emp.id]?.[selectedDailyDate];
       initial[emp.id] = {
         status: existing?.status || 'full_day',
+        shift: (existing?.shift as 'Gündüz' | 'Gece') || emp.default_shift || 'Gündüz',
         overtime_hours: existing?.overtime_hours || 0,
         overtime_multiplier: existing?.overtime_multiplier || emp.overtime_multiplier || 1.5,
         notes: existing?.notes || '',
@@ -136,6 +139,8 @@ export default function LaborTracking() {
       let leaves = 0;
       let holidays = 0;
       let absents = 0;
+      let dayShifts = 0;
+      let nightShifts = 0;
       let totalOvertimeHours = 0;
       let totalOvertimeAmount = 0;
 
@@ -146,9 +151,15 @@ export default function LaborTracking() {
         : (emp.base_wage / 7.5); // Daily wage assumes 7.5 hour workday
 
       Object.values(empAtt).forEach(rec => {
-        if (rec.status === 'full_day') fullDays++;
-        else if (rec.status === 'half_day') halfDays++;
-        else if (rec.status === 'leave') leaves++;
+        if (rec.status === 'full_day') {
+          fullDays++;
+          if (rec.shift === 'Gece') nightShifts++;
+          else dayShifts++;
+        } else if (rec.status === 'half_day') {
+          halfDays++;
+          if (rec.shift === 'Gece') nightShifts += 0.5;
+          else dayShifts += 0.5;
+        } else if (rec.status === 'leave') leaves++;
         else if (rec.status === 'holiday') holidays++;
         else if (rec.status === 'absent') absents++;
 
@@ -197,6 +208,8 @@ export default function LaborTracking() {
         holidays,
         absents,
         workedDays,
+        dayShifts,
+        nightShifts,
         hourlyRate,
         earnedBaseWage,
         totalOvertimeHours,
@@ -236,6 +249,7 @@ export default function LaborTracking() {
         employee_id: empId,
         date: selectedDailyDate,
         status: data.status,
+        shift: data.shift || 'Gündüz',
         overtime_hours: Number(data.overtime_hours) || 0,
         overtime_multiplier: Number(data.overtime_multiplier) || 1.5,
         notes: data.notes || '',
@@ -260,6 +274,7 @@ export default function LaborTracking() {
         employee_id: cellEdit.empId,
         date: cellEdit.date,
         status: cellEdit.status,
+        shift: cellEdit.shift || 'Gündüz',
         overtime_hours: Number(cellEdit.overtime_hours) || 0,
         overtime_multiplier: Number(cellEdit.overtime_multiplier) || 1.5,
         notes: cellEdit.notes || '',
@@ -520,6 +535,8 @@ export default function LaborTracking() {
                                 else if (status === 'holiday') totalWorkDays += 1;
                                 totalOtHours += Number(ot);
 
+                                const isNight = rec?.shift === 'Gece';
+
                                 return (
                                   <td
                                     key={d.day}
@@ -528,6 +545,7 @@ export default function LaborTracking() {
                                       empName: emp.full_name,
                                       date: d.dateStr,
                                       status: rec?.status || (d.isSunday ? 'holiday' : 'full_day'),
+                                      shift: (rec?.shift as 'Gündüz' | 'Gece') || emp.default_shift || 'Gündüz',
                                       overtime_hours: ot,
                                       overtime_multiplier: rec?.overtime_multiplier || emp.overtime_multiplier || 1.5,
                                       notes: rec?.notes || '',
@@ -535,10 +553,15 @@ export default function LaborTracking() {
                                     className={`p-1 border-r border-slate-100 cursor-pointer transition-transform hover:scale-105 ${
                                       d.isSunday ? 'bg-amber-50/30' : ''
                                     }`}
-                                    title={`${emp.full_name} - ${d.dateStr}: ${cfg.label} ${ot > 0 ? `(+${ot} saat mesai)` : ''}`}
+                                    title={`${emp.full_name} - ${d.dateStr}: ${cfg.label} (${isNight ? 'Gece' : 'Gündüz'} Vardiyası) ${ot > 0 ? `(+${ot} saat mesai)` : ''}`}
                                   >
-                                    <div className={`w-full h-8 flex flex-col items-center justify-center rounded border ${cfg.bg} ${cfg.text}`}>
-                                      <span className="font-bold text-[11px] leading-none">{cfg.short}</span>
+                                    <div className={`relative w-full h-8 flex flex-col items-center justify-center rounded border ${
+                                      isNight ? 'bg-indigo-50 border-indigo-200 text-indigo-950' : `${cfg.bg} ${cfg.text}`
+                                    }`}>
+                                      <div className="flex items-center gap-0.5 leading-none">
+                                        <span className="font-bold text-[11px] leading-none">{cfg.short}</span>
+                                        {isNight && <Moon className="w-2.5 h-2.5 text-indigo-600 inline" />}
+                                      </div>
                                       {ot > 0 && (
                                         <span className="text-[9px] font-black text-amber-900 leading-none mt-0.5">
                                           +{ot}
@@ -564,36 +587,94 @@ export default function LaborTracking() {
               ) : (
                 /* View 2: GÜNLÜK HIZLI GİRİŞ */
                 <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 space-y-6">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
-                    <div className="flex items-center gap-3">
-                      <label className="text-sm font-semibold text-slate-700">Tarih Seçiniz:</label>
-                      <input
-                        type="date"
-                        value={selectedDailyDate}
-                        onChange={e => setSelectedDailyDate(e.target.value)}
-                        className="border border-slate-200 rounded-xl px-3 py-1.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-amber-400"
-                      />
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="flex items-center gap-2">
+                        <label className="text-sm font-semibold text-slate-700">Tarih Seçiniz:</label>
+                        <input
+                          type="date"
+                          value={selectedDailyDate}
+                          onChange={e => setSelectedDailyDate(e.target.value)}
+                          className="border border-slate-200 rounded-xl px-3 py-1.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        />
+                      </div>
+
+                      {/* Vardiya Filtre Sekmeleri */}
+                      <div className="flex items-center bg-slate-100 p-0.5 rounded-xl">
+                        <button
+                          type="button"
+                          onClick={() => setShiftFilter('all')}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                            shiftFilter === 'all' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          Tümü ({employees.filter(e => e.is_active).length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShiftFilter('Gündüz')}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                            shiftFilter === 'Gündüz' ? 'bg-white text-amber-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          <Sun className="w-3.5 h-3.5 text-amber-500" />
+                          Gündüz ({employees.filter(e => e.is_active && (dailyForm[e.id]?.shift || e.default_shift || 'Gündüz') === 'Gündüz').length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShiftFilter('Gece')}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                            shiftFilter === 'Gece' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          <Moon className="w-3.5 h-3.5 text-indigo-500" />
+                          Gece ({employees.filter(e => e.is_active && (dailyForm[e.id]?.shift || e.default_shift || 'Gündüz') === 'Gece').length})
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
+
+                    {/* Toplu İşlem Butonları */}
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
                         onClick={() => {
                           const updated = { ...dailyForm };
-                          Object.keys(updated).forEach(id => {
-                            updated[id].status = 'full_day';
+                          employees.filter(e => e.is_active).forEach(emp => {
+                            const curShift = updated[emp.id]?.shift || emp.default_shift || 'Gündüz';
+                            if (curShift === 'Gündüz') {
+                              updated[emp.id] = { ...updated[emp.id], status: 'full_day' };
+                            }
                           });
                           setDailyForm(updated);
                         }}
-                        className="px-3 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg text-xs font-semibold transition-colors"
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200 rounded-lg text-xs font-semibold transition-colors"
                       >
-                        Tümünü Tam Gün Yap
+                        <Sun className="w-3.5 h-3.5 text-amber-600" />
+                        Gündüzü Tam Gün Yap
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated = { ...dailyForm };
+                          employees.filter(e => e.is_active).forEach(emp => {
+                            const curShift = updated[emp.id]?.shift || emp.default_shift || 'Gündüz';
+                            if (curShift === 'Gece') {
+                              updated[emp.id] = { ...updated[emp.id], status: 'full_day' };
+                            }
+                          });
+                          setDailyForm(updated);
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 border border-indigo-200 rounded-lg text-xs font-semibold transition-colors"
+                      >
+                        <Moon className="w-3.5 h-3.5 text-indigo-600" />
+                        Geceyi Tam Gün Yap
                       </button>
                       <button
                         type="button"
                         onClick={() => {
                           const updated = { ...dailyForm };
                           Object.keys(updated).forEach(id => {
-                            updated[id].status = 'holiday';
+                            updated[id] = { ...updated[id], status: 'holiday' };
                           });
                           setDailyForm(updated);
                         }}
@@ -605,81 +686,128 @@ export default function LaborTracking() {
                   </div>
 
                   <div className="divide-y divide-slate-100">
-                    {employees.filter(e => e.is_active).map(emp => {
-                      const item = dailyForm[emp.id] || { status: 'full_day', overtime_hours: 0, overtime_multiplier: 1.5, notes: '' };
-                      return (
-                        <div key={emp.id} className="py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-slate-50/60 rounded-xl px-3 transition-colors">
-                          <div className="w-48">
-                            <h4 className="font-semibold text-slate-900 text-sm">{emp.full_name}</h4>
-                            <p className="text-xs text-slate-400">{emp.role_title}</p>
+                    {employees
+                      .filter(e => e.is_active)
+                      .filter(emp => {
+                        if (shiftFilter === 'all') return true;
+                        const curShift = dailyForm[emp.id]?.shift || emp.default_shift || 'Gündüz';
+                        return curShift === shiftFilter;
+                      })
+                      .map(emp => {
+                        const item = dailyForm[emp.id] || { status: 'full_day', shift: emp.default_shift || 'Gündüz', overtime_hours: 0, overtime_multiplier: 1.5, notes: '' };
+                        return (
+                          <div key={emp.id} className="py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-slate-50/60 rounded-xl px-3 transition-colors">
+                            <div className="w-48">
+                              <h4 className="font-semibold text-slate-900 text-sm">{emp.full_name}</h4>
+                              <p className="text-xs text-slate-400">{emp.role_title}</p>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-3">
+                              {/* Vardiya Seçimi */}
+                              <div>
+                                <label className="block text-[10px] text-slate-400 font-medium mb-1">Vardiya</label>
+                                <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                                  <button
+                                    type="button"
+                                    onClick={() => setDailyForm(df => ({
+                                      ...df,
+                                      [emp.id]: { ...df[emp.id], shift: 'Gündüz' }
+                                    }))}
+                                    className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs transition-all ${
+                                      item.shift === 'Gündüz'
+                                        ? 'bg-amber-500 text-white font-semibold shadow-sm'
+                                        : 'text-slate-600 hover:text-slate-900'
+                                    }`}
+                                    title="Gündüz Vardiyası"
+                                  >
+                                    <Sun className="w-3 h-3" />
+                                    <span>Gündüz</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setDailyForm(df => ({
+                                      ...df,
+                                      [emp.id]: { ...df[emp.id], shift: 'Gece' }
+                                    }))}
+                                    className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs transition-all ${
+                                      item.shift === 'Gece'
+                                        ? 'bg-indigo-600 text-white font-semibold shadow-sm'
+                                        : 'text-slate-600 hover:text-slate-900'
+                                    }`}
+                                    title="Gece Vardiyası"
+                                  >
+                                    <Moon className="w-3 h-3" />
+                                    <span>Gece</span>
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Durum */}
+                              <div>
+                                <label className="block text-[10px] text-slate-400 font-medium mb-1">Durum</label>
+                                <select
+                                  value={item.status}
+                                  onChange={e => setDailyForm(df => ({
+                                    ...df,
+                                    [emp.id]: { ...df[emp.id], status: e.target.value }
+                                  }))}
+                                  className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-amber-400"
+                                >
+                                  {Object.entries(STATUS_CONFIG).map(([k, cfg]) => (
+                                    <option key={k} value={k}>{cfg.label}</option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div>
+                                <label className="block text-[10px] text-slate-400 font-medium mb-1">Fazla Mesai (Saat)</label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="24"
+                                  step="0.5"
+                                  value={item.overtime_hours}
+                                  onChange={e => setDailyForm(df => ({
+                                    ...df,
+                                    [emp.id]: { ...df[emp.id], overtime_hours: Number(e.target.value) }
+                                  }))}
+                                  className="w-20 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-center focus:outline-none focus:ring-2 focus:ring-amber-400"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="block text-[10px] text-slate-400 font-medium mb-1">Mesai Katsayısı</label>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="5"
+                                  step="0.1"
+                                  value={item.overtime_multiplier}
+                                  onChange={e => setDailyForm(df => ({
+                                    ...df,
+                                    [emp.id]: { ...df[emp.id], overtime_multiplier: Number(e.target.value) }
+                                  }))}
+                                  className="w-16 border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-center focus:outline-none focus:ring-2 focus:ring-amber-400"
+                                />
+                              </div>
+
+                              <div className="flex-1 min-w-[160px]">
+                                <label className="block text-[10px] text-slate-400 font-medium mb-1">Not</label>
+                                <input
+                                  type="text"
+                                  placeholder="Örn: Özel açıklama"
+                                  value={item.notes}
+                                  onChange={e => setDailyForm(df => ({
+                                    ...df,
+                                    [emp.id]: { ...df[emp.id], notes: e.target.value }
+                                  }))}
+                                  className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"
+                                />
+                              </div>
+                            </div>
                           </div>
-
-                          <div className="flex flex-wrap items-center gap-3">
-                            <div>
-                              <label className="block text-[10px] text-slate-400 font-medium mb-1">Durum</label>
-                              <select
-                                value={item.status}
-                                onChange={e => setDailyForm(df => ({
-                                  ...df,
-                                  [emp.id]: { ...df[emp.id], status: e.target.value }
-                                }))}
-                                className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-amber-400"
-                              >
-                                {Object.entries(STATUS_CONFIG).map(([k, cfg]) => (
-                                  <option key={k} value={k}>{cfg.label}</option>
-                                ))}
-                              </select>
-                            </div>
-
-                            <div>
-                              <label className="block text-[10px] text-slate-400 font-medium mb-1">Fazla Mesai (Saat)</label>
-                              <input
-                                type="number"
-                                min="0"
-                                max="24"
-                                step="0.5"
-                                value={item.overtime_hours}
-                                onChange={e => setDailyForm(df => ({
-                                  ...df,
-                                  [emp.id]: { ...df[emp.id], overtime_hours: Number(e.target.value) }
-                                }))}
-                                className="w-20 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-center focus:outline-none focus:ring-2 focus:ring-amber-400"
-                              />
-                            </div>
-
-                            <div>
-                              <label className="block text-[10px] text-slate-400 font-medium mb-1">Mesai Katsayısı</label>
-                              <input
-                                type="number"
-                                min="1"
-                                max="5"
-                                step="0.1"
-                                value={item.overtime_multiplier}
-                                onChange={e => setDailyForm(df => ({
-                                  ...df,
-                                  [emp.id]: { ...df[emp.id], overtime_multiplier: Number(e.target.value) }
-                                }))}
-                                className="w-16 border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-center focus:outline-none focus:ring-2 focus:ring-amber-400"
-                              />
-                            </div>
-
-                            <div className="flex-1 min-w-[160px]">
-                              <label className="block text-[10px] text-slate-400 font-medium mb-1">Not</label>
-                              <input
-                                type="text"
-                                placeholder="Örn: Gece vardiyası"
-                                value={item.notes}
-                                onChange={e => setDailyForm(df => ({
-                                  ...df,
-                                  [emp.id]: { ...df[emp.id], notes: e.target.value }
-                                }))}
-                                className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
                   </div>
 
                   <div className="flex justify-end pt-4 border-t border-slate-100">
@@ -792,8 +920,15 @@ export default function LaborTracking() {
                           <td className="px-3 py-3 text-right font-mono text-slate-700">
                             ₺{row.emp.base_wage.toLocaleString('tr-TR')}
                           </td>
-                          <td className="px-3 py-3 text-center font-bold text-slate-800">
-                            {row.workedDays} gün
+                          <td className="px-3 py-3 text-center">
+                            <div className="font-bold text-slate-800">{row.workedDays} gün</div>
+                            {(row.dayShifts > 0 || row.nightShifts > 0) && (
+                              <div className="text-[10px] text-slate-400 font-medium flex items-center justify-center gap-1.5 mt-0.5">
+                                <span title="Gündüz Vardiyası">☀️ {row.dayShifts}</span>
+                                <span>•</span>
+                                <span title="Gece Vardiyası">🌙 {row.nightShifts}</span>
+                              </div>
+                            )}
                           </td>
                           <td className="px-3 py-3 text-right font-semibold text-slate-900 font-mono">
                             ₺{row.earnedBaseWage.toLocaleString('tr-TR', { maximumFractionDigits: 0 })}
@@ -979,6 +1114,7 @@ export default function LaborTracking() {
                       <th className="px-3 py-3">Görev / Pozisyon</th>
                       <th className="px-3 py-3">Telefon</th>
                       <th className="px-3 py-3">Ücret Modeli</th>
+                      <th className="px-3 py-3 text-center">Vardiya</th>
                       <th className="px-3 py-3 text-right">Taban Ücret</th>
                       <th className="px-3 py-3 text-center">Mesai Çarpanı</th>
                       <th className="px-3 py-3 text-center">Durum</th>
@@ -996,6 +1132,14 @@ export default function LaborTracking() {
                           <td className="px-3 py-3">
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-700">
                               {emp.wage_type === 'monthly' ? 'Aylık Sabit' : 'Günlük Yevmiye'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3 text-center">
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                              emp.default_shift === 'Gece' ? 'bg-indigo-50 text-indigo-700' : 'bg-amber-50 text-amber-700'
+                            }`}>
+                              {emp.default_shift === 'Gece' ? <Moon size={11} /> : <Sun size={11} />}
+                              {emp.default_shift || 'Gündüz'}
                             </span>
                           </td>
                           <td className="px-3 py-3 text-right font-bold text-slate-900 font-mono">
@@ -1065,6 +1209,37 @@ export default function LaborTracking() {
         <Modal title={`Puantaj Güncelle — ${cellEdit.empName}`} onClose={() => setCellEdit(null)} size="sm">
           <div className="space-y-4">
             <p className="text-xs text-slate-400">Tarih: {new Date(cellEdit.date).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' })}</p>
+
+            {/* Vardiya Seçimi */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Çalışılan Vardiya</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCellEdit({ ...cellEdit, shift: 'Gündüz' })}
+                  className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl border text-xs font-semibold transition-all ${
+                    cellEdit.shift === 'Gündüz'
+                      ? 'bg-amber-50 border-amber-400 text-amber-900 shadow-sm'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <Sun className="w-4 h-4 text-amber-500" />
+                  <span>Gündüz Vardiyası</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCellEdit({ ...cellEdit, shift: 'Gece' })}
+                  className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl border text-xs font-semibold transition-all ${
+                    cellEdit.shift === 'Gece'
+                      ? 'bg-indigo-50 border-indigo-400 text-indigo-900 shadow-sm'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <Moon className="w-4 h-4 text-indigo-500" />
+                  <span>Gece Vardiyası</span>
+                </button>
+              </div>
+            </div>
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Katılım Durumu</label>
@@ -1226,6 +1401,7 @@ function EmployeeModal({ initial, onClose, onSave }: { initial?: Employee; onClo
     tc_no: initial?.tc_no || '',
     start_date: initial?.start_date || new Date().toISOString().split('T')[0],
     wage_type: initial?.wage_type || 'monthly',
+    default_shift: initial?.default_shift || 'Gündüz',
     base_wage: initial?.base_wage || 0,
     overtime_multiplier: initial?.overtime_multiplier || 1.5,
     monthly_hours_divisor: initial?.monthly_hours_divisor || 225,
@@ -1317,18 +1493,30 @@ function EmployeeModal({ initial, onClose, onSave }: { initial?: Employee; onClo
             </select>
           </div>
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              {form.wage_type === 'monthly' ? 'Aylık Taban Maaş (₺) *' : 'Günlük Yevmiye Tutarı (₺) *'}
-            </label>
-            <input
-              type="number"
-              min="0"
-              required
-              value={form.base_wage}
-              onChange={e => setForm({ ...form, base_wage: Number(e.target.value) })}
-              className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 font-bold"
-            />
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Varsayılan Vardiya *</label>
+            <select
+              value={form.default_shift}
+              onChange={e => setForm({ ...form, default_shift: e.target.value as any })}
+              className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 font-semibold"
+            >
+              <option value="Gündüz">☀️ Gündüz Vardiyası</option>
+              <option value="Gece">🌙 Gece Vardiyası</option>
+            </select>
           </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-slate-700 mb-1">
+            {form.wage_type === 'monthly' ? 'Aylık Taban Maaş (₺) *' : 'Günlük Yevmiye Tutarı (₺) *'}
+          </label>
+          <input
+            type="number"
+            min="0"
+            required
+            value={form.base_wage}
+            onChange={e => setForm({ ...form, base_wage: Number(e.target.value) })}
+            className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 font-bold"
+          />
         </div>
 
         <div className="grid grid-cols-2 gap-3 bg-amber-50/50 p-3 rounded-xl border border-amber-100">
