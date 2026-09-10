@@ -140,3 +140,65 @@ export interface StockSummary {
   current_stock: number;
   min_stock_alert: number;
 }
+
+export interface Employee {
+  id: string;
+  full_name: string;
+  role_title: string;
+  phone: string;
+  tc_no: string;
+  start_date: string;
+  wage_type: 'monthly' | 'daily';
+  base_wage: number;
+  overtime_multiplier: number;
+  monthly_hours_divisor: number;
+  iban: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface AttendanceRecord {
+  id: string;
+  employee_id: string;
+  date: string;
+  status: 'full_day' | 'half_day' | 'leave' | 'absent' | 'holiday';
+  overtime_hours: number;
+  overtime_multiplier: number;
+  notes: string;
+  created_at: string;
+  employees?: Employee;
+}
+
+export interface PayrollTransaction {
+  id: string;
+  employee_id: string;
+  date: string;
+  type: 'advance' | 'bonus' | 'deduction';
+  amount: number;
+  description: string;
+  period_month: number;
+  period_year: number;
+  created_at: string;
+  employees?: Employee;
+}
+
+export interface PayrollPayment {
+  id: string;
+  employee_id: string;
+  period_month: number;
+  period_year: number;
+  base_salary: number;
+  days_worked: number;
+  earned_base_wage: number;
+  overtime_hours: number;
+  overtime_amount: number;
+  bonus_amount: number;
+  deduction_amount: number;
+  advance_amount: number;
+  net_salary: number;
+  is_paid: boolean;
+  payment_date?: string | null;
+  notes?: string;
+  created_at: string;
+  employees?: Employee;
+}
