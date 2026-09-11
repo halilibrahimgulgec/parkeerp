@@ -3,7 +3,9 @@ import { Product, MachineDefinition, ProductionOrder, CustomerQuota, ProductionP
 export interface PlanningOptions {
   startDate: string;
   daysCount: number;
-  shiftsPerDay: 1 | 2;
+  dailyWorkingHours: number; // default: 10
+  shiftsPerDay: 1 | 2; // 1 = 10 saat normal vardiya, 2 = 10+10 saat çift vardiya
+  excludeSundays: boolean; // default: true (Pazarları tatil)
   strategy: 'balanced' | 'minimize_mold_change' | 'urgent_first';
   includeMinStockDeficit: boolean;
   includeQuotaDemand: boolean;
@@ -149,7 +151,7 @@ export function generateSmartProductionPlan({
     return maxB - maxA;
   });
 
-  // 2. Setup Machines and Capacities
+  // 2. Setup Machines and Capacities (Günlük 10 Saatlik Çalışma)
   const m1Def = machines.find(m => m.machine_no === '1') || {
     machine_no: '1',
     name: '1 Nolu Parke Baskı Makinesi',
@@ -168,10 +170,11 @@ export function generateSmartProductionPlan({
     is_active: true,
   };
 
-  const shiftCapM1 = Math.round(Number(m1Def.daily_capacity_m2 || 1000) / options.shiftsPerDay);
-  const shiftCapM2 = Math.round(Number(m2Def.daily_capacity_m2 || 1000) / options.shiftsPerDay);
+  // 10 saatlik vardiya kapasitesi
+  const shiftCapM1 = Math.round(Number(m1Def.daily_capacity_m2 || 1000));
+  const shiftCapM2 = Math.round(Number(m2Def.daily_capacity_m2 || 1000));
 
-  // 3. Date & Shift Grid Generation
+  // 3. Date & Shift Grid Generation (Pazar Günleri Tatil Kontrolü)
   const shifts: ('Gündüz' | 'Gece')[] = options.shiftsPerDay === 2 ? ['Gündüz', 'Gece'] : ['Gündüz'];
   const planItems: Omit<ProductionPlanItem, 'id' | 'plan_id'>[] = [];
 
@@ -201,13 +204,21 @@ export function generateSmartProductionPlan({
     });
   });
 
-  // Build calendar dates
-  const dates: string[] = [];
+  // Build calendar dates (Check Sundays)
+  const workingDates: string[] = [];
+  const sundayDates: string[] = [];
   const startObj = new Date(options.startDate);
   for (let i = 0; i < options.daysCount; i++) {
     const cur = new Date(startObj);
     cur.setDate(cur.getDate() + i);
-    dates.push(cur.toISOString().split('T')[0]);
+    const dateStr = cur.toISOString().split('T')[0];
+    const isSunday = cur.getDay() === 0; // 0 = Pazar
+
+    if (isSunday && options.excludeSundays) {
+      sundayDates.push(dateStr);
+    } else {
+      workingDates.push(dateStr);
+    }
   }
 
   // Machine state tracker
@@ -228,8 +239,8 @@ export function generateSmartProductionPlan({
     return pt.includes('bordür') || pt.includes('oluk') || pt.includes('tretuar') || pt.includes('begonit');
   };
 
-  // 4. Fill Slots Day by Day
-  dates.forEach(dateStr => {
+  // 4. Fill Slots Day by Day (Sadece Çalışma Günleri - Pazarlar Hariç)
+  workingDates.forEach(dateStr => {
     shifts.forEach(shift => {
       // Allocate for Machine 1
       const slotCap1 = shiftCapM1;
@@ -307,7 +318,7 @@ export function generateSmartProductionPlan({
       produced_m2: 0,
       status: 'scheduled',
       sequence_order: planItems.length + 1,
-      notes: `${item.product.name} (${item.product.thickness || '6cm'}/${item.product.color || 'Gri'}) — ${shift} Vardiyası`,
+      notes: `${item.product.name} (${item.product.thickness || '6cm'}/${item.product.color || 'Gri'}) — ${shift} (10 Saat)`,
       products: item.product,
     });
   }
@@ -328,6 +339,7 @@ export function generateSmartProductionPlan({
   });
 
   // Reasoning
+  reasoning.push(`📅 Çalışma Takvimi: Günlük 10 saat çalışma esasına göre planlandı. Toplam ${workingDates.length} iş günü planlandı (${sundayDates.length} Pazar günü fabrika tatili olarak ayrıldı).`);
   reasoning.push(`Makine 1 (Hat 1) üzerine toplam ${machineState['1'].totalM2.toLocaleString('tr-TR')} m² parke taşı üretimi planlandı (${machineState['1'].busyDays.size} çalışma günü).`);
   reasoning.push(`Makine 2 (Hat 2) üzerine toplam ${machineState['2'].totalM2.toLocaleString('tr-TR')} m² bordür ve ikincil taş üretimi planlandı (${machineState['2'].busyDays.size} çalışma günü).`);
   
@@ -335,16 +347,16 @@ export function generateSmartProductionPlan({
     reasoning.push(`Kalıp optimizasyonu sayesinde aynı kalıp tipindeki ürünler peş peşe kümelenerek yaklaşık ${moldChangesSaved} gereksiz kalıp söküm-takım işleminden tasarruf edildi.`);
   }
 
-  if (options.shiftsPerDay === 2) {
-    recommendations.push(`Çift vardiya (Gündüz + Gece) çalışma düzeni ile günlük üretim kapasitesi 2 katına çıkarıldı; bekleyen talepler ${Math.ceil(dates.length / 2)} gün daha erken teslim edilebilir hale geldi.`);
+  if (options.shiftsPerDay === 1) {
+    recommendations.push(`Günlük 10 saatlik tek vardiya çalışma düzeni devrede (Pazar günleri tatil). Acil terminler için fazla mesai veya 2. vardiya açılabilir.`);
   } else {
-    recommendations.push(`Şu an tek vardiya (Gündüz) planlandı. Acil siparişlerin teslimatını hızlandırmak için Makine 1 veya 2'de Gece vardiyasını aktif edebilirsiniz.`);
+    recommendations.push(`Çift vardiya (10 + 10 Saat) çalışma düzeni ile günlük üretim kapasitesi 2 katına çıkarıldı.`);
   }
 
-  const endDate = dates[dates.length - 1] || options.startDate;
+  const endDate = (workingDates.length > 0 ? workingDates[workingDates.length - 1] : options.startDate);
   const startFormatted = new Date(options.startDate).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' });
   const endFormatted = new Date(endDate).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: 'numeric' });
-  const planName = `${startFormatted} – ${endFormatted} Üretim Planı`;
+  const planName = `${startFormatted} – ${endFormatted} Üretim Planı (10s/Gün)`;
 
   return {
     planName,

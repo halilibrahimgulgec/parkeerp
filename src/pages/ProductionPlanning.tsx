@@ -46,11 +46,13 @@ export default function ProductionPlanning() {
   const [planItems, setPlanItems] = useState<ProductionPlanItem[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // AI Agent Planning Parameters
+  // AI Agent Planning Parameters (Günlük 10 Saat ve Pazarları Tatil)
   const [planningOptions, setPlanningOptions] = useState<PlanningOptions>({
     startDate: getLocalDateStr(),
     daysCount: 7,
-    shiftsPerDay: 2,
+    dailyWorkingHours: 10,
+    shiftsPerDay: 1,
+    excludeSundays: true,
     strategy: 'minimize_mold_change',
     includeMinStockDeficit: true,
     includeQuotaDemand: true,
@@ -510,7 +512,7 @@ export default function ProductionPlanning() {
               <p className="text-2xl font-black text-slate-800 font-mono">
                 {((machines.find(m => m.machine_no === '1')?.daily_capacity_m2 || 1000)).toLocaleString('tr-TR')} m²/gün
               </p>
-              <span className="text-[11px] text-slate-400">2 Vardiya (Gündüz + Gece)</span>
+              <span className="text-[11px] text-slate-400">Günlük 10 Saat Çalışma</span>
             </div>
 
             <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-xs">
@@ -521,7 +523,7 @@ export default function ProductionPlanning() {
               <p className="text-2xl font-black text-slate-800 font-mono">
                 {((machines.find(m => m.machine_no === '2')?.daily_capacity_m2 || 1000)).toLocaleString('tr-TR')} m²/gün
               </p>
-              <span className="text-[11px] text-slate-400">2 Vardiya (Bordür / Parke)</span>
+              <span className="text-[11px] text-slate-400">Günlük 10 Saat Çalışma</span>
             </div>
           </div>
 
@@ -591,14 +593,14 @@ export default function ProductionPlanning() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">Günlük Vardiya Sayısı</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">Günlük Çalışma / Vardiya</label>
                   <select
                     value={planningOptions.shiftsPerDay}
                     onChange={e => setPlanningOptions(o => ({ ...o, shiftsPerDay: Number(e.target.value) as any }))}
-                    className="w-full bg-slate-800/80 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    className="w-full bg-slate-800/80 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-amber-400 font-bold"
                   >
-                    <option value={1}>1 Vardiya (Sadece Gündüz)</option>
-                    <option value={2}>2 Vardiya (Gündüz + Gece - Çift Kapasite)</option>
+                    <option value={1}>Tek Vardiya (Günlük 10 Saat Çalışma)</option>
+                    <option value={2}>Çift Vardiya (10 + 10 Saat - Yoğun Dönem)</option>
                   </select>
                 </div>
 
@@ -618,6 +620,16 @@ export default function ProductionPlanning() {
 
               {/* Toggles */}
               <div className="flex flex-wrap items-center gap-6 pt-2 text-xs text-slate-300">
+                <label className="flex items-center gap-2 cursor-pointer text-amber-300 font-bold hover:text-white transition-colors bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 rounded-xl">
+                  <input
+                    type="checkbox"
+                    checked={planningOptions.excludeSundays}
+                    onChange={e => setPlanningOptions(o => ({ ...o, excludeSundays: e.target.checked }))}
+                    className="rounded border-slate-700 text-amber-500 focus:ring-amber-400 w-4 h-4 bg-slate-800"
+                  />
+                  <span>🏖️ Pazar Günleri Fabrika Tatili (Pazarları Üretim Yapılmaz)</span>
+                </label>
+
                 <label className="flex items-center gap-2 cursor-pointer hover:text-white transition-colors">
                   <input
                     type="checkbox"
@@ -767,13 +779,13 @@ export default function ProductionPlanning() {
                         return (
                           <tr key={idx} className="hover:bg-slate-50/70 transition-colors">
                             <td className="px-3 py-2.5 font-mono text-slate-700 whitespace-nowrap">
-                              {new Date(it.planned_date).toLocaleDateString('tr-TR')}
+                              {new Date(it.planned_date).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', weekday: 'short' })}
                             </td>
                             <td className="px-3 py-2.5 font-semibold text-slate-800">
                               <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                                 it.shift === 'Gündüz' ? 'bg-amber-100 text-amber-900' : 'bg-indigo-100 text-indigo-900'
                               }`}>
-                                {it.shift}
+                                {it.shift} ({planningOptions.dailyWorkingHours || 10} Saat)
                               </span>
                             </td>
                             <td className="px-3 py-2.5">
@@ -971,6 +983,28 @@ export default function ProductionPlanning() {
             </div>
           </div>
 
+          {/* Çalışma Esası ve Tatil Bilgisi */}
+          <div className="bg-amber-50/80 border border-amber-200/90 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between text-xs text-amber-950 gap-3 shadow-xs">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-2.5 w-2.5 rounded-full bg-amber-500 animate-pulse" />
+              <span className="font-bold">⏰ Fabrika Çalışma Esası:</span>
+              <span>Günlük <strong>10 Saat</strong> Tek Vardiya (Haftalık 6 İş Günü)</span>
+            </div>
+            <div className="flex items-center gap-2 text-amber-900 bg-amber-100/80 px-3 py-1 rounded-xl font-semibold text-[11px] border border-amber-300/60">
+              <span>🏖️ <strong>Pazar Günleri:</strong> Fabrika Tatili (Pazarları Üretim Yapılmaz)</span>
+            </div>
+          </div>
+
+          {scheduleDateFilter && new Date(scheduleDateFilter).getDay() === 0 && (
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3 text-xs text-rose-800 flex items-center gap-2">
+              <span className="text-base">🏖️</span>
+              <div>
+                <strong>Seçtiğiniz tarih ({new Date(scheduleDateFilter).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' })}) Pazar günüdür.</strong>
+                <span className="block text-rose-600 text-[11px] mt-0.5">Fabrika Pazar günleri tatildir ve bu güne üretim planı atanmaz.</span>
+              </div>
+            </div>
+          )}
+
           {/* 2-MACHINE SPLIT COLUMNS (MAKİNE 1 vs MAKİNE 2) */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* COLUMN 1: MAKİNE 1 (HAT 1) */}
@@ -1018,7 +1052,7 @@ export default function ProductionPlanning() {
                               <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                                 item.shift === 'Gündüz' ? 'bg-amber-100 text-amber-900' : 'bg-indigo-100 text-indigo-900'
                               }`}>
-                                {item.shift} Vardiyası
+                                {item.shift} (10 Saat)
                               </span>
                             </div>
                             <h4 className="font-bold text-slate-900 text-sm mt-1">
@@ -1146,7 +1180,7 @@ export default function ProductionPlanning() {
                               <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                                 item.shift === 'Gündüz' ? 'bg-amber-100 text-amber-900' : 'bg-indigo-100 text-indigo-900'
                               }`}>
-                                {item.shift} Vardiyası
+                                {item.shift} (10 Saat)
                               </span>
                             </div>
                             <h4 className="font-bold text-slate-900 text-sm mt-1">
@@ -1402,7 +1436,7 @@ export default function ProductionPlanning() {
 
                 <div className="space-y-3 text-xs">
                   <div>
-                    <label className="block font-semibold text-slate-700 mb-1">Günlük Üretim Kapasitesi (m²)</label>
+                    <label className="block font-semibold text-slate-700 mb-1">Günlük Üretim Kapasitesi (m² / 10 Saat)</label>
                     <input
                       type="number"
                       value={m.daily_capacity_m2}
@@ -1415,7 +1449,7 @@ export default function ProductionPlanning() {
                   </div>
 
                   <div>
-                    <label className="block font-semibold text-slate-700 mb-1">Varsayılan Vardiya Sayısı</label>
+                    <label className="block font-semibold text-slate-700 mb-1">Varsayılan Vardiya Düzeni</label>
                     <select
                       value={m.shift_count}
                       onChange={e => {
@@ -1424,8 +1458,8 @@ export default function ProductionPlanning() {
                       }}
                       className="w-full border border-slate-200 rounded-xl px-3 py-2 font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400"
                     >
-                      <option value={1}>1 Vardiya (Gündüz)</option>
-                      <option value={2}>2 Vardiya (Gündüz + Gece)</option>
+                      <option value={1}>1 Vardiya (Günlük 10 Saat)</option>
+                      <option value={2}>2 Vardiya (10 + 10 Saat)</option>
                     </select>
                   </div>
 
