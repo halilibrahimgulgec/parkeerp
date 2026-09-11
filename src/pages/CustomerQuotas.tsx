@@ -216,8 +216,10 @@ export default function CustomerQuotas() {
         if (quota.start_date && s.shipment_date < quota.start_date) return false;
         if (quota.end_date && s.shipment_date > quota.end_date) return false;
 
+        // Ürüne özel kota tanımlanmışsa o ürünün tüm sevkiyatları dahil edilir
+        // Genel kota ise birim eşleşmesi aranır
         const itemUnit = item.unit || 'm2';
-        if (itemUnit !== quota.unit) return false;
+        if (!quota.product_id && itemUnit !== quota.unit) return false;
 
         return true;
       });
@@ -384,8 +386,10 @@ export default function CustomerQuotas() {
       const pal = Number(item.pallets) || 0;
       const sId = item.shipments?.id;
 
-      if (!prodMap.has(pid)) {
-        prodMap.set(pid, {
+      const groupKey = `${pid}__${unit}`;
+
+      if (!prodMap.has(groupKey)) {
+        prodMap.set(groupKey, {
           product_id: pid,
           name,
           thickness,
@@ -398,7 +402,7 @@ export default function CustomerQuotas() {
         });
       }
 
-      const pEntry = prodMap.get(pid)!;
+      const pEntry = prodMap.get(groupKey)!;
       pEntry.total_qty += qty;
       pEntry.total_pallets += pal;
       if (sId && !pEntry.shipment_ids.has(sId)) {
@@ -610,7 +614,7 @@ export default function CustomerQuotas() {
       if (selectedQuotaForHistory.start_date && s.shipment_date < selectedQuotaForHistory.start_date) return false;
       if (selectedQuotaForHistory.end_date && s.shipment_date > selectedQuotaForHistory.end_date) return false;
       const itemUnit = item.unit || 'm2';
-      if (itemUnit !== selectedQuotaForHistory.unit) return false;
+      if (!selectedQuotaForHistory.product_id && itemUnit !== selectedQuotaForHistory.unit) return false;
       return true;
     });
   }, [selectedQuotaForHistory, shipmentItems]);
@@ -1610,7 +1614,15 @@ export default function CustomerQuotas() {
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Ürün / Kapsam</label>
                 <select
                   value={form.product_id}
-                  onChange={e => setForm({ ...form, product_id: e.target.value })}
+                  onChange={e => {
+                    const pId = e.target.value;
+                    const p = products.find(x => x.id === pId);
+                    setForm(f => ({
+                      ...f,
+                      product_id: pId,
+                      unit: p?.unit ? (p.unit as any) : f.unit,
+                    }));
+                  }}
                   className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"
                 >
                   <option value="">Tüm Ürünler (Genel Kota)</option>

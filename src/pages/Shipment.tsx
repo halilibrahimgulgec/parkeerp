@@ -110,7 +110,7 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
               if (quota.start_date && s.shipment_date < quota.start_date) return false;
               if (quota.end_date && s.shipment_date > quota.end_date) return false;
               const itemUnit = item.unit || 'm2';
-              if (itemUnit !== quota.unit) return false;
+              if (!quota.product_id && itemUnit !== quota.unit) return false;
               return true;
             });
             const shipped = matching.reduce((acc, cur) => acc + (Number(cur.m2) || 0), 0);
@@ -173,7 +173,12 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
       }
       if (field === 'pallets' || field === 'product_id') {
         const p = products.find(x => x.id === (field === 'product_id' ? value : items[idx].product_id));
-        if (p) items[idx].m2 = items[idx].pallets * p.m2_per_pallet;
+        if (p) {
+          items[idx].m2 = items[idx].pallets * p.m2_per_pallet;
+          if (field === 'product_id' && p.unit) {
+            items[idx].unit = p.unit;
+          }
+        }
       }
       return { ...f, items };
     });
