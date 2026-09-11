@@ -9,13 +9,14 @@ import Modal from '../components/Modal';
 import {
   generateSmartProductionPlan,
   PlanningOptions,
-  AIPlanningResult
+  AIPlanningResult,
+  ProductShipmentVelocity
 } from '../utils/productionPlanner';
 import {
   Sparkles, Calendar, Factory, Plus, Filter,
   CheckCircle2, AlertTriangle, ArrowLeftRight,
   Layers, Printer, RefreshCw,
-  Sliders, Trash2
+  Sliders, Trash2, TrendingUp, Clock, Flame
 } from 'lucide-react';
 
 const getLocalDateStr = (d = new Date()) => {
@@ -58,7 +59,11 @@ export default function ProductionPlanning() {
     includeQuotaDemand: true,
     onlyWithOrders: false,
     excludedProductIds: [],
+    considerShipmentVelocity: true,
   });
+
+  // Shipment Velocity & Burn Rate State
+  const [shipmentVelocityMap, setShipmentVelocityMap] = useState<Record<string, ProductShipmentVelocity>>({});
 
   // Generated Plan State
   const [generatedPlan, setGeneratedPlan] = useState<AIPlanningResult | null>(null);
@@ -89,6 +94,14 @@ export default function ProductionPlanning() {
   const loadAllData = async () => {
     setLoading(true);
     try {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
+
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      const sevenDaysAgoStr = sevenDaysAgo.toISOString().split('T')[0];
+
       const [
         prodRes,
         custRes,
@@ -99,6 +112,7 @@ export default function ProductionPlanning() {
         planRes,
         stockRes,
         itemsRes,
+        shipItemsRes,
       ] = await Promise.all([
         supabase.from('products').select('*').eq('is_active', true).order('name'),
         supabase.from('customers').select('*').eq('is_active', true).order('name'),
@@ -109,6 +123,7 @@ export default function ProductionPlanning() {
         supabase.from('production_plans').select('*').order('created_at', { ascending: false }),
         supabase.from('v_product_stock').select('*'),
         supabase.from('production_plan_items').select('*, products(*), production_orders(*), customer_quotas(*)').order('planned_date').order('sequence_order'),
+        supabase.from('shipment_items').select('product_id, m2, unit, shipments!inner(shipment_date, status)').eq('shipments.status', 'completed').gte('shipments.shipment_date', thirtyDaysAgoStr),
       ]);
 
       if (prodRes.data) setProducts(prodRes.data);
@@ -152,6 +167,49 @@ export default function ProductionPlanning() {
       }
       setStockMap(sMap);
 
+      // Shipment Velocity Map (Stok Erime Hızı)
+      const vMap: Record<string, ProductShipmentVelocity> = {};
+      const allActiveProds = prodRes.data || [];
+      const sItems = shipItemsRes.data || [];
+
+      allActiveProds.forEach((p: any) => {
+        const pItems = sItems.filter((it: any) => it.product_id === p.id);
+        const total30 = pItems.reduce((sum: number, it: any) => sum + (Number(it.m2) || 0), 0);
+        const total7 = pItems
+          .filter((it: any) => {
+            const sDate = Array.isArray(it.shipments) ? it.shipments[0]?.shipment_date : it.shipments?.shipment_date;
+            return sDate && sDate >= sevenDaysAgoStr;
+          })
+          .reduce((sum: number, it: any) => sum + (Number(it.m2) || 0), 0);
+
+        const curStock = sMap[p.id] || 0;
+        const dailyRate = Math.round((total30 / 30) * 10) / 10;
+        const weeklyRate = Math.round(dailyRate * 7);
+        let daysRemaining = 999;
+        if (curStock <= 0 && dailyRate > 0) {
+          daysRemaining = 0;
+        } else if (dailyRate > 0) {
+          daysRemaining = Math.round(curStock / dailyRate);
+        }
+
+        let category: 'very_fast' | 'moderate' | 'slow' | 'stagnant' = 'stagnant';
+        if (dailyRate >= 200) category = 'very_fast';
+        else if (dailyRate >= 50) category = 'moderate';
+        else if (dailyRate > 0) category = 'slow';
+
+        vMap[p.id] = {
+          productId: p.id,
+          totalShippedLast30Days: total30,
+          totalShippedLast7Days: total7,
+          dailyBurnRate: dailyRate,
+          weeklyBurnRate: weeklyRate,
+          daysOfStockRemaining: daysRemaining,
+          velocityCategory: category,
+          trendText: category === 'very_fast' ? '🔥 Çok Hızlı' : category === 'moderate' ? '⚡ Orta' : category === 'slow' ? '🐢 Yavaş' : '💤 Durgun',
+        };
+      });
+      setShipmentVelocityMap(vMap);
+
       // Plans & Items
       const planList = (planRes.data || []) as ProductionPlan[];
       setPlans(planList);
@@ -183,7 +241,10 @@ export default function ProductionPlanning() {
         orders,
         quotas,
         machines,
-        options: planningOptions,
+        options: {
+          ...planningOptions,
+          shipmentVelocities: shipmentVelocityMap,
+        },
       });
       setGeneratedPlan(res);
       setIsGenerating(false);
@@ -474,6 +535,16 @@ export default function ProductionPlanning() {
     return filteredScheduleItems.filter(it => it.machine_no === '2');
   }, [filteredScheduleItems]);
 
+  const velocityStats = useMemo(() => {
+    const list = Object.values(shipmentVelocityMap);
+    const total30 = list.reduce((s, x) => s + (x.totalShippedLast30Days || 0), 0);
+    const sorted = [...list].sort((a, b) => b.dailyBurnRate - a.dailyBurnRate);
+    const top = sorted[0];
+    const topProd = top ? products.find(p => p.id === top.productId) : null;
+    const runOutCount = list.filter(x => x.dailyBurnRate > 0 && x.daysOfStockRemaining <= 7 && x.daysOfStockRemaining > 0).length;
+    return { total30, topProd, topBurn: top?.dailyBurnRate || 0, runOutCount };
+  }, [shipmentVelocityMap, products]);
+
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-6">
       {/* Header */}
@@ -589,6 +660,50 @@ export default function ProductionPlanning() {
                 {((machines.find(m => m.machine_no === '2')?.daily_capacity_m2 || 1000)).toLocaleString('tr-TR')} m²/gün
               </p>
               <span className="text-[11px] text-slate-400">Günlük 10 Saat Çalışma</span>
+            </div>
+          </div>
+
+          {/* Sevkiyat & Stok Erime Hızı Özet Bandı */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="bg-gradient-to-br from-emerald-50 to-teal-50/60 border border-emerald-200/80 rounded-2xl p-4 flex items-center gap-3 shadow-xs">
+              <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold shadow-xs flex-shrink-0">
+                <TrendingUp size={20} />
+              </div>
+              <div className="overflow-hidden">
+                <span className="text-[11px] font-semibold text-emerald-900 block">Son 30 Gün Toplam Sevkiyat</span>
+                <strong className="text-xl font-black text-emerald-950 font-mono block">
+                  {velocityStats.total30.toLocaleString('tr-TR')} m²
+                </strong>
+                <span className="text-[10px] text-emerald-700 block">Tesis çıkış / sevk hacmi</span>
+              </div>
+            </div>
+
+            <div className="bg-gradient-to-br from-amber-50 to-orange-50/60 border border-amber-200/80 rounded-2xl p-4 flex items-center gap-3 shadow-xs">
+              <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center font-bold shadow-xs flex-shrink-0">
+                <Flame size={20} />
+              </div>
+              <div className="overflow-hidden">
+                <span className="text-[11px] font-semibold text-amber-900 block">En Hızlı Eriyen / Çok Satan</span>
+                <strong className="text-sm font-black text-amber-950 truncate block" title={velocityStats.topProd?.name || 'Veri yok'}>
+                  {velocityStats.topProd ? velocityStats.topProd.name : 'Veri toplanıyor'}
+                </strong>
+                <span className="text-[10px] text-amber-700 font-mono font-bold block">
+                  {velocityStats.topBurn > 0 ? `🔥 Günde ~${velocityStats.topBurn} ${velocityStats.topProd?.unit || 'm²'} sevk` : 'Henüz sevkiyat yok'}
+                </span>
+              </div>
+            </div>
+
+            <div className="bg-gradient-to-br from-rose-50 to-red-50/60 border border-rose-200/80 rounded-2xl p-4 flex items-center gap-3 shadow-xs">
+              <div className="w-10 h-10 rounded-xl bg-rose-600 text-white flex items-center justify-center font-bold shadow-xs flex-shrink-0">
+                <Clock size={20} />
+              </div>
+              <div className="overflow-hidden">
+                <span className="text-[11px] font-semibold text-rose-900 block">Stok Tükenme Riski (≤7 Gün)</span>
+                <strong className="text-xl font-black text-rose-950 font-mono block">
+                  {velocityStats.runOutCount} Ürün
+                </strong>
+                <span className="text-[10px] text-rose-700 block">Mevcut sevkiyat hızıyla kritik</span>
+              </div>
             </div>
           </div>
 
@@ -723,6 +838,16 @@ export default function ProductionPlanning() {
                     className="rounded border-slate-700 text-indigo-400 focus:ring-indigo-400 w-4 h-4 bg-slate-800"
                   />
                   <span>📦 Sadece Kesin Siparişi Olan Ürünleri Planla (Siparişsiz Üretim Açma)</span>
+                </label>
+
+                <label className="flex items-center gap-2 cursor-pointer text-emerald-300 font-bold hover:text-white transition-colors bg-emerald-500/10 border border-emerald-500/30 px-3 py-1.5 rounded-xl">
+                  <input
+                    type="checkbox"
+                    checked={planningOptions.considerShipmentVelocity ?? true}
+                    onChange={e => setPlanningOptions(o => ({ ...o, considerShipmentVelocity: e.target.checked }))}
+                    className="rounded border-slate-700 text-emerald-400 focus:ring-emerald-400 w-4 h-4 bg-slate-800"
+                  />
+                  <span>📈 Sevkiyat & Stok Erime Hızını Dikkate Al (Hızlı tükenen ürünleri öne al)</span>
                 </label>
 
                 {planningOptions.excludedProductIds && planningOptions.excludedProductIds.length > 0 && (
@@ -927,9 +1052,9 @@ export default function ProductionPlanning() {
           <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
             <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <h3 className="font-bold text-slate-900 text-base">Ürün Bazlı Stok Durumu & Net Üretim İhtiyacı</h3>
+                <h3 className="font-bold text-slate-900 text-base">Ürün Bazlı Canlı Stok Durumu & Sevkiyat Erime Hızı Röntgeni</h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Tesisinizdeki mevcut bitmiş ürün stoku, emniyet eşikleri ve bekleyen siparişlerin canlı röntgeni
+                  Tesisinizdeki mevcut bitmiş ürün stoku, son 30 günün sevkiyat tüketim hızı (burn rate) ve tahmini stok tükenme süresi
                 </p>
               </div>
 
@@ -945,8 +1070,9 @@ export default function ProductionPlanning() {
                     <th className="px-4 py-3">Ürün Adı</th>
                     <th className="px-3 py-3">Tip / Kalınlık / Renk</th>
                     <th className="px-3 py-3 text-right">Mevcut Stok</th>
-                    <th className="px-3 py-3 text-right">Emniyet Stoğu</th>
-                    <th className="px-3 py-3 text-center">Stok Durumu</th>
+                    <th className="px-3 py-3 text-right">Son 30 Gün Sevk</th>
+                    <th className="px-3 py-3 text-center">Günlük Erime Hızı</th>
+                    <th className="px-3 py-3 text-center">Stok Dayanma Süresi</th>
                     <th className="px-3 py-3 text-right">Bekleyen Sipariş</th>
                     <th className="px-3 py-3 text-right font-bold text-slate-900">Net İhtiyaç</th>
                     <th className="px-3 py-3 text-center">Planlama Durumu</th>
@@ -959,6 +1085,7 @@ export default function ProductionPlanning() {
                     const isZero = currentStock <= 0;
                     const isBelowMin = currentStock < minStock;
                     const isExcluded = (planningOptions.excludedProductIds || []).includes(p.id);
+                    const vel = shipmentVelocityMap[p.id];
 
                     const pendingOrdersForProduct = orders
                       .filter(o => o.product_id === p.id && (o.status === 'pending' || o.status === 'planned'))
@@ -985,22 +1112,53 @@ export default function ProductionPlanning() {
                         }`}>
                           {currentStock.toLocaleString('tr-TR')} {p.unit}
                         </td>
-                        <td className="px-3 py-3 text-right font-mono text-slate-500">
-                          {minStock.toLocaleString('tr-TR')} {p.unit}
+                        <td className="px-3 py-3 text-right font-mono font-semibold text-slate-700">
+                          {vel && vel.totalShippedLast30Days > 0 ? (
+                            <span>{vel.totalShippedLast30Days.toLocaleString('tr-TR')} {p.unit}</span>
+                          ) : (
+                            <span className="text-slate-400">-</span>
+                          )}
                         </td>
-                        <td className="px-3 py-3 text-center">
-                          {isZero ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-800 border border-red-200">
-                              Tükendi / Kritik
-                            </span>
-                          ) : isBelowMin ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
-                              Emniyet Altında
+                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                          {vel && vel.dailyBurnRate > 0 ? (
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold ${
+                              vel.velocityCategory === 'very_fast'
+                                ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                : vel.velocityCategory === 'moderate'
+                                ? 'bg-blue-100 text-blue-900 border border-blue-200'
+                                : 'bg-slate-100 text-slate-700'
+                            }`}>
+                              {vel.trendText} {vel.dailyBurnRate.toLocaleString('tr-TR')} {p.unit}/g
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                              Yeterli
-                            </span>
+                            <span className="text-slate-400 text-[11px]">💤 Hareketsiz</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                          {vel && vel.dailyBurnRate > 0 ? (
+                            vel.daysOfStockRemaining === 0 ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-800 border border-red-200">
+                                🚨 Tükendi
+                              </span>
+                            ) : vel.daysOfStockRemaining <= 3 ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300 animate-pulse">
+                                ⏳ {vel.daysOfStockRemaining} Gün (Kritik)
+                              </span>
+                            ) : vel.daysOfStockRemaining <= 7 ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                                ⏳ {vel.daysOfStockRemaining} Gün (Dikkat)
+                              </span>
+                            ) : vel.daysOfStockRemaining <= 30 ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                ⏳ {vel.daysOfStockRemaining} Gün
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600">
+                                ⏳ {vel.daysOfStockRemaining}+ Gün
+                              </span>
+                            )
+                          ) : (
+                            <span className="text-slate-400 text-[11px]">-</span>
                           )}
                         </td>
                         <td className="px-3 py-3 text-right font-mono font-semibold text-blue-700">

@@ -1,5 +1,16 @@
 import { Product, MachineDefinition, ProductionOrder, CustomerQuota, ProductionPlanItem } from '../types';
 
+export interface ProductShipmentVelocity {
+  productId: string;
+  totalShippedLast30Days: number;
+  totalShippedLast7Days: number;
+  dailyBurnRate: number; // m2 or unit / day (based on 30-day average)
+  weeklyBurnRate: number; // dailyBurnRate * 7
+  daysOfStockRemaining: number; // currentStock / dailyBurnRate (999 if no consumption)
+  velocityCategory: 'very_fast' | 'moderate' | 'slow' | 'stagnant';
+  trendText: string;
+}
+
 export interface PlanningOptions {
   startDate: string;
   daysCount: number;
@@ -11,6 +22,8 @@ export interface PlanningOptions {
   includeQuotaDemand: boolean;
   onlyWithOrders?: boolean; // Sadece kesin siparişi olan ürünleri üret (siparişsiz stok yapma)
   excludedProductIds?: string[]; // Belirli ürünleri planlamadan hariç tutma (örn. 6'lık parke)
+  considerShipmentVelocity?: boolean; // Sevkiyat ve stok erime hızını dikkate al
+  shipmentVelocities?: Record<string, ProductShipmentVelocity>; // Ürün bazlı sevkiyat hız haritası
 }
 
 export interface ProductDemand {
@@ -25,6 +38,7 @@ export interface ProductDemand {
   urgencyScore: number;
   moldKey: string;
   closestDueDate?: string;
+  velocity?: ProductShipmentVelocity;
 }
 
 export interface AIPlanningResult {
@@ -93,13 +107,22 @@ export function generateSmartProductionPlan({
       }, 0);
     }
 
+    const vel = options.shipmentVelocities ? options.shipmentVelocities[p.id] : undefined;
+
     let totalNetNeed = 0;
     if (options.onlyWithOrders && pendingOrderQty <= 0) {
       // Sadece kesin siparişi olan ürünleri üret
       totalNetNeed = 0;
     } else {
       const netNeed = (options.includeMinStockDeficit ? stockDeficit : 0) + pendingOrderQty;
-      totalNetNeed = Math.max(0, netNeed > 0 ? netNeed : (quotaDemandQty > 0 ? Math.min(quotaDemandQty, 2000) : 0));
+      // Sevkiyat ve stok erime hızına göre 7 günlük tüketim tamponu ekle
+      let velocityNeed = 0;
+      if (options.considerShipmentVelocity && vel && vel.dailyBurnRate > 0 && vel.daysOfStockRemaining <= 7) {
+        const weeklyDemand = Math.round(vel.dailyBurnRate * 7);
+        velocityNeed = Math.max(0, weeklyDemand - currentStock);
+      }
+      const combinedNeed = Math.max(netNeed, velocityNeed);
+      totalNetNeed = Math.max(0, combinedNeed > 0 ? combinedNeed : (quotaDemandQty > 0 ? Math.min(quotaDemandQty, 2000) : 0));
     }
 
     // Urgency calculation
@@ -126,6 +149,22 @@ export function generateSmartProductionPlan({
       }
     }
 
+    // Sevkiyat Hızı & Stok Erime Analizi Önceliklendirmesi
+    if (options.considerShipmentVelocity && vel) {
+      if (vel.daysOfStockRemaining <= 3 && totalNetNeed > 0) {
+        urgency = 'critical';
+        urgencyScore += 75; // 3 günden az stok kaldı -> Acil kritik!
+      } else if (vel.daysOfStockRemaining <= 7 && totalNetNeed > 0) {
+        if (urgency !== 'critical') urgency = 'high';
+        urgencyScore += 45; // 7 gün içinde bitecek -> Yüksek öncelik
+      } else if (vel.velocityCategory === 'very_fast') {
+        urgencyScore += 25; // Lokomotif ürün
+      } else if (vel.velocityCategory === 'stagnant' && pendingOrderQty === 0) {
+        // Durgun ve siparişi yoksa aciliyeti düşür (gereksiz stok birikmesin)
+        urgencyScore = Math.max(5, urgencyScore - 40);
+      }
+    }
+
     const moldKey = `${p.product_type || 'Genel'}_${p.thickness || 'Standart'}`.toLowerCase();
 
     return {
@@ -140,6 +179,7 @@ export function generateSmartProductionPlan({
       urgencyScore,
       moldKey,
       closestDueDate,
+      velocity: vel,
     };
   });
 
@@ -362,6 +402,29 @@ export function generateSmartProductionPlan({
 
   if (options.onlyWithOrders) {
     reasoning.push(`📦 Sipariş Filtresi: Yalnızca kesin müşteri siparişi olan ürünler planlandı; siparişsiz emniyet stoğu üretimi yapılmadı.`);
+  }
+
+  // Sevkiyat & Stok Erime Analizi Raporlama
+  if (options.considerShipmentVelocity && options.shipmentVelocities) {
+    const velList = Object.values(options.shipmentVelocities);
+    const sortedByBurn = [...velList].sort((a, b) => b.dailyBurnRate - a.dailyBurnRate);
+    const topBurn = sortedByBurn[0];
+    const topProduct = topBurn ? products.find(p => p.id === topBurn.productId) : null;
+
+    if (topProduct && topBurn && topBurn.dailyBurnRate > 0) {
+      reasoning.push(`🔥 En Hızlı Eriyen / Çok Satan Ürün: "${topProduct.name}" (Günde ortalama ${topBurn.dailyBurnRate} ${topProduct.unit || 'm²'} sevk ediliyor; son 30 gün toplamı: ${topBurn.totalShippedLast30Days.toLocaleString('tr-TR')} ${topProduct.unit || 'm²'}).`);
+    }
+
+    const runOutRisks = velList.filter(v => v.dailyBurnRate > 0 && v.daysOfStockRemaining <= 7 && v.daysOfStockRemaining > 0);
+    if (runOutRisks.length > 0) {
+      const names = runOutRisks.map(r => products.find(p => p.id === r.productId)?.name).filter(Boolean).slice(0, 3).join(', ');
+      criticalAlerts.push(`⚠️ Sevkiyat Hızı Uyarısı: ${runOutRisks.length} kalemin (${names}${runOutRisks.length > 3 ? '...' : ''}) stoku mevcut sevkiyat temposuyla 7 günden az sürede tükenecektir. Sevkiyat aksamaması için üretimleri öne alındı.`);
+    }
+
+    const stagnantItems = velList.filter(v => v.velocityCategory === 'stagnant');
+    if (stagnantItems.length > 0) {
+      reasoning.push(`💤 Sevkiyat Hareketi Durgun Ürünler: ${stagnantItems.length} kalemin son 30 günde sevkiyatı bulunmadığı için siparişsiz gereksiz stok birikiminden kaçınıldı.`);
+    }
   }
 
   if (options.shiftsPerDay === 1) {
