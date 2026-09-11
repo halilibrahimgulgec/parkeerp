@@ -126,7 +126,7 @@ function ProductionForm({ products, onSave, onClose, initial }: {
           ))}
         </select>
         {selectedProduct && (
-          <p className="text-xs text-slate-400 mt-1">1 Palet = {selectedProduct.m2_per_pallet} m²</p>
+          <p className="text-xs text-slate-400 mt-1">1 Palet = {selectedProduct.m2_per_pallet} {selectedProduct.unit === 'metre' ? 'Metre' : selectedProduct.unit === 'adet' ? 'Adet' : 'm²'}</p>
         )}
       </div>
 
@@ -138,13 +138,17 @@ function ProductionForm({ products, onSave, onClose, initial }: {
             className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400" required />
         </div>
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Toplam m²</label>
+          <label className="block text-sm font-medium text-slate-700 mb-1">
+            Toplam {selectedProduct?.unit === 'metre' ? 'Metre' : selectedProduct?.unit === 'adet' ? 'Adet' : 'm²'}
+          </label>
           <input type="number" min="0" step="0.01" value={form.total_m2}
             onChange={e => setForm(f => ({ ...f, total_m2: Number(e.target.value) }))}
             className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" />
         </div>
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Fire m²</label>
+          <label className="block text-sm font-medium text-slate-700 mb-1">
+            Fire {selectedProduct?.unit === 'metre' ? 'Metre' : selectedProduct?.unit === 'adet' ? 'Adet' : 'm²'}
+          </label>
           <input type="number" min="0" step="0.01" value={form.waste_m2}
             onChange={e => setForm(f => ({ ...f, waste_m2: Number(e.target.value) }))}
             className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400" />
@@ -152,8 +156,13 @@ function ProductionForm({ products, onSave, onClose, initial }: {
       </div>
 
       <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm">
-        <span className="font-semibold text-amber-800">Net m²: </span>
-        <span className="text-amber-700">{Math.max(form.total_m2 - form.waste_m2, 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 })} m²</span>
+        <span className="font-semibold text-amber-800">
+          Net {selectedProduct?.unit === 'metre' ? 'Metre' : selectedProduct?.unit === 'adet' ? 'Adet' : 'm²'}: 
+        </span>{' '}
+        <span className="text-amber-700">
+          {Math.max(form.total_m2 - form.waste_m2, 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 })}{' '}
+          {selectedProduct?.unit === 'metre' ? 'Metre' : selectedProduct?.unit === 'adet' ? 'Adet' : 'm²'}
+        </span>
       </div>
 
       <div>
@@ -217,8 +226,26 @@ export default function Production() {
     return searchMatch && dateMatch;
   });
 
-  const totalProduced = filtered.reduce((s, e) => s + e.net_m2, 0);
-  const totalWaste = filtered.reduce((s, e) => s + e.waste_m2, 0);
+  let totalParkeM2 = 0;
+  let totalBordurMetre = 0;
+  let totalAdet = 0;
+  let totalWasteM2 = 0;
+  let totalWasteMetre = 0;
+
+  filtered.forEach(e => {
+    const u = e.products?.unit;
+    const net = Number(e.net_m2) || 0;
+    const waste = Number(e.waste_m2) || 0;
+    if (u === 'metre') {
+      totalBordurMetre += net;
+      totalWasteMetre += waste;
+    } else if (u === 'adet') {
+      totalAdet += net;
+    } else {
+      totalParkeM2 += net;
+      totalWasteM2 += waste;
+    }
+  });
 
   const handleDelete = async (entry: ProductionEntry) => {
     if (!confirm(`${entry.products?.name} için ${entry.date} tarihli üretim kaydını silmek istediğinize emin misiniz?`)) return;
@@ -251,17 +278,30 @@ export default function Production() {
         </button>
       </div>
 
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        {[
-          { label: 'Toplam Net m² (Filtrelenmiş)', value: `${totalProduced.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`, color: 'text-amber-600' },
-          { label: 'Toplam Fire (Filtrelenmiş)', value: `${totalWaste.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`, color: 'text-red-500' },
-          { label: 'Kayıt Sayısı', value: String(filtered.length), color: 'text-slate-700' },
-        ].map((s, i) => (
-          <div key={i} className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
-            <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
-            <p className="text-xs text-slate-500 mt-1">{s.label}</p>
-          </div>
-        ))}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+          <p className="text-xl font-bold text-amber-600">
+            {totalParkeM2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²
+          </p>
+          <p className="text-xs text-slate-500 mt-1">Toplam Net Parke</p>
+        </div>
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+          <p className="text-xl font-bold text-amber-800">
+            {totalBordurMetre.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Metre
+          </p>
+          <p className="text-xs text-slate-500 mt-1">Toplam Net Bordür</p>
+        </div>
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+          <p className="text-xl font-bold text-red-500">
+            {totalWasteM2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²
+            {totalWasteMetre > 0 && ` + ${totalWasteMetre.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m`}
+          </p>
+          <p className="text-xs text-slate-500 mt-1">Toplam Fire</p>
+        </div>
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+          <p className="text-xl font-bold text-slate-700">{filtered.length} Kayıt</p>
+          <p className="text-xs text-slate-500 mt-1">Vardiya Üretim Sayısı</p>
+        </div>
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100">
@@ -299,15 +339,17 @@ export default function Production() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-slate-500 bg-slate-50 border-b border-slate-100">
-                  {['Tarih', 'Vardiya', 'Makine', 'Ürün', 'Palet', 'Toplam m²', 'Fire m²', 'Net m²', 'Lot No', ''].map((h, i) => (
+                  {['Tarih', 'Vardiya', 'Makine', 'Ürün', 'Palet', 'Toplam Miktar', 'Fire', 'Net Üretim', 'Lot No', ''].map((h, i) => (
                     <th key={i} className="px-4 py-3 font-medium text-xs uppercase tracking-wider">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={9} className="text-center py-12 text-slate-400">Kayıt bulunamadı.</td></tr>
-                ) : filtered.map(entry => (
+                  <tr><td colSpan={10} className="text-center py-12 text-slate-400">Kayıt bulunamadı.</td></tr>
+                ) : filtered.map(entry => {
+                  const entryUnit = entry.products?.unit === 'metre' ? 'm' : entry.products?.unit === 'adet' ? 'ad.' : 'm²';
+                  return (
                   <tr key={entry.id} className="hover:bg-amber-50/30 transition-colors">
                     <td className="px-4 py-3 whitespace-nowrap">
                       <div className="flex items-center gap-1.5 text-slate-700">
@@ -326,9 +368,15 @@ export default function Production() {
                       <div className="text-xs text-slate-400">{entry.products?.thickness} / {entry.products?.color}</div>
                     </td>
                     <td className="px-4 py-3 text-slate-700">{entry.total_pallets}</td>
-                    <td className="px-4 py-3 text-slate-700">{entry.total_m2.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}</td>
-                    <td className="px-4 py-3 text-red-500">{entry.waste_m2.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}</td>
-                    <td className="px-4 py-3 font-semibold text-amber-700">{entry.net_m2.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}</td>
+                    <td className="px-4 py-3 text-slate-700 font-medium">
+                      {entry.total_m2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {entryUnit}
+                    </td>
+                    <td className="px-4 py-3 text-red-500 font-medium">
+                      {entry.waste_m2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {entryUnit}
+                    </td>
+                    <td className="px-4 py-3 font-semibold text-amber-700">
+                      {entry.net_m2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {entryUnit}
+                    </td>
                     <td className="px-4 py-3 font-mono text-slate-500 text-xs">{entry.lot_number}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
@@ -346,7 +394,8 @@ export default function Production() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

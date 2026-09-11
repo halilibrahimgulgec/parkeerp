@@ -4,10 +4,13 @@ import {
   Factory, Truck, AlertTriangle, TrendingUp, Package,
   DollarSign, BarChart2, Calendar, Printer, Search, Target
 } from 'lucide-react';
+import { getShipmentDisplayQuantity } from './Shipment';
 
 interface KPI {
-  todayProduction: number;
-  todayShipment: number;
+  productionDisplay: string;
+  productionSub: string;
+  shipmentDisplay: string;
+  shipmentSub: string;
   monthCost: number;
   lowStockCount: number;
 }
@@ -35,6 +38,7 @@ interface RecentShipment {
   total_m2: number;
   shipment_date: string;
   status: string;
+  shipment_items?: any[];
 }
 
 function DonutChart({ data }: { data: CostBreakdown }) {
@@ -108,7 +112,14 @@ function KPICard({ title, value, sub, icon: Icon, color }: { title: string; valu
 }
 
 export default function Dashboard() {
-  const [kpi, setKpi] = useState<KPI>({ todayProduction: 0, todayShipment: 0, monthCost: 0, lowStockCount: 0 });
+  const [kpi, setKpi] = useState<KPI>({
+    productionDisplay: '0 m²',
+    productionSub: 'Net üretim (fire düşülmüş)',
+    shipmentDisplay: '0 m²',
+    shipmentSub: 'Tamamlanan çıkışlar',
+    monthCost: 0,
+    lowStockCount: 0,
+  });
   const [stocks, setStocks] = useState<StockItem[]>([]);
   const [costBreakdown, setCostBreakdown] = useState<CostBreakdown>({ hammadde: 0, operasyonel: 0, genel: 0 });
   const [recentShipments, setRecentShipments] = useState<RecentShipment[]>([]);
@@ -126,16 +137,64 @@ export default function Dashboard() {
       setLoading(true);
 
       const [prodRes, shipRes, costRes, stockRes, quotaRes, shipItemRes] = await Promise.all([
-        supabase.from('production_entries').select('net_m2').eq('date', today),
-        supabase.from('shipments').select('total_m2').eq('shipment_date', today).eq('status', 'completed'),
+        supabase.from('production_entries').select('net_m2, products(unit)').eq('date', today),
+        supabase.from('shipments').select('total_m2, shipment_items(m2, unit, products(unit))').eq('shipment_date', today).eq('status', 'completed'),
         supabase.from('cost_entries').select('cost_type, total_amount').eq('period_month', currentMonth).eq('period_year', currentYear),
         supabase.from('v_product_stock').select('*'),
         supabase.from('customer_quotas').select('*, customers(name), sites(name), products(name)').eq('is_active', true),
-        supabase.from('shipment_items').select('product_id, m2, unit, shipments!inner(shipment_date, customer_id, site_id, status)').eq('shipments.status', 'completed'),
+        supabase.from('shipment_items').select('product_id, m2, unit, products(unit), shipments!inner(shipment_date, customer_id, site_id, status)').eq('shipments.status', 'completed'),
       ]);
 
-      const todayProduction = (prodRes.data || []).reduce((s, r) => s + (r.net_m2 || 0), 0);
-      const todayShipment = (shipRes.data || []).reduce((s, r) => s + (r.total_m2 || 0), 0);
+      // Bugünkü Üretim hesaplama (Birim ayrımı: Parke m², Bordür Metre)
+      let prodParkeM2 = 0;
+      let prodBordurMetre = 0;
+      let prodAdet = 0;
+      (prodRes.data || []).forEach((r: any) => {
+        const u = r.products?.unit;
+        const val = Number(r.net_m2) || 0;
+        if (u === 'metre') prodBordurMetre += val;
+        else if (u === 'adet') prodAdet += val;
+        else prodParkeM2 += val;
+      });
+
+      const prodParts: string[] = [];
+      if (prodParkeM2 > 0) prodParts.push(`${prodParkeM2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`);
+      if (prodBordurMetre > 0) prodParts.push(`${prodBordurMetre.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m`);
+      if (prodAdet > 0) prodParts.push(`${prodAdet.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ad.`);
+      const productionDisplay = prodParts.length > 0 ? prodParts.join(' + ') : '0 m²';
+      const productionSub = (prodBordurMetre > 0 || prodAdet > 0)
+        ? `${(prodRes.data || []).length} vardiya kaydı`
+        : 'Net üretim (fire düşülmüş)';
+
+      // Bugünkü Sevkiyat hesaplama (Birim ayrımı: Parke m², Bordür Metre)
+      let shipParkeM2 = 0;
+      let shipBordurMetre = 0;
+      let shipAdet = 0;
+      (shipRes.data || []).forEach((s: any) => {
+        const items = s.shipment_items || [];
+        if (items.length === 0) {
+          shipParkeM2 += Number(s.total_m2) || 0;
+        } else {
+          items.forEach((it: any) => {
+            const u = (it.products?.unit === 'metre' || it.unit === 'metre')
+              ? 'metre'
+              : (it.products?.unit === 'adet' || it.unit === 'adet')
+              ? 'adet'
+              : 'm2';
+            const qty = Number(it.m2) || 0;
+            if (u === 'metre') shipBordurMetre += qty;
+            else if (u === 'adet') shipAdet += qty;
+            else shipParkeM2 += qty;
+          });
+        }
+      });
+
+      const shipParts: string[] = [];
+      if (shipParkeM2 > 0) shipParts.push(`${shipParkeM2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`);
+      if (shipBordurMetre > 0) shipParts.push(`${shipBordurMetre.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m`);
+      if (shipAdet > 0) shipParts.push(`${shipAdet.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ad.`);
+      const shipmentDisplay = shipParts.length > 0 ? shipParts.join(' + ') : '0 m²';
+      const shipmentSub = `${(shipRes.data || []).length} tamamlanan çıkış`;
 
       const costs = costRes.data || [];
       const monthCost = costs.reduce((s, r) => s + (r.total_amount || 0), 0);
@@ -159,7 +218,7 @@ export default function Dashboard() {
 
       const lowStockCount = stockItems.filter(s => s.current_stock <= s.min_stock_alert).length;
       setStocks(stockItems);
-      setKpi({ todayProduction, todayShipment, monthCost, lowStockCount });
+      setKpi({ productionDisplay, productionSub, shipmentDisplay, shipmentSub, monthCost, lowStockCount });
 
       if (quotaRes.data && shipItemRes.data) {
         const qAlerts: any[] = [];
@@ -172,8 +231,15 @@ export default function Dashboard() {
             if (q.product_id && item.product_id !== q.product_id) return false;
             if (q.start_date && s.shipment_date < q.start_date) return false;
             if (q.end_date && s.shipment_date > q.end_date) return false;
-            const itemUnit = item.unit || 'm2';
-            if (itemUnit !== q.unit) return false;
+
+            const itemProdUnit = item.products?.unit;
+            const itemUnit = (itemProdUnit === 'metre' || item.unit === 'metre')
+              ? 'metre'
+              : (itemProdUnit === 'adet' || item.unit === 'adet')
+              ? 'adet'
+              : (item.unit || 'm2');
+
+            if (!q.product_id && itemUnit !== q.unit) return false;
             return true;
           });
           const shipped = matching.reduce((acc: number, cur: any) => acc + (Number(cur.m2) || 0), 0);
@@ -201,7 +267,7 @@ export default function Dashboard() {
 
       const { data: shipData } = await supabase
         .from('shipments')
-        .select('id, invoice_no, total_m2, shipment_date, status, customers(name)')
+        .select('id, invoice_no, total_m2, shipment_date, status, customers(name), shipment_items(*, products(*))')
         .order('created_at', { ascending: false })
         .limit(5);
 
@@ -212,6 +278,7 @@ export default function Dashboard() {
         total_m2: s.total_m2,
         shipment_date: s.shipment_date,
         status: s.status,
+        shipment_items: s.shipment_items,
       })));
 
       setLoading(false);
@@ -275,15 +342,15 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <KPICard
             title="Bugünkü Üretim"
-            value={`${kpi.todayProduction.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`}
-            sub="Net üretim (fire düşülmüş)"
+            value={kpi.productionDisplay}
+            sub={kpi.productionSub}
             icon={Factory}
             color="bg-amber-500"
           />
           <KPICard
             title="Bugünkü Sevkiyat"
-            value={`${kpi.todayShipment.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`}
-            sub="Tamamlanan çıkışlar"
+            value={kpi.shipmentDisplay}
+            sub={kpi.shipmentSub}
             icon={Truck}
             color="bg-blue-500"
           />
@@ -497,7 +564,7 @@ export default function Dashboard() {
                 <tr className="text-left text-slate-500 border-b border-slate-100">
                   <th className="pb-3 font-medium">İrsaliye No</th>
                   <th className="pb-3 font-medium">Müşteri</th>
-                  <th className="pb-3 font-medium text-right">Miktar (m²)</th>
+                  <th className="pb-3 font-medium text-right">Sevk Miktarı</th>
                   <th className="pb-3 font-medium">Tarih</th>
                   <th className="pb-3 font-medium">Durum</th>
                 </tr>
@@ -505,12 +572,19 @@ export default function Dashboard() {
               <tbody className="divide-y divide-slate-50">
                 {recentShipments.map(s => {
                   const st = STATUS_LABELS[s.status] || { label: s.status, cls: '' };
+                  const qInfo = getShipmentDisplayQuantity(s);
                   return (
                     <tr key={s.id} className="hover:bg-slate-50 transition-colors">
                       <td className="py-3 font-mono text-slate-700">{s.invoice_no || '-'}</td>
                       <td className="py-3 text-slate-700">{s.customer_name}</td>
-                      <td className="py-3 text-right font-semibold text-slate-900">
-                        {(s.total_m2 || 0).toLocaleString('tr-TR', { maximumFractionDigits: 1 })}
+                      <td className="py-3 text-right">
+                        <div className="flex flex-col items-end gap-1">
+                          {qInfo.badges.map((b, bIdx) => (
+                            <span key={bIdx} className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${b.color}`}>
+                              {b.text}
+                            </span>
+                          ))}
+                        </div>
                       </td>
                       <td className="py-3 text-slate-500">
                         {new Date(s.shipment_date).toLocaleDateString('tr-TR')}

@@ -22,6 +22,8 @@ interface ProfitItem {
   customer_name: string;
   shipment_date: string;
   total_m2: number;
+  displayQuantity: string;
+  unitLabel: string;
   sale_price_per_m2: number;
   logistics_cost: number;
   revenue: number;
@@ -133,10 +135,10 @@ export default function Reports() {
 
       const [prodMonthRes, shipMonthRes, stocksRes, costsRes, shipmentsRes] = await Promise.all([
         supabase.from('production_entries').select('product_id, net_m2, date').gte('date', startDate).lte('date', endDate),
-        supabase.from('shipment_items').select('product_id, m2, unit, shipments!inner(shipment_date, status)').eq('shipments.status', 'completed').gte('shipments.shipment_date', startDate).lte('shipments.shipment_date', endDate),
+        supabase.from('shipment_items').select('product_id, m2, unit, products(unit), shipments!inner(shipment_date, status)').eq('shipments.status', 'completed').gte('shipments.shipment_date', startDate).lte('shipments.shipment_date', endDate),
         supabase.from('v_product_stock').select('*'),
         supabase.from('cost_entries').select('cost_type, total_amount').eq('period_month', selectedMonth).eq('period_year', selectedYear),
-        supabase.from('shipments').select('*, customers(name)').gte('shipment_date', startDate).lte('shipment_date', endDate).eq('status', 'completed'),
+        supabase.from('shipments').select('*, customers(name), shipment_items(*, products(*))').gte('shipment_date', startDate).lte('shipment_date', endDate).eq('status', 'completed'),
       ]);
 
       const productMap: Record<string, number> = {};
@@ -177,13 +179,37 @@ export default function Reports() {
 
       const shipData = shipmentsRes.data || [];
       const profItems: ProfitItem[] = (shipData as any[]).map(s => {
+        const items = s.shipment_items || [];
+        let m2Total = 0;
+        let metreTotal = 0;
+        let adetTotal = 0;
+        items.forEach((it: any) => {
+          const u = (it.products?.unit === 'metre' || it.unit === 'metre')
+            ? 'metre'
+            : (it.products?.unit === 'adet' || it.unit === 'adet')
+            ? 'adet'
+            : 'm2';
+          const qty = Number(it.m2) || 0;
+          if (u === 'metre') metreTotal += qty;
+          else if (u === 'adet') adetTotal += qty;
+          else m2Total += qty;
+        });
+
+        const badges: string[] = [];
+        if (m2Total > 0) badges.push(`${m2Total.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`);
+        if (metreTotal > 0) badges.push(`${metreTotal.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Metre`);
+        if (adetTotal > 0) badges.push(`${adetTotal.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} Adet`);
+        const displayQuantity = badges.length > 0 ? badges.join(' + ') : `${(s.total_m2 || 0).toLocaleString('tr-TR')} m²`;
+        const unitLabel = metreTotal > 0 && m2Total === 0 ? 'm' : adetTotal > 0 && m2Total === 0 ? 'adet' : 'm²';
+
         const revenue = s.sale_price_per_m2 * s.total_m2;
         const totalCost = uc * s.total_m2 + (s.logistics_cost || 0);
         const profit = revenue - totalCost;
         const margin_pct = revenue > 0 ? (profit / revenue) * 100 : 0;
         return {
           shipment_id: s.id, invoice_no: s.invoice_no, customer_name: s.customers?.name || '-',
-          shipment_date: s.shipment_date, total_m2: s.total_m2, sale_price_per_m2: s.sale_price_per_m2,
+          shipment_date: s.shipment_date, total_m2: s.total_m2, displayQuantity, unitLabel,
+          sale_price_per_m2: s.sale_price_per_m2,
           logistics_cost: s.logistics_cost || 0, revenue, unit_cost: uc, total_cost: totalCost, profit, margin_pct,
         };
       });
@@ -200,7 +226,12 @@ export default function Reports() {
         const d = item.shipments?.shipment_date;
         if (!d) return;
         if (!dailyMap[d]) dailyMap[d] = { tonnage: 0, m2: 0, metre: 0, adet: 0 };
-        const u = item.unit || 'm2';
+        const prodUnit = item.products?.unit;
+        const u = (prodUnit === 'metre' || item.unit === 'metre')
+          ? 'metre'
+          : (prodUnit === 'adet' || item.unit === 'adet')
+          ? 'adet'
+          : (item.unit || 'm2');
         const qty = Number(item.m2) || 0;
         if (u === 'metre') dailyMap[d].metre += qty;
         else if (u === 'adet') dailyMap[d].adet += qty;
@@ -416,7 +447,7 @@ export default function Reports() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-slate-500 bg-slate-50 border-b border-slate-100">
-                      {['İrsaliye', 'Müşteri', 'Tarih', 'm²', 'Satış Fiyatı', 'Ciro', 'Maliyet', 'Lojistik', 'Kar/Zarar', 'Marj'].map((h, i) => (
+                      {['İrsaliye', 'Müşteri', 'Tarih', 'Sevk Miktarı', 'Birim Fiyat', 'Ciro', 'Maliyet', 'Lojistik', 'Kar/Zarar', 'Marj'].map((h, i) => (
                         <th key={i} className="px-4 py-3 font-medium text-xs uppercase tracking-wider">{h}</th>
                       ))}
                     </tr>
@@ -427,8 +458,8 @@ export default function Reports() {
                         <td className="px-4 py-3 font-mono text-slate-600 text-xs">{item.invoice_no}</td>
                         <td className="px-4 py-3 text-slate-700">{item.customer_name}</td>
                         <td className="px-4 py-3 text-slate-500">{new Date(item.shipment_date).toLocaleDateString('tr-TR')}</td>
-                        <td className="px-4 py-3 font-semibold text-slate-700">{item.total_m2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })}</td>
-                        <td className="px-4 py-3 text-slate-600">₺{item.sale_price_per_m2}/m²</td>
+                        <td className="px-4 py-3 font-semibold text-slate-700">{item.displayQuantity}</td>
+                        <td className="px-4 py-3 text-slate-600">₺{item.sale_price_per_m2}/{item.unitLabel}</td>
                         <td className="px-4 py-3 font-semibold text-blue-700">₺{item.revenue.toLocaleString('tr-TR', { maximumFractionDigits: 0 })}</td>
                         <td className="px-4 py-3 text-slate-600">₺{item.total_cost.toLocaleString('tr-TR', { maximumFractionDigits: 0 })}</td>
                         <td className="px-4 py-3 text-slate-500">₺{item.logistics_cost.toLocaleString('tr-TR', { maximumFractionDigits: 0 })}</td>

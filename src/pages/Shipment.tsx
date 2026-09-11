@@ -613,6 +613,77 @@ const PALLET_LABELS: Record<string, string> = {
   dokme: 'Dökme (Paletsiz)',
 };
 
+export function getShipmentDisplayQuantity(s: any) {
+  const items = s.shipment_items || [];
+  if (items.length === 0) {
+    const rawVal = Number(s.total_m2 || 0);
+    return {
+      badges: [{
+        text: `${rawVal.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`,
+        unit: 'm²',
+        color: 'text-blue-700 bg-blue-50 border-blue-200',
+      }],
+      displayText: `${rawVal.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`,
+      m2: rawVal,
+      metre: 0,
+      adet: 0,
+      priceUnit: 'm²',
+    };
+  }
+
+  let m2Total = 0;
+  let metreTotal = 0;
+  let adetTotal = 0;
+
+  items.forEach((it: any) => {
+    const prodUnit = it.products?.unit;
+    const effectiveUnit = (prodUnit === 'metre' || it.unit === 'metre')
+      ? 'metre'
+      : (prodUnit === 'adet' || it.unit === 'adet')
+      ? 'adet'
+      : 'm2';
+
+    const qty = Number(it.m2) || 0;
+    if (effectiveUnit === 'metre') metreTotal += qty;
+    else if (effectiveUnit === 'adet') adetTotal += qty;
+    else m2Total += qty;
+  });
+
+  const badges: { text: string; unit: string; color: string }[] = [];
+  if (m2Total > 0) {
+    badges.push({
+      text: `${m2Total.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`,
+      unit: 'm²',
+      color: 'text-blue-700 bg-blue-50 border-blue-200'
+    });
+  }
+  if (metreTotal > 0) {
+    badges.push({
+      text: `${metreTotal.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Metre`,
+      unit: 'metre',
+      color: 'text-amber-800 bg-amber-50 border-amber-200'
+    });
+  }
+  if (adetTotal > 0) {
+    badges.push({
+      text: `${adetTotal.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} Adet`,
+      unit: 'adet',
+      color: 'text-purple-700 bg-purple-50 border-purple-200'
+    });
+  }
+
+  const primaryUnit = metreTotal > 0 && m2Total === 0 ? 'm' : adetTotal > 0 && m2Total === 0 ? 'adet' : 'm²';
+
+  return {
+    badges,
+    displayText: badges.map(b => b.text).join(' + ') || '0 m²',
+    m2: m2Total,
+    metre: metreTotal,
+    adet: adetTotal,
+    priceUnit: primaryUnit,
+  };
+}
+
 function ShipmentDetail({ shipment, onClose }: { shipment: Shipment; onClose: () => void }) {
   const [items, setItems] = useState<any[]>([]);
 
@@ -621,7 +692,8 @@ function ShipmentDetail({ shipment, onClose }: { shipment: Shipment; onClose: ()
       .then(({ data }) => setItems(data || []));
   }, [shipment.id]);
 
-  const totalRevenue = shipment.sale_price_per_m2 * shipment.total_m2;
+  const qInfo = getShipmentDisplayQuantity({ ...shipment, shipment_items: items });
+  const totalRevenue = shipment.sale_price_per_m2 * (shipment.total_m2 || 0);
 
   return (
     <div className="space-y-4">
@@ -633,7 +705,7 @@ function ShipmentDetail({ shipment, onClose }: { shipment: Shipment; onClose: ()
         <div><span className="text-slate-500">Araç:</span> <span className="font-medium">{shipment.vehicle_plate}</span></div>
         <div><span className="text-slate-500">Şoför:</span> <span className="font-medium">{shipment.driver_name || '-'}</span></div>
         <div><span className="text-slate-500">Brüt / Dara / Net:</span> <span className="font-medium">{shipment.gross_weight} / {shipment.tare_weight} / {shipment.net_weight} kg</span></div>
-        <div><span className="text-slate-500">Toplam m²:</span> <span className="font-semibold text-blue-700">{shipment.total_m2} m²</span></div>
+        <div><span className="text-slate-500">Toplam Miktar:</span> <span className="font-semibold text-blue-700">{qInfo.displayText}</span></div>
       </div>
 
       <div className="border border-slate-200 rounded-xl overflow-hidden">
@@ -647,22 +719,31 @@ function ShipmentDetail({ shipment, onClose }: { shipment: Shipment; onClose: ()
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {items.map(item => (
-              <tr key={item.id}>
-                <td className="px-4 py-2">{item.products?.name} ({item.products?.thickness}/{item.products?.color})</td>
-                <td className="px-4 py-2 text-slate-600 text-xs">{PALLET_LABELS[item.pallet_type] || 'Sevkiyat Paleti'}</td>
-                <td className="px-4 py-2 text-right">{item.pallet_type === 'dokme' ? '-' : `${item.pallets} adet`}</td>
-                <td className="px-4 py-2 text-right font-semibold">
-                  {item.m2} {item.unit === 'm2' ? 'm²' : item.unit === 'adet' ? 'Adet' : item.unit === 'metre' ? 'Metre' : item.unit}
-                </td>
-              </tr>
-            ))}
+            {items.map(item => {
+              const prodUnit = item.products?.unit;
+              const effectiveUnit = (prodUnit === 'metre' || item.unit === 'metre')
+                ? 'Metre'
+                : (prodUnit === 'adet' || item.unit === 'adet')
+                ? 'Adet'
+                : 'm²';
+
+              return (
+                <tr key={item.id}>
+                  <td className="px-4 py-2">{item.products?.name} ({item.products?.thickness}/{item.products?.color})</td>
+                  <td className="px-4 py-2 text-slate-600 text-xs">{PALLET_LABELS[item.pallet_type] || 'Sevkiyat Paleti'}</td>
+                  <td className="px-4 py-2 text-right">{item.pallet_type === 'dokme' ? '-' : `${item.pallets} adet`}</td>
+                  <td className="px-4 py-2 text-right font-semibold">
+                    {item.m2} {effectiveUnit}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
 
       <div className="bg-blue-50 rounded-xl p-4 text-sm grid grid-cols-3 gap-4">
-        <div><p className="text-slate-500">Satış Fiyatı</p><p className="font-bold text-slate-900">₺{shipment.sale_price_per_m2}/m²</p></div>
+        <div><p className="text-slate-500">Satış Fiyatı</p><p className="font-bold text-slate-900">₺{shipment.sale_price_per_m2} / {qInfo.priceUnit}</p></div>
         <div><p className="text-slate-500">Lojistik</p><p className="font-bold text-slate-900">₺{shipment.logistics_cost}</p></div>
         <div><p className="text-slate-500">Tahmini Ciro</p><p className="font-bold text-blue-700">₺{totalRevenue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}</p></div>
       </div>
@@ -692,7 +773,7 @@ export default function ShipmentPage() {
     const [custRes, prodRes, shipRes] = await Promise.all([
       supabase.from('customers').select('*').eq('is_active', true).order('name'),
       supabase.from('products').select('*').eq('is_active', true).order('name'),
-      supabase.from('shipments').select('*, customers(*), sites(*)').order('shipment_date', { ascending: false }).order('created_at', { ascending: false }),
+      supabase.from('shipments').select('*, customers(*), sites(*), shipment_items(*, products(*))').order('shipment_date', { ascending: false }).order('created_at', { ascending: false }),
     ]);
     setCustomers(custRes.data || []);
     setProducts(prodRes.data || []);
@@ -718,8 +799,18 @@ export default function ShipmentPage() {
     return match && dateMatch;
   });
 
-  const totalTonnage = filtered.reduce((acc, s) => acc + s.net_weight, 0);
-  const totalM2 = filtered.reduce((acc, s) => acc + s.total_m2, 0);
+  let totalTonnage = 0;
+  let totalM2 = 0;
+  let totalMetre = 0;
+  let totalAdet = 0;
+
+  filtered.forEach(s => {
+    totalTonnage += Number(s.net_weight) || 0;
+    const qInfo = getShipmentDisplayQuantity(s);
+    totalM2 += qInfo.m2;
+    totalMetre += qInfo.metre;
+    totalAdet += qInfo.adet;
+  });
 
   return (
     <div className="p-8">
@@ -738,17 +829,34 @@ export default function ShipmentPage() {
         </button>
       </div>
 
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        {[
-          { label: 'Toplam Net Ağırlık (Filtrelenmiş)', value: `${(totalTonnage / 1000).toLocaleString('tr-TR', { maximumFractionDigits: 2 })} Ton`, color: 'text-blue-600' },
-          { label: 'Toplam Sevk Edilen m²', value: `${totalM2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`, color: 'text-slate-700' },
-          { label: 'Sevkiyat Sayısı', value: String(filtered.length), color: 'text-slate-700' },
-        ].map((s, i) => (
-          <div key={i} className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
-            <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
-            <p className="text-xs text-slate-500 mt-1">{s.label}</p>
-          </div>
-        ))}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+          <p className="text-xl font-bold text-blue-600">
+            {(totalTonnage / 1000).toLocaleString('tr-TR', { maximumFractionDigits: 2 })} Ton
+          </p>
+          <p className="text-xs text-slate-500 mt-1">Toplam Net Ağırlık</p>
+        </div>
+
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+          <p className="text-xl font-bold text-slate-800">
+            {totalM2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²
+          </p>
+          <p className="text-xs text-slate-500 mt-1">Toplam Sevk (m² Parke)</p>
+        </div>
+
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+          <p className="text-xl font-bold text-amber-700">
+            {totalMetre.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m
+          </p>
+          <p className="text-xs text-slate-500 mt-1">Toplam Sevk (Metre Bordür)</p>
+        </div>
+
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+          <p className="text-xl font-bold text-slate-700">
+            {filtered.length} Sefer
+          </p>
+          <p className="text-xs text-slate-500 mt-1">Sevkiyat Sayısı</p>
+        </div>
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100">
@@ -774,7 +882,7 @@ export default function ShipmentPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-slate-500 bg-slate-50 border-b border-slate-100">
-                  {['İrsaliye', 'Tarih', 'Müşteri / Şantiye', 'Plaka', 'Net Ağırlık', 'Toplam m²', 'Satış Fiyatı', 'Durum', ''].map((h, i) => (
+                  {['İrsaliye', 'Tarih', 'Müşteri / Şantiye', 'Plaka', 'Net Ağırlık', 'Sevk Miktarı', 'Satış Fiyatı', 'Durum', ''].map((h, i) => (
                     <th key={i} className="px-4 py-3 font-medium text-xs uppercase tracking-wider">{h}</th>
                   ))}
                 </tr>
@@ -782,45 +890,58 @@ export default function ShipmentPage() {
               <tbody className="divide-y divide-slate-50">
                 {filtered.length === 0 ? (
                   <tr><td colSpan={9} className="text-center py-12 text-slate-400">Kayıt bulunamadı.</td></tr>
-                ) : filtered.map(s => (
-                  <tr key={s.id} className="hover:bg-blue-50/20 transition-colors">
-                    <td className="px-4 py-3 font-mono text-slate-700">{s.invoice_no}</td>
-                    <td className="px-4 py-3 text-slate-600">{new Date(s.shipment_date).toLocaleDateString('tr-TR')}</td>
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-slate-800">{s.customers?.name}</div>
-                      {s.sites?.name && <div className="text-xs text-slate-400">{s.sites.name}</div>}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-slate-600">{s.vehicle_plate}</td>
-                    <td className="px-4 py-3 text-slate-700">{(s.net_weight / 1000).toLocaleString('tr-TR', { maximumFractionDigits: 2 })} t</td>
-                    <td className="px-4 py-3 font-semibold text-blue-700">{s.total_m2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²</td>
-                    <td className="px-4 py-3 text-slate-600">₺{s.sale_price_per_m2}/m²</td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${s.status === 'completed' ? 'bg-green-100 text-green-700' : s.status === 'cancelled' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                        {s.status === 'completed' ? 'Tamamlandı' : s.status === 'cancelled' ? 'İptal' : 'Bekliyor'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1">
-                        <button onClick={() => setDetailShipment(s)}
-                          className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors">
-                          <Eye size={14} />
-                        </button>
-                        <button onClick={() => { setEditShipment(s); setShowModal(true); }}
-                          className="p-1.5 text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 rounded-lg transition-colors">
-                          <Pencil size={14} />
-                        </button>
-                        {isAdmin() && (
-                          <button onClick={() => handleDelete(s)} disabled={deleting === s.id}
-                            className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
-                            {deleting === s.id
-                              ? <div className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
-                              : <Trash2 size={14} />}
+                ) : filtered.map(s => {
+                  const qInfo = getShipmentDisplayQuantity(s);
+                  return (
+                    <tr key={s.id} className="hover:bg-blue-50/20 transition-colors">
+                      <td className="px-4 py-3 font-mono text-slate-700">{s.invoice_no}</td>
+                      <td className="px-4 py-3 text-slate-600">{new Date(s.shipment_date).toLocaleDateString('tr-TR')}</td>
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-slate-800">{s.customers?.name}</div>
+                        {s.sites?.name && <div className="text-xs text-slate-400">{s.sites.name}</div>}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-slate-600">{s.vehicle_plate}</td>
+                      <td className="px-4 py-3 text-slate-700">{(s.net_weight / 1000).toLocaleString('tr-TR', { maximumFractionDigits: 2 })} t</td>
+                      <td className="px-4 py-3 font-semibold font-mono">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {qInfo.badges.map((b, bIdx) => (
+                            <span key={bIdx} className={`px-2 py-0.5 rounded-md text-xs font-bold border ${b.color}`}>
+                              {b.text}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-600 font-mono text-xs">
+                        ₺{Number(s.sale_price_per_m2 || 0).toLocaleString('tr-TR')} / {qInfo.priceUnit}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${s.status === 'completed' ? 'bg-green-100 text-green-700' : s.status === 'cancelled' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                          {s.status === 'completed' ? 'Tamamlandı' : s.status === 'cancelled' ? 'İptal' : 'Bekliyor'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => setDetailShipment(s)}
+                            className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors">
+                            <Eye size={14} />
                           </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                          <button onClick={() => { setEditShipment(s); setShowModal(true); }}
+                            className="p-1.5 text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 rounded-lg transition-colors">
+                            <Pencil size={14} />
+                          </button>
+                          {isAdmin() && (
+                            <button onClick={() => handleDelete(s)} disabled={deleting === s.id}
+                              className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
+                              {deleting === s.id
+                                ? <div className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                                : <Trash2 size={14} />}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

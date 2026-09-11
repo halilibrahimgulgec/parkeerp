@@ -18,6 +18,13 @@ const getLocalDateStr = (d = new Date()) => {
   return `${year}-${month}-${day}`;
 };
 
+export function getEffectiveUnit(item: any, products: Product[]): 'm2' | 'metre' | 'adet' {
+  const prod = products.find(p => p.id === item.product_id);
+  if (prod?.unit === 'metre' || item.unit === 'metre') return 'metre';
+  if (prod?.unit === 'adet' || item.unit === 'adet') return 'adet';
+  return (item.unit || prod?.unit || 'm2') as any;
+}
+
 interface QuotaFormData {
   customer_id: string;
   site_id: string;
@@ -218,7 +225,7 @@ export default function CustomerQuotas() {
 
         // Ürüne özel kota tanımlanmışsa o ürünün tüm sevkiyatları dahil edilir
         // Genel kota ise birim eşleşmesi aranır
-        const itemUnit = item.unit || 'm2';
+        const itemUnit = getEffectiveUnit(item, products);
         if (!quota.product_id && itemUnit !== quota.unit) return false;
 
         return true;
@@ -237,7 +244,7 @@ export default function CustomerQuotas() {
         completion_pct,
       };
     });
-  }, [quotas, shipmentItems]);
+  }, [quotas, shipmentItems, products]);
 
   // Filtered Quotas list
   const filteredQuotas = useMemo(() => {
@@ -307,7 +314,7 @@ export default function CustomerQuotas() {
       if (queryProductId && item.product_id !== queryProductId) return false;
 
       // Unit filter
-      const itemUnit = item.unit || 'm2';
+      const itemUnit = getEffectiveUnit(item, products);
       if (queryUnit !== 'all' && itemUnit !== queryUnit) return false;
 
       // Date range filter
@@ -337,7 +344,7 @@ export default function CustomerQuotas() {
 
     matched.forEach(item => {
       const s = item.shipments;
-      const u = item.unit || 'm2';
+      const u = getEffectiveUnit(item, products);
       const qty = Number(item.m2) || 0;
       const pal = Number(item.pallets) || 0;
 
@@ -381,7 +388,7 @@ export default function CustomerQuotas() {
       const name = prod ? prod.name : 'Diğer / Belirtilmemiş';
       const thickness = prod?.thickness || '';
       const color = prod?.color || '';
-      const unit = item.unit || prod?.unit || 'm2';
+      const unit = getEffectiveUnit(item, products);
       const qty = Number(item.m2) || 0;
       const pal = Number(item.pallets) || 0;
       const sId = item.shipments?.id;
@@ -430,7 +437,7 @@ export default function CustomerQuotas() {
       const sid = s?.site_id || 'unassigned';
       const siteObj = sites.find(st => st.id === sid);
       const name = siteObj ? siteObj.name : 'Genel / Belirtilmemiş Şantiye';
-      const unit = item.unit || 'm2';
+      const unit = getEffectiveUnit(item, products);
       const qty = Number(item.m2) || 0;
       const pal = Number(item.pallets) || 0;
       const sId = s?.id;
@@ -1391,7 +1398,7 @@ export default function CustomerQuotas() {
                             {p.color ? ` / ${p.color}` : ''}
                           </td>
                           <td className="px-3 py-3 text-right font-extrabold text-blue-900 font-mono text-sm">
-                            {p.total_qty.toLocaleString('tr-TR')} {p.unit}
+                            {p.total_qty.toLocaleString('tr-TR')} {p.unit === 'metre' ? 'Metre' : p.unit === 'adet' ? 'Adet' : 'm²'}
                           </td>
                           <td className="px-3 py-3 text-right font-semibold text-slate-700 font-mono">
                             {p.total_pallets > 0 ? `${p.total_pallets.toLocaleString('tr-TR')} Palet` : '-'}
@@ -1537,13 +1544,15 @@ export default function CustomerQuotas() {
                             <div className="space-y-1">
                               {entry.items.map((it, itemIdx) => {
                                 const prod = products.find(p => p.id === it.product_id);
+                                const u = getEffectiveUnit(it, products);
+                                const uLabel = u === 'metre' ? 'Metre' : u === 'adet' ? 'Adet' : 'm²';
                                 return (
                                   <div key={itemIdx} className="flex items-center gap-2 text-slate-700">
                                     <span className="font-semibold text-slate-800">
                                       {prod?.name || 'Parke Taşı'}
                                     </span>
                                     <span className="font-mono font-bold text-blue-800">
-                                      {Number(it.m2).toLocaleString('tr-TR')} {it.unit || 'm2'}
+                                      {Number(it.m2).toLocaleString('tr-TR')} {uLabel}
                                     </span>
                                     {Number(it.pallets) > 0 && (
                                       <span className="text-[10px] text-slate-400 font-mono">

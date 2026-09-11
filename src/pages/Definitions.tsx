@@ -75,8 +75,8 @@ function ProductFormComp({ initial, onSave, onClose }: { initial?: Product; onSa
         </InputField>
       </div>
       <div className="grid grid-cols-2 gap-4">
-        <InputField label="Palet Başına m²" type="number" value={form.m2_per_pallet} onChange={(e: any) => setForm(f => ({ ...f, m2_per_pallet: Number(e.target.value) }))} required />
-        <InputField label="Min. Stok Uyarı (m²)" type="number" value={form.min_stock_alert} onChange={(e: any) => setForm(f => ({ ...f, min_stock_alert: Number(e.target.value) }))} />
+        <InputField label={`Palet Başına Miktar (${form.unit === 'metre' ? 'Metre' : form.unit === 'adet' ? 'Adet' : 'm²'})`} type="number" value={form.m2_per_pallet} onChange={(e: any) => setForm(f => ({ ...f, m2_per_pallet: Number(e.target.value) }))} required />
+        <InputField label={`Min. Stok Uyarı (${form.unit === 'metre' ? 'Metre' : form.unit === 'adet' ? 'Adet' : 'm²'})`} type="number" value={form.min_stock_alert} onChange={(e: any) => setForm(f => ({ ...f, min_stock_alert: Number(e.target.value) }))} />
       </div>
       <div className="flex items-center gap-2">
         <input type="checkbox" id="is_active" checked={form.is_active} onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} className="rounded" />
@@ -426,7 +426,7 @@ export default function Definitions() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-slate-500 bg-slate-50 border-b border-slate-100">
-                {['Ürün Adı', 'Tip', 'Kalınlık', 'Renk', 'Birim', 'm²/Palet', 'Min. Stok', 'Durum', ''].map((h, i) => (
+                {['Ürün Adı', 'Tip', 'Kalınlık', 'Renk', 'Birim', 'Miktar/Palet', 'Min. Stok', 'Durum', ''].map((h, i) => (
                   <th key={i} className="px-4 py-3 font-medium text-xs uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -440,9 +440,15 @@ export default function Definitions() {
                   <td className="px-4 py-3 text-slate-600">{p.product_type}</td>
                   <td className="px-4 py-3 text-slate-600">{p.thickness}</td>
                   <td className="px-4 py-3 text-slate-600">{p.color}</td>
-                  <td className="px-4 py-3 text-slate-600">{p.unit}</td>
-                  <td className="px-4 py-3 font-semibold text-amber-700">{p.m2_per_pallet}</td>
-                  <td className="px-4 py-3 text-slate-600">{p.min_stock_alert} m²</td>
+                  <td className="px-4 py-3 text-slate-600 font-medium">
+                    {p.unit === 'metre' ? 'Metre' : p.unit === 'adet' ? 'Adet' : 'm²'}
+                  </td>
+                  <td className="px-4 py-3 font-semibold text-amber-700">
+                    {p.m2_per_pallet} {p.unit === 'metre' ? 'm/Palet' : p.unit === 'adet' ? 'Adet/Palet' : 'm²/Palet'}
+                  </td>
+                  <td className="px-4 py-3 text-slate-600">
+                    {p.min_stock_alert} {p.unit === 'metre' ? 'Metre' : p.unit === 'adet' ? 'Adet' : 'm²'}
+                  </td>
                   <td className="px-4 py-3">
                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${p.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
                       {p.is_active ? 'Aktif' : 'Pasif'}

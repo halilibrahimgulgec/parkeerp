@@ -33,7 +33,7 @@ interface PalletTransaction {
     shipment_items: {
       m2: number;
       unit: string;
-      products: { name: string };
+      products: { name: string; unit?: string };
     }[];
   } | null;
 }
@@ -105,7 +105,7 @@ export default function PalletTracking() {
     try {
       // 1. Shipped products
       const shipQuery = supabase.from('shipments')
-        .select('id, shipment_items(product_id, pallets, m2, unit, products(name))')
+        .select('id, shipment_items(product_id, pallets, m2, unit, products(name, unit))')
         .eq('customer_id', reconCustomer)
         .gte('shipment_date', reconStartDate)
         .lte('shipment_date', reconEndDate);
@@ -119,12 +119,17 @@ export default function PalletTracking() {
       const productMap: Record<string, { name: string; quantity: number; unit: string; pallets: number }> = {};
       shipmentsData?.forEach(s => {
         s.shipment_items?.forEach((item: any) => {
-          const key = `${item.product_id}-${item.unit}`;
+          const effectiveUnit = (item.products?.unit === 'metre' || item.unit === 'metre')
+            ? 'metre'
+            : (item.products?.unit === 'adet' || item.unit === 'adet')
+            ? 'adet'
+            : (item.unit || 'm2');
+          const key = `${item.product_id}-${effectiveUnit}`;
           if (!productMap[key]) {
             productMap[key] = {
               name: item.products?.name || 'Bilinmeyen Ürün',
               quantity: 0,
-              unit: item.unit === 'm2' ? 'm²' : item.unit === 'adet' ? 'Adet' : item.unit === 'metre' ? 'Metre' : item.unit,
+              unit: effectiveUnit === 'metre' ? 'Metre' : effectiveUnit === 'adet' ? 'Adet' : 'm²',
               pallets: 0
             };
           }
@@ -203,7 +208,7 @@ export default function PalletTracking() {
             shipment_items (
               m2,
               unit,
-              products (name)
+              products (name, unit)
             )
           )
         `)
@@ -640,11 +645,18 @@ export default function PalletTracking() {
                           <td className="px-4 py-3.5">
                             {t.shipments?.shipment_items && t.shipments.shipment_items.length > 0 ? (
                               <div className="flex flex-col gap-1 max-w-[250px]">
-                                {t.shipments.shipment_items.map((item, i) => (
-                                  <span key={i} className="text-xs text-slate-700 bg-slate-100 rounded px-1.5 py-0.5 w-max font-medium truncate">
-                                    {item.m2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {item.unit} - {item.products?.name}
-                                  </span>
-                                ))}
+                                {t.shipments.shipment_items.map((item, i) => {
+                                  const u = (item.products?.unit === 'metre' || item.unit === 'metre')
+                                    ? 'Metre'
+                                    : (item.products?.unit === 'adet' || item.unit === 'adet')
+                                    ? 'Adet'
+                                    : 'm²';
+                                  return (
+                                    <span key={i} className="text-xs text-slate-700 bg-slate-100 rounded px-1.5 py-0.5 w-max font-medium truncate">
+                                      {item.m2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {u} - {item.products?.name}
+                                    </span>
+                                  );
+                                })}
                               </div>
                             ) : (
                               <span className="text-slate-400 text-xs">-</span>
