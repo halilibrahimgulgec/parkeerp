@@ -204,3 +204,26 @@ export interface PayrollPayment {
   created_at: string;
   employees?: Employee;
 }
+
+export interface CustomerQuota {
+  id: string;
+  customer_id: string;
+  site_id?: string | null;
+  product_id?: string | null;
+  target_quantity: number;
+  unit: 'm2' | 'metre' | 'adet';
+  alert_threshold_pct: number;
+  start_date: string;
+  end_date?: string | null;
+  notes?: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at?: string;
+  customers?: Customer;
+  sites?: Site;
+  products?: Product;
+  // Computed fields for UI
+  shipped_quantity?: number;
+  remaining_quantity?: number;
+  completion_pct?: number;
+}

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import {
   Factory, Truck, AlertTriangle, TrendingUp, Package,
-  DollarSign, BarChart2, Calendar, Printer, Search
+  DollarSign, BarChart2, Calendar, Printer, Search, Target
 } from 'lucide-react';
 
 interface KPI {
@@ -112,6 +112,7 @@ export default function Dashboard() {
   const [stocks, setStocks] = useState<StockItem[]>([]);
   const [costBreakdown, setCostBreakdown] = useState<CostBreakdown>({ hammadde: 0, operasyonel: 0, genel: 0 });
   const [recentShipments, setRecentShipments] = useState<RecentShipment[]>([]);
+  const [quotaAlerts, setQuotaAlerts] = useState<any[]>([]);
   const [stockFilter, setStockFilter] = useState<'all' | 'm2' | 'metre' | 'adet'>('all');
   const [stockSearch, setStockSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -124,11 +125,13 @@ export default function Dashboard() {
     const load = async () => {
       setLoading(true);
 
-      const [prodRes, shipRes, costRes, stockRes] = await Promise.all([
+      const [prodRes, shipRes, costRes, stockRes, quotaRes, shipItemRes] = await Promise.all([
         supabase.from('production_entries').select('net_m2').eq('date', today),
         supabase.from('shipments').select('total_m2').eq('shipment_date', today).eq('status', 'completed'),
         supabase.from('cost_entries').select('cost_type, total_amount').eq('period_month', currentMonth).eq('period_year', currentYear),
         supabase.from('v_product_stock').select('*'),
+        supabase.from('customer_quotas').select('*, customers(name), sites(name), products(name)').eq('is_active', true),
+        supabase.from('shipment_items').select('product_id, m2, unit, shipments!inner(shipment_date, customer_id, site_id, status)').eq('shipments.status', 'completed'),
       ]);
 
       const todayProduction = (prodRes.data || []).reduce((s, r) => s + (r.net_m2 || 0), 0);
@@ -157,6 +160,44 @@ export default function Dashboard() {
       const lowStockCount = stockItems.filter(s => s.current_stock <= s.min_stock_alert).length;
       setStocks(stockItems);
       setKpi({ todayProduction, todayShipment, monthCost, lowStockCount });
+
+      if (quotaRes.data && shipItemRes.data) {
+        const qAlerts: any[] = [];
+        quotaRes.data.forEach((q: any) => {
+          const matching = (shipItemRes.data || []).filter((item: any) => {
+            const s = item.shipments;
+            if (!s) return false;
+            if (s.customer_id !== q.customer_id) return false;
+            if (q.site_id && s.site_id !== q.site_id) return false;
+            if (q.product_id && item.product_id !== q.product_id) return false;
+            if (q.start_date && s.shipment_date < q.start_date) return false;
+            if (q.end_date && s.shipment_date > q.end_date) return false;
+            const itemUnit = item.unit || 'm2';
+            if (itemUnit !== q.unit) return false;
+            return true;
+          });
+          const shipped = matching.reduce((acc: number, cur: any) => acc + (Number(cur.m2) || 0), 0);
+          const target = Number(q.target_quantity) || 1;
+          const pct = Math.round((shipped / target) * 100);
+          const threshold = Number(q.alert_threshold_pct) || 85;
+          if (pct >= threshold) {
+            qAlerts.push({
+              id: q.id,
+              customerName: q.customers?.name || 'Müşteri',
+              siteName: q.sites?.name,
+              productName: q.products?.name,
+              target,
+              shipped,
+              remaining: target - shipped,
+              pct,
+              unit: q.unit,
+              isExceeded: pct >= 100,
+            });
+          }
+        });
+        qAlerts.sort((a, b) => b.pct - a.pct);
+        setQuotaAlerts(qAlerts);
+      }
 
       const { data: shipData } = await supabase
         .from('shipments')
@@ -261,6 +302,58 @@ export default function Dashboard() {
             color={kpi.lowStockCount > 0 ? 'bg-red-500' : 'bg-slate-400'}
           />
         </div>
+
+        {/* Müşteri Kota Uyarıları Bölümü */}
+        {quotaAlerts.length > 0 && (
+          <div className="bg-gradient-to-r from-amber-50 to-orange-50/80 border border-amber-200 rounded-2xl p-5 shadow-sm space-y-3 mb-8">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-xs">
+                  <Target size={17} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900">Müşteri Malzeme Taahhüt & Kota Bildirimleri</h3>
+                  <p className="text-xs text-slate-500">Tanımlanan kotaya yaklaşan veya kotası dolan müşteriler</p>
+                </div>
+              </div>
+              <span className="text-xs font-bold px-3 py-1 rounded-full bg-amber-200/70 text-amber-900 border border-amber-300 self-start sm:self-auto">
+                {quotaAlerts.length} Müşteri Uyarısı
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+              {quotaAlerts.slice(0, 3).map(a => (
+                <div key={a.id} className="bg-white/95 rounded-xl p-3.5 border border-amber-100 shadow-xs space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="truncate">
+                      <div className="font-bold text-xs text-slate-900 truncate">{a.customerName}</div>
+                      {a.siteName && <div className="text-[10px] text-slate-500 truncate">{a.siteName}</div>}
+                    </div>
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full shrink-0 ${
+                      a.isExceeded ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'
+                    }`}>
+                      %{a.pct} {a.isExceeded ? 'Kota Doldu' : 'Yaklaştı'}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between text-[11px] text-slate-500 font-mono">
+                    <span>Sevk: <strong>{a.shipped.toLocaleString('tr-TR')} {a.unit}</strong></span>
+                    <span className={a.remaining < 0 ? 'text-red-600 font-bold' : 'text-slate-700 font-medium'}>
+                      {a.remaining >= 0 ? `Kalan: ${a.remaining.toLocaleString('tr-TR')} ${a.unit}` : `+${Math.abs(a.remaining).toLocaleString('tr-TR')} Fazla`}
+                    </span>
+                  </div>
+
+                  <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${a.isExceeded ? 'bg-red-500' : 'bg-amber-500'}`}
+                      style={{ width: `${Math.min(a.pct, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
           <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-100 p-6">

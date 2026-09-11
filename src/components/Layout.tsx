@@ -1,8 +1,9 @@
 import { ReactNode, useState } from 'react';
 import Sidebar from './Sidebar';
+import NotificationBell from './NotificationBell';
 import { Menu, X } from 'lucide-react';
 
-type Page = 'dashboard' | 'production' | 'shipment' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking';
+type Page = 'dashboard' | 'production' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking';
 
 interface LayoutProps {
   children: ReactNode;
@@ -23,13 +24,18 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
       {/* Mobile Top Navbar */}
       <header className="flex md:hidden items-center justify-between px-4 py-3 bg-slate-900 text-white sticky top-0 z-30 shadow-md">
         <span className="font-bold text-lg">Parke ERP</span>
-        <button 
-          onClick={() => setIsSidebarOpen(!isSidebarOpen)} 
-          className="p-1 hover:bg-slate-800 rounded-lg transition-colors"
-          aria-label="Menüyü Aç/Kapat"
-        >
-          {isSidebarOpen ? <X size={24} /> : <Menu size={24} />}
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="text-slate-800 bg-white/90 rounded-xl p-0.5">
+            <NotificationBell onNavigate={handleNavigate} />
+          </div>
+          <button 
+            onClick={() => setIsSidebarOpen(!isSidebarOpen)} 
+            className="p-1 hover:bg-slate-800 rounded-lg transition-colors"
+            aria-label="Menüyü Aç/Kapat"
+          >
+            {isSidebarOpen ? <X size={24} /> : <Menu size={24} />}
+          </button>
+        </div>
       </header>
 
       {/* Mobile Sidebar Overlay (Backdrop) */}
@@ -47,8 +53,14 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
       </div>
 
       {/* Main Content Pane */}
-      <main className="flex-1 overflow-auto">
-        {children}
+      <main className="flex-1 overflow-auto flex flex-col min-h-screen">
+        {/* Desktop Top Bar with Notification Bell */}
+        <div className="no-print hidden md:flex items-center justify-end px-8 py-3 bg-white/70 backdrop-blur border-b border-slate-100 sticky top-0 z-20">
+          <NotificationBell onNavigate={handleNavigate} />
+        </div>
+        <div className="flex-1">
+          {children}
+        </div>
       </main>
     </div>
   );

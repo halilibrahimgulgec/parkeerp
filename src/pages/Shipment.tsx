@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Shipment, Customer, Site, Product } from '../types';
 import Modal from '../components/Modal';
-import { Plus, Truck, Search, Filter, AlertCircle, Trash2, Eye, Pencil, PackageX } from 'lucide-react';
+import { Plus, Truck, Search, Filter, AlertCircle, Trash2, Eye, Pencil, PackageX, Target } from 'lucide-react';
 
 const getLocalDateString = () => {
   const now = new Date();
@@ -74,6 +74,7 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
     items: [],
   } : getEmptyForm());
   const [sites, setSites] = useState<Site[]>([]);
+  const [customerQuotas, setCustomerQuotas] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
@@ -82,10 +83,53 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
     if (form.customer_id) {
       supabase.from('sites').select('*').eq('customer_id', form.customer_id).eq('is_active', true)
         .then(({ data }) => setSites(data || []));
+
+      // Fetch customer quotas and shipment history for this customer
+      supabase.from('customer_quotas')
+        .select('*, products(*), sites(*)')
+        .eq('customer_id', form.customer_id)
+        .eq('is_active', true)
+        .then(async ({ data: qData }) => {
+          if (!qData || qData.length === 0) {
+            setCustomerQuotas([]);
+            return;
+          }
+
+          const { data: shipData } = await supabase
+            .from('shipment_items')
+            .select('product_id, m2, unit, shipments!inner(id, shipment_date, customer_id, site_id, status)')
+            .eq('shipments.customer_id', form.customer_id)
+            .eq('shipments.status', 'completed');
+
+          const calculated = qData.map(quota => {
+            const matching = (shipData || []).filter(item => {
+              const s = item.shipments;
+              if (initial && s.id === initial.id) return false;
+              if (quota.site_id && s.site_id !== quota.site_id) return false;
+              if (quota.product_id && item.product_id !== quota.product_id) return false;
+              if (quota.start_date && s.shipment_date < quota.start_date) return false;
+              if (quota.end_date && s.shipment_date > quota.end_date) return false;
+              const itemUnit = item.unit || 'm2';
+              if (itemUnit !== quota.unit) return false;
+              return true;
+            });
+            const shipped = matching.reduce((acc, cur) => acc + (Number(cur.m2) || 0), 0);
+            const remaining = Number(quota.target_quantity) - shipped;
+            const pct = Math.round((shipped / Number(quota.target_quantity)) * 100);
+            return {
+              ...quota,
+              shipped,
+              remaining,
+              pct,
+            };
+          });
+          setCustomerQuotas(calculated);
+        });
     } else {
       setSites([]);
+      setCustomerQuotas([]);
     }
-  }, [form.customer_id]);
+  }, [form.customer_id, initial]);
 
   useEffect(() => {
     const fetchStock = async () => {
@@ -154,6 +198,28 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
           const p = products.find(x => x.id === item.product_id);
           setError(`"${p?.name ?? 'Ürün'}" için yeterli stok yok. Mevcut: ${available.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m², İstenen: ${item.m2} m²`);
           return;
+        }
+      }
+    }
+
+    // Quota warning and confirmation check
+    if (customerQuotas.length > 0) {
+      for (const q of customerQuotas) {
+        const formItemsMatching = form.items.filter(item => {
+          if (q.product_id && item.product_id !== q.product_id) return false;
+          if (form.site_id && q.site_id && form.site_id !== q.site_id) return false;
+          const itemUnit = item.unit || 'm2';
+          if (itemUnit !== q.unit) return false;
+          return true;
+        });
+        const formQty = formItemsMatching.reduce((acc, i) => acc + (Number(i.m2) || 0), 0);
+        if (formQty > 0 && formQty > q.remaining) {
+          const exceededBy = Math.round(formQty - q.remaining);
+          const custName = customers.find(c => c.id === form.customer_id)?.name || 'Müşteri';
+          const confirmMsg = `⚠️ MÜŞTERİ KOTASI UYARISI:\n\n"${custName}" için tanımlanan ${Number(q.target_quantity).toLocaleString('tr-TR')} ${q.unit} taahhüt kotası bu sevkiyat ile ${exceededBy.toLocaleString('tr-TR')} ${q.unit} aşılacaktır!\n\nMevcut Kalan Kota: ${Number(q.remaining).toLocaleString('tr-TR')} ${q.unit}\nBu Sevkiyat: ${formQty.toLocaleString('tr-TR')} ${q.unit}\n\nSevkiyat işlemine devam etmek istiyor musunuz?`;
+          if (!window.confirm(confirmMsg)) {
+            return;
+          }
         }
       }
     }
@@ -308,6 +374,64 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
           </select>
         </div>
       </div>
+
+      {/* Müşteri Kota Durumu Bilgi Kartı */}
+      {customerQuotas.length > 0 && (
+        <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3.5 space-y-2">
+          <div className="flex items-center justify-between text-xs font-bold text-amber-900">
+            <span className="flex items-center gap-1.5">
+              <Target size={15} className="text-amber-600" />
+              Müşteri Malzeme Kotası / Taahhüt Durumu
+            </span>
+            <span className="text-[10px] bg-amber-200/70 text-amber-900 px-2 py-0.5 rounded-full font-semibold">
+              {customerQuotas.length} Aktif Kota
+            </span>
+          </div>
+
+          <div className="space-y-1.5">
+            {customerQuotas.map(q => {
+              const isExceeded = q.pct >= 100;
+              const isApproaching = q.pct >= (q.alert_threshold_pct || 85) && !isExceeded;
+
+              return (
+                <div key={q.id} className="bg-white/90 rounded-lg p-2.5 border border-amber-100/80 shadow-xs space-y-1 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-800">
+                      {q.products?.name ? `${q.products.name} (${q.products.thickness})` : 'Tüm Ürünler (Genel)'}
+                      {q.sites?.name && <span className="text-slate-500 font-normal ml-1">• {q.sites.name}</span>}
+                    </span>
+                    <span className={`font-bold text-[11px] px-2 py-0.5 rounded-full ${
+                      isExceeded
+                        ? 'bg-red-100 text-red-800 font-black'
+                        : isApproaching
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-emerald-50 text-emerald-700'
+                    }`}>
+                      %{q.pct} {isExceeded ? 'Doldu / Aşıldı' : isApproaching ? 'Yaklaştı' : 'Normal'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono">
+                    <span>Sevk Edilen: <strong>{q.shipped.toLocaleString('tr-TR')} {q.unit}</strong> / {q.target_quantity.toLocaleString('tr-TR')} {q.unit}</span>
+                    <span className={q.remaining < 0 ? 'text-red-600 font-bold' : 'text-slate-700 font-medium'}>
+                      {q.remaining >= 0 ? `Kalan: ${q.remaining.toLocaleString('tr-TR')} ${q.unit}` : `+${Math.abs(q.remaining).toLocaleString('tr-TR')} ${q.unit} Kota Aşıldı`}
+                    </span>
+                  </div>
+
+                  <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${
+                        isExceeded ? 'bg-red-500' : isApproaching ? 'bg-amber-500' : 'bg-emerald-500'
+                      }`}
+                      style={{ width: `${Math.min(q.pct, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-4">
         <div>

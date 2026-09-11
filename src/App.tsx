@@ -13,8 +13,9 @@ import Reports from './pages/Reports';
 import AdminUsers from './pages/AdminUsers';
 import PalletTracking from './pages/PalletTracking';
 import LaborTracking from './pages/LaborTracking';
+import CustomerQuotas from './pages/CustomerQuotas';
 
-type Page = 'dashboard' | 'production' | 'shipment' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking';
+type Page = 'dashboard' | 'production' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking';
 
 function AppContent() {
   const { user, loading, pendingApproval } = useAuth();
@@ -58,6 +59,7 @@ function AppContent() {
     dashboard: <Dashboard />,
     production: <Production />,
     shipment: <ShipmentPage />,
+    customer_quotas: <CustomerQuotas />,
     costs: <Costs />,
     definitions: <Definitions />,
     reports: <Reports />,
