@@ -15,8 +15,9 @@ import PalletTracking from './pages/PalletTracking';
 import LaborTracking from './pages/LaborTracking';
 import CustomerQuotas from './pages/CustomerQuotas';
 import Purchases from './pages/Purchases';
+import ProductionPlanning from './pages/ProductionPlanning';
 
-type Page = 'dashboard' | 'production' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking';
+type Page = 'dashboard' | 'production' | 'production_planning' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking';
 
 function AppContent() {
   const { user, loading, pendingApproval } = useAuth();
@@ -59,6 +60,7 @@ function AppContent() {
   const PAGE_MAP: Record<Page, JSX.Element> = {
     dashboard: <Dashboard />,
     production: <Production />,
+    production_planning: <ProductionPlanning />,
     purchases: <Purchases />,
     shipment: <ShipmentPage />,
     customer_quotas: <CustomerQuotas />,

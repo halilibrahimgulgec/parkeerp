@@ -3,7 +3,7 @@ import Sidebar from './Sidebar';
 import NotificationBell from './NotificationBell';
 import { Menu, X } from 'lucide-react';
 
-type Page = 'dashboard' | 'production' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking';
+type Page = 'dashboard' | 'production' | 'production_planning' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking';
 
 interface LayoutProps {
   children: ReactNode;

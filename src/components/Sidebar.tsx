@@ -2,10 +2,10 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   LayoutDashboard, Factory, Truck, DollarSign, Package,
   BarChart3, LogOut, ChevronRight, ShieldCheck, Users, Boxes,
-  UserCheck, Target, ShoppingBag
+  UserCheck, Target, ShoppingBag, Sparkles
 } from 'lucide-react';
 
-type Page = 'dashboard' | 'production' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking';
+type Page = 'dashboard' | 'production' | 'production_planning' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking';
 
 interface SidebarProps {
   currentPage: Page;
@@ -29,7 +29,8 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
 
   const navItems = [
     { id: 'dashboard' as Page, label: 'Dashboard', icon: LayoutDashboard, access: true },
-    { id: 'production' as Page, label: 'Üretim', icon: Factory, access: isFieldManager() },
+    { id: 'production' as Page, label: 'Üretim Girişi', icon: Factory, access: isFieldManager() },
+    { id: 'production_planning' as Page, label: 'Üretim Planlama & AI', icon: Sparkles, access: isFieldManager() || isAdmin() },
     { id: 'purchases' as Page, label: 'Dış Alım & Transit', icon: ShoppingBag, access: isFieldManager() || isWeighbridge() || isAdmin() },
     { id: 'shipment' as Page, label: 'Sevkiyat / Kantar', icon: Truck, access: isWeighbridge() },
     { id: 'customer_quotas' as Page, label: 'Müşteri Kotaları & Sevk', icon: Target, access: isWeighbridge() },

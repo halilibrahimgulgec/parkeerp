@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { ProductionEntry, Product } from '../types';
 import Modal from '../components/Modal';
-import { Plus, Factory, Search, Filter, Calendar, CreditCard as Edit2, AlertCircle, Trash2 } from 'lucide-react';
+import { Plus, Factory, Search, Filter, Calendar, CreditCard as Edit2, AlertCircle, Trash2, Sparkles } from 'lucide-react';
 
 interface ProductionFormData {
   date: string;
@@ -15,6 +15,7 @@ interface ProductionFormData {
   waste_m2: number;
   lot_number: string;
   notes: string;
+  plan_item_id?: string | null;
 }
 
 const EMPTY_FORM: ProductionFormData = {
@@ -27,6 +28,7 @@ const EMPTY_FORM: ProductionFormData = {
   waste_m2: 0,
   lot_number: '',
   notes: '',
+  plan_item_id: null,
 };
 
 function ProductionForm({ products, onSave, onClose, initial }: {
@@ -46,9 +48,27 @@ function ProductionForm({ products, onSave, onClose, initial }: {
     waste_m2: initial.waste_m2,
     lot_number: initial.lot_number,
     notes: initial.notes,
+    plan_item_id: initial.plan_item_id || null,
   } : { ...EMPTY_FORM });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [matchedPlanItem, setMatchedPlanItem] = useState<any | null>(null);
+
+  // Auto detect active scheduled plan item for date + machine + shift
+  useEffect(() => {
+    supabase
+      .from('production_plan_items')
+      .select('*, products(*)')
+      .eq('planned_date', form.date)
+      .eq('machine_no', form.machine_no)
+      .eq('shift', form.shift)
+      .neq('status', 'completed')
+      .maybeSingle()
+      .then(
+        ({ data }) => setMatchedPlanItem(data || null),
+        () => setMatchedPlanItem(null)
+      );
+  }, [form.date, form.machine_no, form.shift]);
 
   const selectedProduct = products.find(p => p.id === form.product_id);
 
@@ -78,11 +98,63 @@ function ProductionForm({ products, onSave, onClose, initial }: {
     }
     setSaving(false);
     if (err) { setError(err.message); return; }
+
+    // If linked to a plan item, update its produced quantity & status
+    if (form.plan_item_id) {
+      try {
+        const netProduced = Math.max(0, form.total_m2 - form.waste_m2);
+        const { data: curItem } = await supabase
+          .from('production_plan_items')
+          .select('produced_m2, planned_m2')
+          .eq('id', form.plan_item_id)
+          .single();
+
+        if (curItem) {
+          const newProduced = Number(curItem.produced_m2 || 0) + netProduced;
+          const isCompleted = newProduced >= Number(curItem.planned_m2);
+          await supabase
+            .from('production_plan_items')
+            .update({
+              produced_m2: newProduced,
+              status: isCompleted ? 'completed' : 'in_progress',
+            })
+            .eq('id', form.plan_item_id);
+        }
+      } catch (planErr) {
+        console.error('Plan ilerlemesi güncellenemedi:', planErr);
+      }
+    }
+
     onSave();
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      {/* Planned Work Order Detected Alert Banner */}
+      {matchedPlanItem && !initial && (
+        <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 flex items-center justify-between text-xs shadow-xs">
+          <div>
+            <span className="font-bold text-amber-900 flex items-center gap-1">
+              <Sparkles size={13} className="text-amber-600" />
+              Bu vardiya için planlanan iş emri tespit edildi:
+            </span>
+            <span className="text-amber-800 mt-0.5 block">
+              <strong>{matchedPlanItem.products?.name}</strong> • Hedef: {Number(matchedPlanItem.planned_m2).toLocaleString('tr-TR')} {matchedPlanItem.products?.unit || 'm²'}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              handleProductChange(matchedPlanItem.product_id);
+              setForm(f => ({ ...f, plan_item_id: matchedPlanItem.id }));
+            }}
+            className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-lg shadow-xs transition-colors shrink-0"
+          >
+            İş Emrini Yükle
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Tarih *</label>
@@ -92,19 +164,21 @@ function ProductionForm({ products, onSave, onClose, initial }: {
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Vardiya *</label>
           <select value={form.shift} onChange={e => setForm(f => ({ ...f, shift: e.target.value as any }))}
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400">
-            <option value="Gündüz">Gündüz</option>
-            <option value="Gece">Gece</option>
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 font-semibold">
+            <option value="Gündüz">Gündüz Vardiyası</option>
+            <option value="Gece">Gece Vardiyası</option>
           </select>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Makine No *</label>
-          <input type="text" value={form.machine_no} onChange={e => setForm(f => ({ ...f, machine_no: e.target.value }))}
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400"
-            placeholder="1" required />
+          <label className="block text-sm font-medium text-slate-700 mb-1">Makine *</label>
+          <select value={form.machine_no} onChange={e => setForm(f => ({ ...f, machine_no: e.target.value }))}
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 font-bold">
+            <option value="1">1 Nolu Parke Makinesi (Hat 1)</option>
+            <option value="2">2 Nolu Parke & Bordür Makinesi (Hat 2)</option>
+          </select>
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Lot Numarası *</label>

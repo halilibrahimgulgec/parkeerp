@@ -73,6 +73,7 @@ export interface ProductionEntry {
   net_m2: number;
   lot_number: string;
   notes: string;
+  plan_item_id?: string | null;
   created_by: string;
   created_at: string;
   products?: Product;
@@ -278,3 +279,79 @@ export interface SupplierPalletBalance {
   total_returned: number;
   balance: number;
 }
+
+export interface MachineDefinition {
+  machine_no: string;
+  name: string;
+  daily_capacity_m2: number;
+  shift_count: number;
+  specialized_types?: string[];
+  notes?: string;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ProductionOrder {
+  id: string;
+  order_no: string;
+  customer_id?: string | null;
+  site_id?: string | null;
+  product_id: string;
+  quantity: number;
+  unit: 'm2' | 'metre' | 'adet';
+  due_date?: string | null;
+  priority: 'critical' | 'high' | 'normal' | 'low';
+  status: 'pending' | 'planned' | 'in_production' | 'completed' | 'cancelled';
+  notes?: string;
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+  customers?: Customer;
+  sites?: Site;
+  products?: Product;
+}
+
+export interface ProductionPlan {
+  id: string;
+  plan_name: string;
+  start_date: string;
+  end_date: string;
+  status: 'draft' | 'active' | 'completed' | 'archived';
+  ai_summary?: {
+    total_planned_m2?: number;
+    machine1_m2?: number;
+    machine2_m2?: number;
+    mold_changes_saved?: number;
+    reasoning?: string[];
+    critical_alerts?: string[];
+  };
+  notes?: string;
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+  items?: ProductionPlanItem[];
+}
+
+export interface ProductionPlanItem {
+  id: string;
+  plan_id: string;
+  machine_no: string;
+  planned_date: string;
+  shift: 'Gündüz' | 'Gece';
+  product_id: string;
+  order_id?: string | null;
+  quota_id?: string | null;
+  planned_m2: number;
+  planned_pallets: number;
+  produced_m2: number;
+  status: 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
+  sequence_order: number;
+  notes?: string;
+  created_at?: string;
+  updated_at?: string;
+  products?: Product;
+  production_orders?: ProductionOrder;
+  customer_quotas?: CustomerQuota;
+}
+
