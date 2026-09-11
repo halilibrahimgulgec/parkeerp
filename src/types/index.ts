@@ -227,3 +227,27 @@ export interface CustomerQuota {
   remaining_quantity?: number;
   completion_pct?: number;
 }
+
+export interface ExternalPurchase {
+  id: string;
+  date: string;
+  supplier_name: string;
+  supplier_invoice_no?: string;
+  product_id: string;
+  quantity: number;
+  unit: 'm2' | 'metre' | 'adet';
+  pallets: number;
+  pallet_type: string;
+  unit_price: number;
+  total_price?: number;
+  vehicle_plate?: string;
+  driver_name?: string;
+  is_direct_shipment: boolean;
+  linked_shipment_id?: string | null;
+  notes?: string;
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+  products?: Product;
+  shipments?: Shipment;
+}
