@@ -56,6 +56,8 @@ export default function ProductionPlanning() {
     strategy: 'minimize_mold_change',
     includeMinStockDeficit: true,
     includeQuotaDemand: true,
+    onlyWithOrders: false,
+    excludedProductIds: [],
   });
 
   // Generated Plan State
@@ -200,6 +202,36 @@ export default function ProductionPlanning() {
     });
   };
 
+  // Remove individual item from generated preview plan
+  const handleRemovePreviewItem = (itemIndex: number) => {
+    if (!generatedPlan) return;
+    const newItems = generatedPlan.items.filter((_, idx) => idx !== itemIndex);
+    const m1M2 = newItems.filter(i => i.machine_no === '1').reduce((s, i) => s + Number(i.planned_m2 || 0), 0);
+    const m2M2 = newItems.filter(i => i.machine_no === '2').reduce((s, i) => s + Number(i.planned_m2 || 0), 0);
+    const totalM2 = m1M2 + m2M2;
+
+    setGeneratedPlan({
+      ...generatedPlan,
+      items: newItems,
+      summary: {
+        ...generatedPlan.summary,
+        totalPlannedM2: totalM2,
+        machine1M2: m1M2,
+        machine2M2: m2M2,
+      },
+    });
+  };
+
+  // Toggle product exclusion from AI planning
+  const toggleExcludeProduct = (productId: string) => {
+    setPlanningOptions(prev => {
+      const current = prev.excludedProductIds || [];
+      const exists = current.includes(productId);
+      const updated = exists ? current.filter(id => id !== productId) : [...current, productId];
+      return { ...prev, excludedProductIds: updated };
+    });
+  };
+
   // Approve & Save Generated Plan
   const handleSaveAndActivatePlan = async () => {
     if (!generatedPlan || generatedPlan.items.length === 0) return;
@@ -296,6 +328,39 @@ export default function ProductionPlanning() {
       setPlanItems(prev => prev.map(it => it.id === itemId ? { ...it, machine_no: newMachine } : it));
     } catch (err) {
       console.error('Makine değiştirme hatası:', err);
+    }
+  };
+
+  // Cancel / Delete Scheduled Item with Confirmation
+  const handleDeleteScheduleItem = async (item: ProductionPlanItem) => {
+    const productName = item.products?.name || 'İş Emri';
+    const dateFormatted = new Date(item.planned_date).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', weekday: 'short' });
+    const isConfirmed = window.confirm(
+      `"${productName}" (${dateFormatted} - ${item.shift || 'Gündüz'}) iş emrini iptal etmek ve çizelgeden kaldırmak istediğinize emin misiniz?`
+    );
+    if (!isConfirmed) return;
+
+    try {
+      // 1. Delete plan item
+      const { error } = await supabase
+        .from('production_plan_items')
+        .delete()
+        .eq('id', item.id);
+      if (error) throw error;
+
+      // 2. If it was linked to an order, reset order status to 'pending'
+      if (item.order_id) {
+        await supabase
+          .from('production_orders')
+          .update({ status: 'pending' })
+          .eq('id', item.order_id);
+      }
+
+      // 3. Update local state
+      setPlanItems(prev => prev.filter(it => it.id !== item.id));
+    } catch (err: any) {
+      console.error('İş emri iptal etme hatası:', err);
+      alert('İş emri iptal edilirken bir hata oluştu: ' + (err.message || 'Bilinmeyen hata'));
     }
   };
 
@@ -649,6 +714,29 @@ export default function ProductionPlanning() {
                   />
                   <span>Müşteri Kotalarından Kalan Talepleri Dahil Et</span>
                 </label>
+
+                <label className="flex items-center gap-2 cursor-pointer text-indigo-300 font-bold hover:text-white transition-colors bg-indigo-500/10 border border-indigo-500/30 px-3 py-1.5 rounded-xl">
+                  <input
+                    type="checkbox"
+                    checked={planningOptions.onlyWithOrders || false}
+                    onChange={e => setPlanningOptions(o => ({ ...o, onlyWithOrders: e.target.checked }))}
+                    className="rounded border-slate-700 text-indigo-400 focus:ring-indigo-400 w-4 h-4 bg-slate-800"
+                  />
+                  <span>📦 Sadece Kesin Siparişi Olan Ürünleri Planla (Siparişsiz Üretim Açma)</span>
+                </label>
+
+                {planningOptions.excludedProductIds && planningOptions.excludedProductIds.length > 0 && (
+                  <span className="flex items-center gap-1.5 text-rose-300 bg-rose-500/10 border border-rose-500/30 px-3 py-1.5 rounded-xl text-xs font-semibold">
+                    🚫 {planningOptions.excludedProductIds.length} Ürün Plan Dışı Bırakıldı
+                    <button
+                      type="button"
+                      onClick={() => setPlanningOptions(o => ({ ...o, excludedProductIds: [] }))}
+                      className="underline text-white ml-1 hover:text-rose-200 cursor-pointer"
+                    >
+                      (Hepsini Dahil Et)
+                    </button>
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -770,7 +858,7 @@ export default function ProductionPlanning() {
                         <th className="px-3 py-2.5">Ürün</th>
                         <th className="px-3 py-2.5 text-right">Hedef Miktar</th>
                         <th className="px-3 py-2.5 text-right">Palet</th>
-                        <th className="px-3 py-2.5 text-center">Makine Değiştir</th>
+                        <th className="px-3 py-2.5 text-center">İşlemler</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -806,13 +894,24 @@ export default function ProductionPlanning() {
                               {it.planned_pallets} palet
                             </td>
                             <td className="px-3 py-2.5 text-center">
-                              <button
-                                onClick={() => handleTogglePreviewMachine(idx)}
-                                className="p-1 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
-                                title="Diğer makineye aktar"
-                              >
-                                <ArrowLeftRight size={14} />
-                              </button>
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleTogglePreviewMachine(idx)}
+                                  className="p-1 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                                  title="Diğer makineye aktar"
+                                >
+                                  <ArrowLeftRight size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemovePreviewItem(idx)}
+                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                                  title="Bu iş emrini plandan çıkar"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -850,6 +949,7 @@ export default function ProductionPlanning() {
                     <th className="px-3 py-3 text-center">Stok Durumu</th>
                     <th className="px-3 py-3 text-right">Bekleyen Sipariş</th>
                     <th className="px-3 py-3 text-right font-bold text-slate-900">Net İhtiyaç</th>
+                    <th className="px-3 py-3 text-center">Planlama Durumu</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -858,6 +958,7 @@ export default function ProductionPlanning() {
                     const minStock = p.min_stock_alert || 0;
                     const isZero = currentStock <= 0;
                     const isBelowMin = currentStock < minStock;
+                    const isExcluded = (planningOptions.excludedProductIds || []).includes(p.id);
 
                     const pendingOrdersForProduct = orders
                       .filter(o => o.product_id === p.id && (o.status === 'pending' || o.status === 'planned'))
@@ -867,9 +968,14 @@ export default function ProductionPlanning() {
                     const netNeed = deficit + pendingOrdersForProduct;
 
                     return (
-                      <tr key={p.id} className="hover:bg-slate-50/60 transition-colors">
+                      <tr key={p.id} className={`hover:bg-slate-50/60 transition-colors ${isExcluded ? 'opacity-60 bg-rose-50/20' : ''}`}>
                         <td className="px-4 py-3 font-bold text-slate-900">
                           {p.name}
+                          {isExcluded && (
+                            <span className="ml-2 text-[10px] font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
+                              Hariç Tutuldu
+                            </span>
+                          )}
                         </td>
                         <td className="px-3 py-3 text-slate-600">
                           {p.product_type} • {p.thickness} • {p.color}
@@ -908,6 +1014,20 @@ export default function ProductionPlanning() {
                           ) : (
                             <span className="text-slate-400 font-normal">İhtiyaç Yok</span>
                           )}
+                        </td>
+                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => toggleExcludeProduct(p.id)}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shadow-2xs cursor-pointer ${
+                              isExcluded
+                                ? 'bg-rose-100 text-rose-800 border border-rose-300 hover:bg-rose-200'
+                                : 'bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200'
+                            }`}
+                            title={isExcluded ? 'Plana dahil etmek için tıklayın' : 'Plandan hariç tutmak için tıklayın'}
+                          >
+                            {isExcluded ? '🚫 Plan Dışı' : '✓ Dahil Ediliyor'}
+                          </button>
                         </td>
                       </tr>
                     );
@@ -1094,15 +1214,26 @@ export default function ProductionPlanning() {
                         </div>
 
                         {/* Actions */}
-                        <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
-                          <button
-                            onClick={() => handleMoveScheduleItemMachine(item.id, '1')}
-                            className="flex items-center gap-1 text-slate-500 hover:text-amber-600 font-semibold text-[11px] transition-colors"
-                            title="Makine 2'ye taşı"
-                          >
-                            <ArrowLeftRight size={13} />
-                            Makine 2'ye Aktar
-                          </button>
+                        <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleMoveScheduleItemMachine(item.id, '1')}
+                              className="flex items-center gap-1 text-slate-500 hover:text-amber-600 font-semibold text-[11px] transition-colors"
+                              title="Makine 2'ye taşı"
+                            >
+                              <ArrowLeftRight size={13} />
+                              Makine 2'ye Aktar
+                            </button>
+
+                            <button
+                              onClick={() => handleDeleteScheduleItem(item)}
+                              className="flex items-center gap-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 px-2 py-0.5 rounded-lg font-bold text-[11px] transition-colors"
+                              title="İş emrini iptal et ve çizelgeden kaldır"
+                            >
+                              <Trash2 size={13} />
+                              İptal Et
+                            </button>
+                          </div>
 
                           <div className="flex items-center gap-1.5">
                             {item.status !== 'in_progress' && !isDone && (
@@ -1222,15 +1353,26 @@ export default function ProductionPlanning() {
                         </div>
 
                         {/* Actions */}
-                        <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
-                          <button
-                            onClick={() => handleMoveScheduleItemMachine(item.id, '2')}
-                            className="flex items-center gap-1 text-slate-500 hover:text-amber-600 font-semibold text-[11px] transition-colors"
-                            title="Makine 1'e taşı"
-                          >
-                            <ArrowLeftRight size={13} />
-                            Makine 1'e Aktar
-                          </button>
+                        <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleMoveScheduleItemMachine(item.id, '2')}
+                              className="flex items-center gap-1 text-slate-500 hover:text-amber-600 font-semibold text-[11px] transition-colors"
+                              title="Makine 1'e taşı"
+                            >
+                              <ArrowLeftRight size={13} />
+                              Makine 1'e Aktar
+                            </button>
+
+                            <button
+                              onClick={() => handleDeleteScheduleItem(item)}
+                              className="flex items-center gap-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 px-2 py-0.5 rounded-lg font-bold text-[11px] transition-colors"
+                              title="İş emrini iptal et ve çizelgeden kaldır"
+                            >
+                              <Trash2 size={13} />
+                              İptal Et
+                            </button>
+                          </div>
 
                           <div className="flex items-center gap-1.5">
                             {item.status !== 'in_progress' && !isDone && (

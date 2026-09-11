@@ -9,6 +9,8 @@ export interface PlanningOptions {
   strategy: 'balanced' | 'minimize_mold_change' | 'urgent_first';
   includeMinStockDeficit: boolean;
   includeQuotaDemand: boolean;
+  onlyWithOrders?: boolean; // Sadece kesin siparişi olan ürünleri üret (siparişsiz stok yapma)
+  excludedProductIds?: string[]; // Belirli ürünleri planlamadan hariç tutma (örn. 6'lık parke)
 }
 
 export interface ProductDemand {
@@ -60,7 +62,8 @@ export function generateSmartProductionPlan({
   machines: MachineDefinition[];
   options: PlanningOptions;
 }): AIPlanningResult {
-  const activeProducts = products.filter(p => p.is_active);
+  const excludedSet = new Set(options.excludedProductIds || []);
+  const activeProducts = products.filter(p => p.is_active && !excludedSet.has(p.id));
 
   // 1. Calculate Demands & Urgency
   const demands: ProductDemand[] = activeProducts.map(p => {
@@ -90,8 +93,14 @@ export function generateSmartProductionPlan({
       }, 0);
     }
 
-    const netNeed = (options.includeMinStockDeficit ? stockDeficit : 0) + pendingOrderQty;
-    const totalNetNeed = Math.max(0, netNeed > 0 ? netNeed : (quotaDemandQty > 0 ? Math.min(quotaDemandQty, 2000) : 0));
+    let totalNetNeed = 0;
+    if (options.onlyWithOrders && pendingOrderQty <= 0) {
+      // Sadece kesin siparişi olan ürünleri üret
+      totalNetNeed = 0;
+    } else {
+      const netNeed = (options.includeMinStockDeficit ? stockDeficit : 0) + pendingOrderQty;
+      totalNetNeed = Math.max(0, netNeed > 0 ? netNeed : (quotaDemandQty > 0 ? Math.min(quotaDemandQty, 2000) : 0));
+    }
 
     // Urgency calculation
     let urgency: 'critical' | 'high' | 'normal' = 'normal';
@@ -345,6 +354,14 @@ export function generateSmartProductionPlan({
   
   if (moldChangesSaved > 0) {
     reasoning.push(`Kalıp optimizasyonu sayesinde aynı kalıp tipindeki ürünler peş peşe kümelenerek yaklaşık ${moldChangesSaved} gereksiz kalıp söküm-takım işleminden tasarruf edildi.`);
+  }
+
+  if (options.excludedProductIds && options.excludedProductIds.length > 0) {
+    reasoning.push(`🚫 Hariç Tutulan Ürünler: ${options.excludedProductIds.length} ürün kullanıcının tercihi doğrultusunda üretim planı dışı bırakıldı.`);
+  }
+
+  if (options.onlyWithOrders) {
+    reasoning.push(`📦 Sipariş Filtresi: Yalnızca kesin müşteri siparişi olan ürünler planlandı; siparişsiz emniyet stoğu üretimi yapılmadı.`);
   }
 
   if (options.shiftsPerDay === 1) {
