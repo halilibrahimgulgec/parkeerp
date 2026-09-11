@@ -212,6 +212,21 @@ export default function Purchases() {
             m2: Number(form.quantity),
             unit: form.unit,
           });
+          // Update customer pallet transaction
+          await supabase.from('pallet_transactions').delete().eq('shipment_id', linkedShipmentId);
+          if (Number(form.pallets) > 0 && form.pallet_type !== 'dokme') {
+            await supabase.from('pallet_transactions').insert({
+              date: form.date,
+              customer_id: form.customer_id,
+              site_id: form.site_id || null,
+              shipment_id: linkedShipmentId,
+              transaction_type: 'sent',
+              pallet_type: form.pallet_type,
+              quantity: Number(form.pallets),
+              notes: `${form.customer_invoice_no.trim() || form.supplier_invoice_no.trim() || 'Transit'} no'lu transit sevk ile teslim edildi.`,
+              created_by: user?.id,
+            });
+          }
         } else {
           // Create new shipment
           const { data: newShipment, error: shipErr } = await supabase
@@ -234,9 +249,27 @@ export default function Purchases() {
           });
 
           if (itemErr) throw itemErr;
+
+          // Insert customer pallet transaction
+          if (Number(form.pallets) > 0 && form.pallet_type !== 'dokme') {
+            await supabase.from('pallet_transactions').insert({
+              date: form.date,
+              customer_id: form.customer_id,
+              site_id: form.site_id || null,
+              shipment_id: newShipment.id,
+              transaction_type: 'sent',
+              pallet_type: form.pallet_type,
+              quantity: Number(form.pallets),
+              notes: `${form.customer_invoice_no.trim() || form.supplier_invoice_no.trim() || 'Transit'} no'lu transit sevk ile teslim edildi.`,
+              created_by: user?.id,
+            });
+          }
         }
       } else if (linkedShipmentId && !form.is_direct_shipment) {
-        // If user unchecked direct shipment on edit, prompt/unlink
+        // If user unchecked direct shipment on edit, remove linked shipment and pallet records
+        await supabase.from('pallet_transactions').delete().eq('shipment_id', linkedShipmentId);
+        await supabase.from('shipment_items').delete().eq('shipment_id', linkedShipmentId);
+        await supabase.from('shipments').delete().eq('id', linkedShipmentId);
         linkedShipmentId = null;
       }
 
@@ -259,6 +292,8 @@ export default function Purchases() {
         created_by: user?.id,
       };
 
+      let savedPurchaseId = editingItem?.id;
+
       if (editingItem) {
         const { error: updErr } = await supabase
           .from('external_purchases')
@@ -266,10 +301,32 @@ export default function Purchases() {
           .eq('id', editingItem.id);
         if (updErr) throw updErr;
       } else {
-        const { error: insErr } = await supabase
+        const { data: insData, error: insErr } = await supabase
           .from('external_purchases')
-          .insert(purchasePayload);
+          .insert(purchasePayload)
+          .select('id')
+          .single();
         if (insErr) throw insErr;
+        savedPurchaseId = insData.id;
+      }
+
+      // Update supplier pallet transactions (Tedarikçi Palet Borcu)
+      if (savedPurchaseId) {
+        await supabase.from('supplier_pallet_transactions').delete().eq('purchase_id', savedPurchaseId);
+        if (Number(form.pallets) > 0 && form.pallet_type !== 'dokme') {
+          await supabase.from('supplier_pallet_transactions').insert({
+            date: form.date,
+            supplier_name: form.supplier_name.trim(),
+            purchase_id: savedPurchaseId,
+            transaction_type: 'received',
+            pallet_type: form.pallet_type,
+            quantity: Number(form.pallets),
+            vehicle_plate: form.vehicle_plate.trim().toUpperCase(),
+            driver_name: form.driver_name.trim(),
+            notes: `${form.supplier_invoice_no.trim() ? form.supplier_invoice_no.trim() + ' no irsaliyeli ' : ''}dış alım ile teslim alındı.`,
+            created_by: user?.id,
+          });
+        }
       }
 
       setShowModal(false);
@@ -285,7 +342,7 @@ export default function Purchases() {
   const handleDelete = async (item: ExternalPurchase) => {
     let msg = `${item.supplier_name} firmasından yapılan ${item.quantity} ${item.unit} alım kaydını silmek istediğinize emin misiniz?`;
     if (item.is_direct_shipment && item.linked_shipment_id) {
-      msg += '\n\nNOT: Bu işlem bağlı transit müşteri sevkiyatını da silecektir.';
+      msg += '\n\nNOT: Bu işlem bağlı transit müşteri sevkiyatını ve palet kayıtlarını da silecektir.';
     }
 
     if (!confirm(msg)) return;
@@ -293,9 +350,11 @@ export default function Purchases() {
     setDeletingId(item.id);
     try {
       if (item.linked_shipment_id) {
+        await supabase.from('pallet_transactions').delete().eq('shipment_id', item.linked_shipment_id);
         await supabase.from('shipment_items').delete().eq('shipment_id', item.linked_shipment_id);
         await supabase.from('shipments').delete().eq('id', item.linked_shipment_id);
       }
+      await supabase.from('supplier_pallet_transactions').delete().eq('purchase_id', item.id);
       const { error: delErr } = await supabase.from('external_purchases').delete().eq('id', item.id);
       if (delErr) throw delErr;
       await loadData();

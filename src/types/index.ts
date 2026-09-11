@@ -251,3 +251,28 @@ export interface ExternalPurchase {
   products?: Product;
   shipments?: Shipment;
 }
+
+export interface SupplierPalletTransaction {
+  id: string;
+  date: string;
+  supplier_name: string;
+  purchase_id?: string | null;
+  transaction_type: 'received' | 'returned';
+  pallet_type: 'tahta' | 'sevkiyat' | 'uretim' | 'dokme';
+  quantity: number;
+  vehicle_plate?: string;
+  driver_name?: string;
+  notes?: string;
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+  external_purchases?: ExternalPurchase;
+}
+
+export interface SupplierPalletBalance {
+  supplier_name: string;
+  pallet_type: 'tahta' | 'sevkiyat' | 'uretim' | 'dokme';
+  total_received: number;
+  total_returned: number;
+  balance: number;
+}

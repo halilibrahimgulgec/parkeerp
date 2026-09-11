@@ -1,9 +1,11 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { Customer, Site } from '../types';
+import { Customer, Site, SupplierPalletBalance, SupplierPalletTransaction } from '../types';
+import Modal from '../components/Modal';
 import { 
-  Boxes, Plus, Printer, RefreshCw, Save, Trash2, Calendar, ClipboardList, FileText
+  Boxes, Plus, Printer, RefreshCw, Save, Trash2, Calendar, ClipboardList, FileText,
+  Factory, Truck, Search, Filter, AlertCircle, CheckCircle2, ArrowDownLeft, ArrowUpRight
 } from 'lucide-react';
 
 interface PalletBalance {
@@ -63,8 +65,27 @@ export default function PalletTracking() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
-  // Tab State
-  const [activeTab, setActiveTab] = useState<'tracking' | 'reconciliation'>('tracking');
+  // Tab State: 'tracking' (Müşteri Zimmet/İade), 'supplier' (Tedarikçi Palet Borçları), 'reconciliation' (Mutabakat)
+  const [activeTab, setActiveTab] = useState<'tracking' | 'supplier' | 'reconciliation'>('tracking');
+
+  // Supplier Pallet Tracking State
+  const [supplierBalances, setSupplierBalances] = useState<SupplierPalletBalance[]>([]);
+  const [supplierTransactions, setSupplierTransactions] = useState<SupplierPalletTransaction[]>([]);
+  const [supplierLoading, setSupplierLoading] = useState(false);
+  const [supplierSearch, setSupplierSearch] = useState('');
+  const [supplierFilterType, setSupplierFilterType] = useState('all');
+  const [showSupplierModal, setShowSupplierModal] = useState(false);
+  const [submittingSupplier, setSubmittingSupplier] = useState(false);
+  const [supplierForm, setSupplierForm] = useState({
+    supplier_name: '',
+    date: new Date().toISOString().split('T')[0],
+    pallet_type: 'sevkiyat' as 'tahta' | 'sevkiyat' | 'uretim',
+    quantity: '',
+    vehicle_plate: '',
+    driver_name: '',
+    notes: '',
+    transaction_type: 'returned' as 'returned' | 'received',
+  });
 
   // Reconciliation Report State
   const [reconCustomer, setReconCustomer] = useState('');
@@ -267,6 +288,121 @@ export default function PalletTracking() {
     }
   };
 
+  // Supplier Pallet Fetch
+  const fetchSupplierPalletData = useCallback(async () => {
+    setSupplierLoading(true);
+    try {
+      const [balRes, transRes] = await Promise.all([
+        supabase.from('v_supplier_pallet_balances').select('*'),
+        supabase
+          .from('supplier_pallet_transactions')
+          .select('*')
+          .order('date', { ascending: false })
+          .order('created_at', { ascending: false }),
+      ]);
+      if (balRes.data) setSupplierBalances(balRes.data);
+      if (transRes.data) setSupplierTransactions(transRes.data);
+    } catch (err) {
+      console.error('Tedarikçi palet verisi yüklenemedi:', err);
+    } finally {
+      setSupplierLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'supplier') {
+      fetchSupplierPalletData();
+    }
+  }, [activeTab, fetchSupplierPalletData]);
+
+  const handleSubmitSupplierReturn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supplierForm.supplier_name.trim() || !supplierForm.quantity) return;
+    setSubmittingSupplier(true);
+
+    const { error } = await supabase.from('supplier_pallet_transactions').insert({
+      date: supplierForm.date,
+      supplier_name: supplierForm.supplier_name.trim(),
+      transaction_type: supplierForm.transaction_type,
+      pallet_type: supplierForm.pallet_type,
+      quantity: parseInt(supplierForm.quantity),
+      vehicle_plate: supplierForm.vehicle_plate.trim().toUpperCase(),
+      driver_name: supplierForm.driver_name.trim(),
+      notes: supplierForm.notes.trim() || (supplierForm.transaction_type === 'returned' ? 'Tedarikçiye boş palet iadesi' : 'Tedarikçiden palet alımı / devir'),
+      created_by: user?.id,
+    });
+
+    if (error) {
+      alert(`İşlem kaydedilirken hata oluştu: ${error.message}`);
+    } else {
+      setSupplierForm({
+        supplier_name: '',
+        date: new Date().toISOString().split('T')[0],
+        pallet_type: 'sevkiyat',
+        quantity: '',
+        vehicle_plate: '',
+        driver_name: '',
+        notes: '',
+        transaction_type: 'returned',
+      });
+      setShowSupplierModal(false);
+      await fetchSupplierPalletData();
+    }
+    setSubmittingSupplier(false);
+  };
+
+  const handleDeleteSupplierTransaction = async (id: string) => {
+    if (!confirm('Bu tedarikçi palet hareketini silmek istediğinize emin misiniz?')) return;
+    const { error } = await supabase.from('supplier_pallet_transactions').delete().eq('id', id);
+    if (error) {
+      alert(`Hata: ${error.message}`);
+    } else {
+      await fetchSupplierPalletData();
+    }
+  };
+
+  const knownSuppliers = useMemo(() => {
+    const set = new Set<string>();
+    supplierBalances.forEach(b => { if (b.supplier_name) set.add(b.supplier_name); });
+    supplierTransactions.forEach(t => { if (t.supplier_name) set.add(t.supplier_name); });
+    return Array.from(set).sort();
+  }, [supplierBalances, supplierTransactions]);
+
+  const supplierKpis = useMemo(() => {
+    let totalReceived = 0;
+    let totalReturned = 0;
+    supplierBalances.forEach(b => {
+      totalReceived += Number(b.total_received) || 0;
+      totalReturned += Number(b.total_returned) || 0;
+    });
+    return {
+      totalReceived,
+      totalReturned,
+      balance: totalReceived - totalReturned,
+    };
+  }, [supplierBalances]);
+
+  const filteredSupplierBalances = useMemo(() => {
+    return supplierBalances.filter(b => {
+      const s = supplierSearch.toLowerCase().trim();
+      const matchSearch = !s || b.supplier_name.toLowerCase().includes(s);
+      const matchType = supplierFilterType === 'all' || b.pallet_type === supplierFilterType;
+      return matchSearch && matchType;
+    });
+  }, [supplierBalances, supplierSearch, supplierFilterType]);
+
+  const filteredSupplierTransactions = useMemo(() => {
+    return supplierTransactions.filter(t => {
+      const s = supplierSearch.toLowerCase().trim();
+      const matchSearch = !s ||
+        t.supplier_name.toLowerCase().includes(s) ||
+        (t.notes || '').toLowerCase().includes(s) ||
+        (t.vehicle_plate || '').toLowerCase().includes(s);
+      const matchType = supplierFilterType === 'all' || t.pallet_type === supplierFilterType;
+      return matchSearch && matchType;
+    });
+  }, [supplierTransactions, supplierSearch, supplierFilterType]);
+
   const handlePrint = () => {
     window.print();
   };
@@ -341,11 +477,11 @@ export default function PalletTracking() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-slate-800">Palet Zimmet & İade Takibi</h1>
-            <p className="text-slate-500 text-sm">Şantiye bazlı palet çıkış ve iade kayıtları</p>
+            <p className="text-slate-500 text-sm">Müşteri şantiye emanetleri ve dış fabrika palet borçları</p>
           </div>
         </div>
         <button
-          onClick={activeTab === 'tracking' ? loadData : fetchReconciliation}
+          onClick={activeTab === 'tracking' ? loadData : activeTab === 'supplier' ? fetchSupplierPalletData : fetchReconciliation}
           className="flex items-center gap-2 px-4 py-2 text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors text-sm font-medium"
         >
           <RefreshCw size={16} /> Yenile
@@ -362,7 +498,17 @@ export default function PalletTracking() {
               : 'border-transparent text-slate-500 hover:text-slate-700'
           }`}
         >
-          <span className="flex items-center gap-1.5"><ClipboardList size={16} /> Zimmet & İade Kaydı</span>
+          <span className="flex items-center gap-1.5"><ClipboardList size={16} /> Müşteri Zimmet & İade Kaydı</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('supplier')}
+          className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors ${
+            activeTab === 'supplier'
+              ? 'border-amber-500 text-amber-600'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          <span className="flex items-center gap-1.5"><Factory size={16} /> Tedarikçi (Fabrika) Palet Borçları</span>
         </button>
         <button
           onClick={() => setActiveTab('reconciliation')}
@@ -721,6 +867,296 @@ export default function PalletTracking() {
             </div>
           </div>
         )
+      ) : activeTab === 'supplier' ? (
+        /* ── SECTION 3: TEDARİKÇİ (DIŞ FABRİKA) PALET BORÇLARI ── */
+        supplierLoading ? (
+          <div className="flex items-center justify-center py-24">
+            <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {/* Top KPI Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 no-print">
+              <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
+                <div className="flex items-center justify-between text-slate-500 mb-1">
+                  <span className="text-xs font-semibold text-slate-500">Tedarikçilerden Alınan Palet</span>
+                  <ArrowDownLeft size={18} className="text-blue-600" />
+                </div>
+                <p className="text-2xl font-black text-blue-950 font-mono">
+                  {supplierKpis.totalReceived.toLocaleString('tr-TR')} <span className="text-sm font-normal text-slate-500">adet</span>
+                </p>
+                <p className="text-[11px] text-slate-400 mt-1">Dış alımlarla teslim alınan toplam palet</p>
+              </div>
+
+              <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
+                <div className="flex items-center justify-between text-slate-500 mb-1">
+                  <span className="text-xs font-semibold text-slate-500">Tedarikçilere İade Edilen Boş Palet</span>
+                  <ArrowUpRight size={18} className="text-emerald-600" />
+                </div>
+                <p className="text-2xl font-black text-emerald-950 font-mono">
+                  {supplierKpis.totalReturned.toLocaleString('tr-TR')} <span className="text-sm font-normal text-slate-500">adet</span>
+                </p>
+                <p className="text-[11px] text-slate-400 mt-1">Fabrikalara geri gönderilen boş palet</p>
+              </div>
+
+              <div className={`rounded-2xl p-5 border shadow-xs ${
+                supplierKpis.balance > 0 
+                  ? 'bg-red-50/50 border-red-200' 
+                  : supplierKpis.balance === 0 
+                  ? 'bg-emerald-50/50 border-emerald-200' 
+                  : 'bg-blue-50/50 border-blue-200'
+              }`}>
+                <div className="flex items-center justify-between text-slate-500 mb-1">
+                  <span className="text-xs font-semibold text-slate-700">Kalan Net Palet Borcumuz</span>
+                  <Factory size={18} className={supplierKpis.balance > 0 ? 'text-red-600' : 'text-emerald-600'} />
+                </div>
+                <p className={`text-2xl font-black font-mono ${
+                  supplierKpis.balance > 0 ? 'text-red-700' : supplierKpis.balance === 0 ? 'text-emerald-700' : 'text-blue-700'
+                }`}>
+                  {supplierKpis.balance.toLocaleString('tr-TR')} <span className="text-sm font-normal text-slate-500">adet</span>
+                </p>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  {supplierKpis.balance > 0 ? 'Dış fabrikalara borçlu olduğumuz palet' : 'Palet borcumuz bulunmamaktadır.'}
+                </p>
+              </div>
+            </div>
+
+            {/* Filter and Action Bar */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-4 no-print flex flex-col md:flex-row items-center justify-between gap-3">
+              <div className="flex flex-1 items-center gap-3 w-full md:w-auto">
+                <div className="relative flex-1 max-w-md">
+                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Tedarikçi adı, plaka veya not ara..."
+                    value={supplierSearch}
+                    onChange={e => setSupplierSearch(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+                <select
+                  value={supplierFilterType}
+                  onChange={e => setSupplierFilterType(e.target.value)}
+                  className="border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500 font-medium"
+                >
+                  <option value="all">Tüm Palet Tipleri</option>
+                  <option value="sevkiyat">Sevkiyat Paleti</option>
+                  <option value="tahta">Tahta Palet</option>
+                  <option value="uretim">Üretim Paleti</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2 w-full md:w-auto justify-end">
+                <button
+                  onClick={handlePrint}
+                  className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                >
+                  <Printer size={15} /> Yazdır / PDF
+                </button>
+                <button
+                  onClick={() => {
+                    setSupplierForm({
+                      supplier_name: knownSuppliers[0] || '',
+                      date: new Date().toISOString().split('T')[0],
+                      pallet_type: 'sevkiyat',
+                      quantity: '',
+                      vehicle_plate: '',
+                      driver_name: '',
+                      notes: '',
+                      transaction_type: 'returned',
+                    });
+                    setShowSupplierModal(true);
+                  }}
+                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-semibold transition-colors shadow-xs"
+                >
+                  <Plus size={16} /> Tedarikçiye Boş Palet İadesi Yap
+                </button>
+              </div>
+            </div>
+
+            {/* Grid for Supplier Balances and Transactions */}
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 print-container">
+              
+              {/* Left Column: Supplier Balances Table */}
+              <div className="xl:col-span-5 space-y-4">
+                <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
+                  <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                    <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                      <Factory size={16} className="text-amber-500" /> Tedarikçi Palet Borç Bakiyeleri
+                    </h2>
+                    <span className="text-xs text-slate-400 font-medium">
+                      {filteredSupplierBalances.length} Bakiye Kaydı
+                    </span>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs text-left">
+                      <thead>
+                        <tr className="text-slate-500 bg-slate-50 border-b border-slate-200 font-semibold uppercase text-[11px]">
+                          <th className="px-4 py-3">Tedarikçi (Fabrika)</th>
+                          <th className="px-3 py-3">Palet Tipi</th>
+                          <th className="px-3 py-3 text-right">Alınan</th>
+                          <th className="px-3 py-3 text-right">İade</th>
+                          <th className="px-4 py-3 text-right">Kalan Borç</th>
+                          <th className="px-3 py-3 text-center no-print">İşlem</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {filteredSupplierBalances.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
+                              Henüz tedarikçi palet borç kaydı bulunmamaktadır.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredSupplierBalances.map((b, idx) => (
+                            <tr key={`${b.supplier_name}-${b.pallet_type}-${idx}`} className="hover:bg-slate-50/60">
+                              <td className="px-4 py-3 font-semibold text-slate-800">
+                                {b.supplier_name}
+                              </td>
+                              <td className="px-3 py-3">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${PALLET_COLORS[b.pallet_type] || 'bg-slate-100 text-slate-800'}`}>
+                                  {PALLET_LABELS[b.pallet_type] || b.pallet_type}
+                                </span>
+                              </td>
+                              <td className="px-3 py-3 text-right text-slate-600 font-mono">
+                                {b.total_received}
+                              </td>
+                              <td className="px-3 py-3 text-right text-emerald-600 font-semibold font-mono">
+                                {b.total_returned}
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                {b.balance > 0 ? (
+                                  <span className="inline-block px-2 py-0.5 rounded-md text-[11px] font-bold bg-red-100 text-red-700 font-mono">
+                                    +{b.balance} Borç
+                                  </span>
+                                ) : b.balance === 0 ? (
+                                  <span className="inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-100 text-emerald-700">
+                                    Kapandı
+                                  </span>
+                                ) : (
+                                  <span className="inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold bg-blue-100 text-blue-700 font-mono">
+                                    {b.balance} Fazla
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-3 py-3 text-center no-print">
+                                {b.balance > 0 && (
+                                  <button
+                                    onClick={() => {
+                                      setSupplierForm({
+                                        supplier_name: b.supplier_name,
+                                        date: new Date().toISOString().split('T')[0],
+                                        pallet_type: b.pallet_type,
+                                        quantity: String(b.balance),
+                                        vehicle_plate: '',
+                                        driver_name: '',
+                                        notes: '',
+                                        transaction_type: 'returned',
+                                      });
+                                      setShowSupplierModal(true);
+                                    }}
+                                    className="px-2 py-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg text-[10px] font-semibold transition-colors whitespace-nowrap"
+                                  >
+                                    İade Yap
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column: Supplier Pallet Transactions History Table */}
+              <div className="xl:col-span-7 space-y-4">
+                <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
+                  <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                    <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                      <ClipboardList size={16} className="text-blue-500" /> Tedarikçi Palet Hareket Geçmişi
+                    </h2>
+                    <span className="text-xs text-slate-400 font-medium">
+                      {filteredSupplierTransactions.length} Hareket Kaydı
+                    </span>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs text-left">
+                      <thead>
+                        <tr className="text-slate-500 bg-slate-50 border-b border-slate-200 font-semibold uppercase text-[11px]">
+                          <th className="px-4 py-3">Tarih</th>
+                          <th className="px-4 py-3">Tedarikçi</th>
+                          <th className="px-3 py-3">Hareket</th>
+                          <th className="px-3 py-3">Palet Tipi</th>
+                          <th className="px-3 py-3 text-right">Miktar</th>
+                          <th className="px-4 py-3">Araç / Not</th>
+                          <th className="px-3 py-3 text-right no-print">İşlem</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {filteredSupplierTransactions.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
+                              Kayıtlı tedarikçi palet hareketi bulunmamaktadır.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredSupplierTransactions.map(t => (
+                            <tr key={t.id} className="hover:bg-slate-50/60">
+                              <td className="px-4 py-3 text-slate-600 whitespace-nowrap font-medium">
+                                {new Date(t.date).toLocaleDateString('tr-TR')}
+                              </td>
+                              <td className="px-4 py-3 font-semibold text-slate-800">
+                                {t.supplier_name}
+                              </td>
+                              <td className="px-3 py-3">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  t.transaction_type === 'received'
+                                    ? 'bg-amber-100 text-amber-800'
+                                    : 'bg-emerald-100 text-emerald-800'
+                                }`}>
+                                  {t.transaction_type === 'received' ? 'ALINDI (+BORÇ)' : 'İADE EDİLDİ (-BORÇ)'}
+                                </span>
+                              </td>
+                              <td className="px-3 py-3">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${PALLET_COLORS[t.pallet_type] || 'bg-slate-100 text-slate-800'}`}>
+                                  {PALLET_LABELS[t.pallet_type] || t.pallet_type}
+                                </span>
+                              </td>
+                              <td className={`px-3 py-3 text-right font-mono font-bold ${
+                                t.transaction_type === 'received' ? 'text-amber-700' : 'text-emerald-700'
+                              }`}>
+                                {t.transaction_type === 'received' ? '+' : '-'}{t.quantity}
+                              </td>
+                              <td className="px-4 py-3 text-slate-600 max-w-xs truncate">
+                                {t.vehicle_plate && <span className="font-mono font-semibold text-slate-800 mr-1.5">{t.vehicle_plate}</span>}
+                                {t.driver_name && <span className="text-slate-500 mr-1.5">({t.driver_name})</span>}
+                                <span>{t.notes}</span>
+                              </td>
+                              <td className="px-3 py-3 text-right no-print">
+                                <button
+                                  onClick={() => handleDeleteSupplierTransaction(t.id)}
+                                  className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                                  title="İşlemi Sil"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )
       ) : (
         /* ── SECTION 4: CUSTOMER RECONCILIATION REPORT ( Hesaplaşma Raporu ) ── */
         <div className="space-y-6">
@@ -903,6 +1339,138 @@ export default function PalletTracking() {
             </div>
           )}
         </div>
+      )}
+
+      {/* ── MODAL: TEDARİKÇİYE BOŞ PALET İADESİ YAP / HAREKET GİRİŞİ ── */}
+      {showSupplierModal && (
+        <Modal
+          title={supplierForm.transaction_type === 'returned' ? 'Tedarikçiye Boş Palet İadesi Yap' : 'Tedarikçiden Palet Alımı Gir'}
+          onClose={() => setShowSupplierModal(false)}
+          size="md"
+        >
+          <form onSubmit={handleSubmitSupplierReturn} className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">İşlem Türü *</label>
+                <select
+                  value={supplierForm.transaction_type}
+                  onChange={e => setSupplierForm({ ...supplierForm, transaction_type: e.target.value as any })}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500"
+                >
+                  <option value="returned">Boş Palet İadesi (-Borç Kapanır)</option>
+                  <option value="received">Palet Alımı (+Borç Eklenir)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Tarih *</label>
+                <input
+                  type="date"
+                  required
+                  value={supplierForm.date}
+                  onChange={e => setSupplierForm({ ...supplierForm, date: e.target.value })}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Tedarikçi (Fabrika) Adı *</label>
+              <input
+                type="text"
+                required
+                list="known-suppliers"
+                placeholder="Örn: Doğan Parke Fabrikası"
+                value={supplierForm.supplier_name}
+                onChange={e => setSupplierForm({ ...supplierForm, supplier_name: e.target.value })}
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-amber-500"
+              />
+              <datalist id="known-suppliers">
+                {knownSuppliers.map(s => (
+                  <option key={s} value={s} />
+                ))}
+              </datalist>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Palet Tipi *</label>
+                <select
+                  value={supplierForm.pallet_type}
+                  onChange={e => setSupplierForm({ ...supplierForm, pallet_type: e.target.value as any })}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
+                >
+                  <option value="sevkiyat">Sevkiyat Paleti</option>
+                  <option value="tahta">Tahta Palet</option>
+                  <option value="uretim">Üretim Paleti</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">İade Edilen Miktar (Adet) *</label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  required
+                  placeholder="Örn: 20"
+                  value={supplierForm.quantity}
+                  onChange={e => setSupplierForm({ ...supplierForm, quantity: e.target.value })}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono font-bold text-emerald-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Taşıyan Araç Plakası</label>
+                <input
+                  type="text"
+                  placeholder="46 AB 123"
+                  value={supplierForm.vehicle_plate}
+                  onChange={e => setSupplierForm({ ...supplierForm, vehicle_plate: e.target.value })}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs uppercase font-mono focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Şoför Adı</label>
+                <input
+                  type="text"
+                  placeholder="Ahmet Yılmaz"
+                  value={supplierForm.driver_name}
+                  onChange={e => setSupplierForm({ ...supplierForm, driver_name: e.target.value })}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Açıklama / İade İrsaliye No</label>
+              <textarea
+                rows={2}
+                placeholder="Örn: İade İrsaliyesi No: İRS-2026-102"
+                value={supplierForm.notes}
+                onChange={e => setSupplierForm({ ...supplierForm, notes: e.target.value })}
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowSupplierModal(false)}
+                className="px-4 py-2 border border-slate-200 text-slate-700 rounded-xl text-xs font-medium hover:bg-slate-50 transition-colors"
+              >
+                Vazgeç
+              </button>
+              <button
+                type="submit"
+                disabled={submittingSupplier}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition-colors disabled:opacity-50"
+              >
+                {submittingSupplier ? 'Kaydediliyor...' : 'İadeyi Kaydet'}
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
     </div>
   );
