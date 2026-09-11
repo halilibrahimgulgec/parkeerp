@@ -1,15 +1,15 @@
 import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
-import { useAuth } from '../contexts/AuthContext';
 import { CustomerQuota, Customer, Site, Product } from '../types';
 import Modal from '../components/Modal';
 import {
   Target, Plus, Search, Filter, AlertTriangle, CheckCircle2,
-  AlertCircle, Edit2, Trash2, Calendar, TrendingUp, Truck,
-  Printer, ArrowRight, Eye, RefreshCw, ChevronDown, Clock,
-  Building2, Package, Layers, BarChart2, FileText, Scale,
-  Boxes, Phone, MapPin, X
+  Edit2, Trash2, TrendingUp, Truck,
+  Printer, Eye, RefreshCw, Clock,
+  Building2, Package, Layers, BarChart2, Scale,
+  Boxes, Phone, MapPin, X, ShoppingBag
 } from 'lucide-react';
+import { getSupplierInfo } from './Shipment';
 
 const getLocalDateStr = (d = new Date()) => {
   const year = d.getFullYear();
@@ -52,8 +52,6 @@ const EMPTY_FORM: QuotaFormData = {
 };
 
 export default function CustomerQuotas() {
-  const { isAdmin, isWeighbridge, isFieldManager } = useAuth();
-
   // Top-level tab: 'quotas' (Taahhütler & Kotalar) or 'analysis' (Tarih Aralıklı Sevk Analizi)
   const [activeTab, setActiveTab] = useState<'quotas' | 'analysis'>('quotas');
 
@@ -1522,16 +1520,31 @@ export default function CustomerQuotas() {
                       const siteObj = sites.find(st => st.id === s.site_id);
                       const netKg = Math.max(0, (Number(s.gross_weight) || 0) - (Number(s.tare_weight) || 0));
 
+                      const sup = getSupplierInfo(s);
+
                       return (
-                        <tr key={idx} className="hover:bg-slate-50/60 transition-colors">
+                        <tr key={idx} className={`transition-colors ${sup.isExternal ? 'bg-amber-50/20 hover:bg-amber-50/40' : 'hover:bg-slate-50/60'}`}>
                           <td className="px-3 py-3 font-mono font-medium text-slate-700 whitespace-nowrap">
                             {new Date(s.shipment_date).toLocaleDateString('tr-TR')}
                           </td>
                           <td className="px-3 py-3 font-mono font-bold text-slate-900 whitespace-nowrap">
-                            {s.invoice_no || '-'}
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span>{s.invoice_no || '-'}</span>
+                              {sup.isExternal && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300" title={`Doğrudan Transit Sevk (Tedarikçi: ${sup.supplierName})`}>
+                                  <ShoppingBag size={10} className="text-amber-700" /> Transit
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-3 py-3 font-semibold text-slate-800">
-                            {cust?.name || '-'}
+                            <div>{cust?.name || '-'}</div>
+                            {sup.isExternal && (
+                              <div className="text-[10px] font-semibold text-amber-800 mt-0.5 flex items-center gap-1">
+                                <span className="text-slate-400 font-normal">Tedarikçi:</span>
+                                <span className="bg-amber-100/60 px-1 rounded text-amber-950 font-bold">{sup.supplierName}</span>
+                              </div>
+                            )}
                           </td>
                           <td className="px-3 py-3 text-slate-600">
                             {siteObj?.name || '-'}
@@ -1806,14 +1819,22 @@ export default function CustomerQuotas() {
                       const s = item.shipments;
                       const prod = products.find(p => p.id === item.product_id);
                       const siteObj = sites.find(st => st.id === s?.site_id);
+                      const sup = getSupplierInfo(s);
 
                       return (
-                        <tr key={idx} className="hover:bg-slate-50/70">
+                        <tr key={idx} className={`transition-colors ${sup.isExternal ? 'bg-amber-50/30 hover:bg-amber-50/50' : 'hover:bg-slate-50/70'}`}>
                           <td className="px-3 py-2.5 font-mono text-slate-700">
                             {new Date(s?.shipment_date).toLocaleDateString('tr-TR')}
                           </td>
                           <td className="px-3 py-2.5 font-semibold text-slate-900 font-mono">
-                            {s?.invoice_no || '-'}
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span>{s?.invoice_no || '-'}</span>
+                              {sup.isExternal && (
+                                <span className="inline-flex items-center gap-0.5 px-1 py-0.2 rounded text-[9px] font-bold bg-amber-100 text-amber-900 border border-amber-300" title={`Doğrudan Transit Sevk (Tedarikçi: ${sup.supplierName})`}>
+                                  <ShoppingBag size={9} className="text-amber-700" /> {sup.supplierName}
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-3 py-2.5 font-mono text-slate-600">
                             {s?.vehicle_plate || '-'}

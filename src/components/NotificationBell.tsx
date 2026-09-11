@@ -17,7 +17,6 @@ interface QuotaAlert {
 export default function NotificationBell({ onNavigate }: { onNavigate: (page: any) => void }) {
   const [alerts, setAlerts] = useState<QuotaAlert[]>([]);
   const [isOpen, setIsOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const fetchAlerts = async () => {

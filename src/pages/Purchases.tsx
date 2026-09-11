@@ -4,10 +4,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { Product, Customer, Site, ExternalPurchase } from '../types';
 import Modal from '../components/Modal';
 import {
-  ShoppingBag, Plus, Truck, ArrowRight, Search, Filter,
-  Calendar, DollarSign, AlertCircle, Trash2, Edit2, Boxes,
-  FileText, CheckCircle2, Printer, Building2, Eye, RefreshCw,
-  TrendingUp, ArrowDownLeft, ShieldCheck, ArrowUpRight
+  ShoppingBag, Plus, Truck, Search, Filter,
+  DollarSign, AlertCircle, Trash2, Edit2, Boxes,
+  Printer
 } from 'lucide-react';
 
 const getLocalDateString = () => {
@@ -61,7 +60,7 @@ const EMPTY_FORM: PurchaseFormData = {
 };
 
 export default function Purchases() {
-  const { user, isAdmin, isWeighbridge, isFieldManager } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [purchases, setPurchases] = useState<ExternalPurchase[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -189,6 +188,7 @@ export default function Purchases() {
           invoice_no: form.customer_invoice_no.trim() || form.supplier_invoice_no.trim() || `TR-${Date.now().toString().slice(-6)}`,
           customer_id: form.customer_id,
           site_id: form.site_id || null,
+          supplier_name: form.supplier_name.trim(),
           vehicle_plate: form.vehicle_plate.trim().toUpperCase(),
           driver_name: form.driver_name.trim(),
           sale_price_per_m2: Number(form.sale_price_per_m2) || 0,

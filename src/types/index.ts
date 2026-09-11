@@ -106,10 +106,12 @@ export interface Shipment {
   status: 'pending' | 'completed' | 'cancelled';
   shipment_date: string;
   notes: string;
+  supplier_name?: string | null;
   created_at: string;
   customers?: Customer;
   sites?: Site;
   shipment_items?: ShipmentItem[];
+  external_purchases?: ExternalPurchase[] | ExternalPurchase | null;
 }
 
 export interface CostEntry {

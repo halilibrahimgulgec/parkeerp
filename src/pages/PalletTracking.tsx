@@ -5,7 +5,7 @@ import { Customer, Site, SupplierPalletBalance, SupplierPalletTransaction } from
 import Modal from '../components/Modal';
 import { 
   Boxes, Plus, Printer, RefreshCw, Save, Trash2, Calendar, ClipboardList, FileText,
-  Factory, Truck, Search, Filter, AlertCircle, CheckCircle2, ArrowDownLeft, ArrowUpRight
+  Factory, Search, ArrowDownLeft, ArrowUpRight
 } from 'lucide-react';
 
 interface PalletBalance {
@@ -1047,7 +1047,7 @@ export default function PalletTracking() {
                                       setSupplierForm({
                                         supplier_name: b.supplier_name,
                                         date: new Date().toISOString().split('T')[0],
-                                        pallet_type: b.pallet_type,
+                                        pallet_type: (b.pallet_type === 'dokme' ? 'sevkiyat' : b.pallet_type) as 'tahta' | 'sevkiyat' | 'uretim',
                                         quantity: String(b.balance),
                                         vehicle_plate: '',
                                         driver_name: '',

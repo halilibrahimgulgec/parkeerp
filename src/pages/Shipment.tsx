@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Shipment, Customer, Site, Product } from '../types';
 import Modal from '../components/Modal';
-import { Plus, Truck, Search, Filter, AlertCircle, Trash2, Eye, Pencil, PackageX, Target } from 'lucide-react';
+import { Plus, Truck, Search, Filter, AlertCircle, Trash2, Eye, Pencil, PackageX, Target, ShoppingBag } from 'lucide-react';
 
 const getLocalDateString = () => {
   const now = new Date();
@@ -11,6 +11,60 @@ const getLocalDateString = () => {
   const localDate = new Date(now.getTime() - (offset * 60 * 1000));
   return localDate.toISOString().split('T')[0];
 };
+
+export function getSupplierInfo(shipment: any): { 
+  isExternal: boolean; 
+  supplierName: string; 
+  supplierInvoiceNo?: string; 
+  unitPrice?: number;
+} {
+  if (!shipment) return { isExternal: false, supplierName: '' };
+
+  // 1. Direct column on shipment
+  if (shipment.supplier_name && shipment.supplier_name.trim()) {
+    let invNo = shipment.supplier_invoice_no;
+    if (!invNo && shipment.notes) {
+      const invMatch = shipment.notes.match(/Alış İrsaliye:\s*([^)\—\-,]+)/i);
+      if (invMatch && invMatch[1]) invNo = invMatch[1].trim();
+    }
+    return { 
+      isExternal: true, 
+      supplierName: shipment.supplier_name.trim(),
+      supplierInvoiceNo: invNo,
+    };
+  }
+
+  // 2. Linked external_purchases
+  if (shipment.external_purchases) {
+    const ep = Array.isArray(shipment.external_purchases) ? shipment.external_purchases[0] : shipment.external_purchases;
+    if (ep?.supplier_name) {
+      return {
+        isExternal: true,
+        supplierName: ep.supplier_name.trim(),
+        supplierInvoiceNo: ep.supplier_invoice_no,
+        unitPrice: ep.unit_price,
+      };
+    }
+  }
+
+  // 3. Extracted from notes
+  if (shipment.notes) {
+    const match = shipment.notes.match(/Tedarikçi:\s*([^)\—\-,]+)/i);
+    const invMatch = shipment.notes.match(/Alış İrsaliye:\s*([^)\—\-,]+)/i);
+    if (match && match[1]) {
+      return { 
+        isExternal: true, 
+        supplierName: match[1].trim(),
+        supplierInvoiceNo: invMatch && invMatch[1] ? invMatch[1].trim() : undefined,
+      };
+    }
+    if (shipment.notes.toLowerCase().includes('transit sevk') || shipment.notes.toLowerCase().includes('dış alım')) {
+      return { isExternal: true, supplierName: 'Dış Tedarikçi' };
+    }
+  }
+
+  return { isExternal: false, supplierName: '' };
+}
 
 interface ShipmentFormData {
   invoice_no: string;
@@ -25,6 +79,8 @@ interface ShipmentFormData {
   logistics_cost: number;
   shipment_date: string;
   notes: string;
+  is_external: boolean;
+  supplier_name: string;
   items: { 
     product_id: string; 
     pallets: number; 
@@ -47,6 +103,8 @@ const getEmptyForm = (): ShipmentFormData => ({
   logistics_cost: 0,
   shipment_date: getLocalDateString(),
   notes: '',
+  is_external: false,
+  supplier_name: '',
   items: [{ product_id: '', pallets: 0, pallet_type: 'sevkiyat', m2: 0, unit: 'm2' }],
 });
 
@@ -58,21 +116,29 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
   onClose: () => void;
 }) {
   const { user } = useAuth();
-  const [form, setForm] = useState<ShipmentFormData>(() => initial ? {
-    invoice_no: initial.invoice_no,
-    customer_id: initial.customer_id,
-    site_id: initial.site_id || '',
-    vehicle_plate: initial.vehicle_plate,
-    driver_name: initial.driver_name || '',
-    driver_phone: initial.driver_phone || '',
-    gross_weight: initial.gross_weight,
-    tare_weight: initial.tare_weight,
-    sale_price_per_m2: initial.sale_price_per_m2,
-    logistics_cost: initial.logistics_cost,
-    shipment_date: initial.shipment_date,
-    notes: initial.notes || '',
-    items: [],
-  } : getEmptyForm());
+  const [form, setForm] = useState<ShipmentFormData>(() => {
+    if (initial) {
+      const sup = getSupplierInfo(initial);
+      return {
+        invoice_no: initial.invoice_no,
+        customer_id: initial.customer_id,
+        site_id: initial.site_id || '',
+        vehicle_plate: initial.vehicle_plate,
+        driver_name: initial.driver_name || '',
+        driver_phone: initial.driver_phone || '',
+        gross_weight: initial.gross_weight,
+        tare_weight: initial.tare_weight,
+        sale_price_per_m2: initial.sale_price_per_m2,
+        logistics_cost: initial.logistics_cost,
+        shipment_date: initial.shipment_date,
+        notes: initial.notes || '',
+        is_external: sup.isExternal,
+        supplier_name: sup.supplierName,
+        items: [],
+      };
+    }
+    return getEmptyForm();
+  });
   const [sites, setSites] = useState<Site[]>([]);
   const [customerQuotas, setCustomerQuotas] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
@@ -103,7 +169,8 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
 
           const calculated = qData.map(quota => {
             const matching = (shipData || []).filter(item => {
-              const s = item.shipments;
+              const s: any = Array.isArray(item.shipments) ? item.shipments[0] : item.shipments;
+              if (!s) return false;
               if (initial && s.id === initial.id) return false;
               if (quota.site_id && s.site_id !== quota.site_id) return false;
               if (quota.product_id && item.product_id !== quota.product_id) return false;
@@ -244,7 +311,10 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
       logistics_cost: form.logistics_cost,
       total_m2: totalM2,
       shipment_date: form.shipment_date,
-      notes: form.notes,
+      supplier_name: form.is_external ? (form.supplier_name.trim() || 'Dış Tedarikçi') : null,
+      notes: form.is_external && form.supplier_name.trim() && !form.notes.includes('Tedarikçi:')
+        ? `Doğrudan Transit Sevk (Tedarikçi: ${form.supplier_name.trim()}) ${form.notes ? '— ' + form.notes : ''}`
+        : form.notes,
     };
 
     if (initial) {
@@ -378,6 +448,47 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
             {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </div>
+      </div>
+
+      {/* Malzeme Kaynağı: Fabrika Üretimi mi, Dış Tedarikçi Transit Sevk mi? */}
+      <div className={`p-3.5 rounded-xl border transition-all ${form.is_external ? 'bg-amber-50/70 border-amber-300' : 'bg-slate-50/70 border-slate-200'}`}>
+        <div className="flex items-center justify-between cursor-pointer" onClick={() => setForm(f => ({ ...f, is_external: !f.is_external }))}>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="is_external_shipment"
+              checked={form.is_external}
+              onChange={e => setForm(f => ({ ...f, is_external: e.target.checked }))}
+              className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300 cursor-pointer"
+            />
+            <div>
+              <label htmlFor="is_external_shipment" className="text-xs font-bold text-slate-900 cursor-pointer flex items-center gap-1.5">
+                <ShoppingBag size={14} className="text-amber-600" />
+                Dış Tedarikçiden Transit Sevk (Dış Fabrikadan Alım)
+              </label>
+              <p className="text-[11px] text-slate-500">
+                Bu malzeme fabrikamızda üretilmediyse, dış fabrikadan direkt müşteriye sevk edildiyse işaretleyin.
+              </p>
+            </div>
+          </div>
+          <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${form.is_external ? 'bg-amber-200 text-amber-900 border-amber-300' : 'bg-slate-200 text-slate-600 border-slate-300'}`}>
+            {form.is_external ? 'Dış Alım / Transit' : 'Fabrika Üretimi'}
+          </span>
+        </div>
+
+        {form.is_external && (
+          <div className="mt-3 pt-3 border-t border-amber-200/80">
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Tedarikçi (Dış Fabrika) Adı *</label>
+            <input
+              type="text"
+              required={form.is_external}
+              placeholder="Örn: Doğan Parke Fabrikası"
+              value={form.supplier_name}
+              onChange={e => setForm(f => ({ ...f, supplier_name: e.target.value }))}
+              className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+            />
+          </div>
+        )}
       </div>
 
       {/* Müşteri Kota Durumu Bilgi Kartı */}
@@ -694,18 +805,54 @@ function ShipmentDetail({ shipment, onClose }: { shipment: Shipment; onClose: ()
 
   const qInfo = getShipmentDisplayQuantity({ ...shipment, shipment_items: items });
   const totalRevenue = shipment.sale_price_per_m2 * (shipment.total_m2 || 0);
+  const supInfo = getSupplierInfo(shipment);
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-4 text-sm">
-        <div><span className="text-slate-500">İrsaliye No:</span> <span className="font-medium">{shipment.invoice_no}</span></div>
+      {/* Dış Tedarikçi / Transit Sevk Bilgilendirme Kartı */}
+      {supInfo.isExternal ? (
+        <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex items-start gap-3 shadow-xs">
+          <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-sm">
+            <ShoppingBag size={20} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-200 text-amber-900 border border-amber-300 uppercase tracking-wider">
+                Doğrudan Transit Sevk (Dış Alım)
+              </span>
+            </div>
+            <div className="text-sm font-bold text-slate-900 mt-1.5 flex flex-wrap items-center gap-1.5">
+              <span className="text-slate-500 font-medium">Tedarikçi (Dış Fabrika):</span>
+              <span className="text-amber-950 font-black text-base">{supInfo.supplierName}</span>
+            </div>
+            {supInfo.supplierInvoiceNo && (
+              <div className="text-xs text-slate-600 mt-0.5">
+                Alış İrsaliye No: <span className="font-mono font-semibold text-slate-900">{supInfo.supplierInvoiceNo}</span>
+              </div>
+            )}
+            <p className="text-[11px] text-amber-800/90 mt-1">
+              Bu malzeme fabrikamızda üretilmemiş olup, dış tedarikçiden satın alınarak doğrudan müşteriye sevk edilmiştir.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 flex items-center justify-between text-xs">
+          <span className="text-slate-500 font-medium">Malzeme Kaynağı:</span>
+          <span className="font-bold text-slate-700 bg-white border border-slate-200 px-2.5 py-1 rounded-lg">
+            🏭 Fabrika Kendi Üretimi
+          </span>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-4 text-sm bg-slate-50/60 p-4 rounded-xl border border-slate-100">
+        <div><span className="text-slate-500">İrsaliye No:</span> <span className="font-bold text-slate-900">{shipment.invoice_no}</span></div>
         <div><span className="text-slate-500">Tarih:</span> <span className="font-medium">{new Date(shipment.shipment_date).toLocaleDateString('tr-TR')}</span></div>
-        <div><span className="text-slate-500">Müşteri:</span> <span className="font-medium">{shipment.customers?.name}</span></div>
+        <div><span className="text-slate-500">Müşteri:</span> <span className="font-bold text-slate-900">{shipment.customers?.name}</span></div>
         <div><span className="text-slate-500">Şantiye:</span> <span className="font-medium">{shipment.sites?.name || '-'}</span></div>
-        <div><span className="text-slate-500">Araç:</span> <span className="font-medium">{shipment.vehicle_plate}</span></div>
+        <div><span className="text-slate-500">Araç:</span> <span className="font-mono font-semibold text-slate-800">{shipment.vehicle_plate}</span></div>
         <div><span className="text-slate-500">Şoför:</span> <span className="font-medium">{shipment.driver_name || '-'}</span></div>
         <div><span className="text-slate-500">Brüt / Dara / Net:</span> <span className="font-medium">{shipment.gross_weight} / {shipment.tare_weight} / {shipment.net_weight} kg</span></div>
-        <div><span className="text-slate-500">Toplam Miktar:</span> <span className="font-semibold text-blue-700">{qInfo.displayText}</span></div>
+        <div><span className="text-slate-500">Toplam Miktar:</span> <span className="font-bold text-blue-700">{qInfo.displayText}</span></div>
       </div>
 
       <div className="border border-slate-200 rounded-xl overflow-hidden">
@@ -729,10 +876,10 @@ function ShipmentDetail({ shipment, onClose }: { shipment: Shipment; onClose: ()
 
               return (
                 <tr key={item.id}>
-                  <td className="px-4 py-2">{item.products?.name} ({item.products?.thickness}/{item.products?.color})</td>
+                  <td className="px-4 py-2 font-medium text-slate-800">{item.products?.name} ({item.products?.thickness}/{item.products?.color})</td>
                   <td className="px-4 py-2 text-slate-600 text-xs">{PALLET_LABELS[item.pallet_type] || 'Sevkiyat Paleti'}</td>
                   <td className="px-4 py-2 text-right">{item.pallet_type === 'dokme' ? '-' : `${item.pallets} adet`}</td>
-                  <td className="px-4 py-2 text-right font-semibold">
+                  <td className="px-4 py-2 text-right font-bold text-slate-900">
                     {item.m2} {effectiveUnit}
                   </td>
                 </tr>
@@ -748,8 +895,18 @@ function ShipmentDetail({ shipment, onClose }: { shipment: Shipment; onClose: ()
         <div><p className="text-slate-500">Tahmini Ciro</p><p className="font-bold text-blue-700">₺{totalRevenue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}</p></div>
       </div>
 
+      {/* Not / Açıklama */}
+      {shipment.notes && (
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-700 space-y-1">
+          <span className="font-bold text-slate-900 block">Sevkiyat Notu / Açıklama:</span>
+          <p className="whitespace-pre-wrap font-medium text-slate-800">{shipment.notes}</p>
+        </div>
+      )}
+
       <div className="flex justify-end">
-        <button onClick={onClose} className="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg text-sm hover:bg-slate-300 transition-colors">Kapat</button>
+        <button onClick={onClose} className="px-5 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl text-xs font-semibold transition-colors">
+          Kapat
+        </button>
       </div>
     </div>
   );
@@ -770,14 +927,26 @@ export default function ShipmentPage() {
 
   const load = async () => {
     setLoading(true);
-    const [custRes, prodRes, shipRes] = await Promise.all([
-      supabase.from('customers').select('*').eq('is_active', true).order('name'),
-      supabase.from('products').select('*').eq('is_active', true).order('name'),
-      supabase.from('shipments').select('*, customers(*), sites(*), shipment_items(*, products(*))').order('shipment_date', { ascending: false }).order('created_at', { ascending: false }),
-    ]);
-    setCustomers(custRes.data || []);
-    setProducts(prodRes.data || []);
-    setShipments((shipRes.data || []) as Shipment[]);
+    let shipList: Shipment[] = [];
+    try {
+      const [custRes, prodRes, shipRes] = await Promise.all([
+        supabase.from('customers').select('*').eq('is_active', true).order('name'),
+        supabase.from('products').select('*').eq('is_active', true).order('name'),
+        supabase.from('shipments').select('*, customers(*), sites(*), shipment_items(*, products(*)), external_purchases(*)').order('shipment_date', { ascending: false }).order('created_at', { ascending: false }),
+      ]);
+      setCustomers(custRes.data || []);
+      setProducts(prodRes.data || []);
+      if (shipRes.error) {
+        // Fallback without external_purchases if relation is not in PostgREST cache
+        const fallbackRes = await supabase.from('shipments').select('*, customers(*), sites(*), shipment_items(*, products(*))').order('shipment_date', { ascending: false }).order('created_at', { ascending: false });
+        shipList = (fallbackRes.data || []) as Shipment[];
+      } else {
+        shipList = (shipRes.data || []) as Shipment[];
+      }
+    } catch (err) {
+      console.error('Sevkiyat verisi yüklenirken hata:', err);
+    }
+    setShipments(shipList);
     setLoading(false);
   };
 
@@ -794,7 +963,13 @@ export default function ShipmentPage() {
 
   const filtered = shipments.filter(s => {
     const q = search.toLowerCase();
-    const match = !search || s.invoice_no.toLowerCase().includes(q) || s.customers?.name.toLowerCase().includes(q) || s.vehicle_plate.toLowerCase().includes(q);
+    const sup = getSupplierInfo(s);
+    const match = !search || 
+      s.invoice_no.toLowerCase().includes(q) || 
+      s.customers?.name.toLowerCase().includes(q) || 
+      s.vehicle_plate.toLowerCase().includes(q) ||
+      (sup.isExternal && sup.supplierName.toLowerCase().includes(q)) ||
+      (s.notes && s.notes.toLowerCase().includes(q));
     const dateMatch = !filterDate || s.shipment_date === filterDate;
     return match && dateMatch;
   });
@@ -863,7 +1038,7 @@ export default function ShipmentPage() {
         <div className="p-4 border-b border-slate-100 flex items-center gap-3">
           <div className="flex-1 relative">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input type="text" placeholder="İrsaliye no, müşteri, plaka ara..."
+            <input type="text" placeholder="İrsaliye no, müşteri, plaka, dış tedarikçi ara..."
               value={search} onChange={e => setSearch(e.target.value)}
               className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
           </div>
@@ -892,13 +1067,29 @@ export default function ShipmentPage() {
                   <tr><td colSpan={9} className="text-center py-12 text-slate-400">Kayıt bulunamadı.</td></tr>
                 ) : filtered.map(s => {
                   const qInfo = getShipmentDisplayQuantity(s);
+                  const sup = getSupplierInfo(s);
                   return (
-                    <tr key={s.id} className="hover:bg-blue-50/20 transition-colors">
-                      <td className="px-4 py-3 font-mono text-slate-700">{s.invoice_no}</td>
-                      <td className="px-4 py-3 text-slate-600">{new Date(s.shipment_date).toLocaleDateString('tr-TR')}</td>
+                    <tr key={s.id} className={`transition-colors ${sup.isExternal ? 'bg-amber-50/20 hover:bg-amber-50/40' : 'hover:bg-blue-50/20'}`}>
+                      <td className="px-4 py-3 font-mono text-slate-700">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-semibold">{s.invoice_no}</span>
+                          {sup.isExternal && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs" title={`Doğrudan Transit Sevk (Tedarikçi: ${sup.supplierName})`}>
+                              <ShoppingBag size={10} className="text-amber-700" /> Transit
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{new Date(s.shipment_date).toLocaleDateString('tr-TR')}</td>
                       <td className="px-4 py-3">
                         <div className="font-medium text-slate-800">{s.customers?.name}</div>
                         {s.sites?.name && <div className="text-xs text-slate-400">{s.sites.name}</div>}
+                        {sup.isExternal && (
+                          <div className="text-[11px] font-semibold text-amber-800 mt-0.5 flex items-center gap-1">
+                            <span className="text-slate-400 font-normal">Tedarikçi:</span>
+                            <span className="text-amber-950 font-bold bg-amber-100/60 px-1 rounded">{sup.supplierName}</span>
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 font-mono text-slate-600">{s.vehicle_plate}</td>
                       <td className="px-4 py-3 text-slate-700">{(s.net_weight / 1000).toLocaleString('tr-TR', { maximumFractionDigits: 2 })} t</td>
@@ -922,16 +1113,16 @@ export default function ShipmentPage() {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1">
                           <button onClick={() => setDetailShipment(s)}
-                            className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors">
+                            className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors" title="Sevkiyat Detayı">
                             <Eye size={14} />
                           </button>
                           <button onClick={() => { setEditShipment(s); setShowModal(true); }}
-                            className="p-1.5 text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 rounded-lg transition-colors">
+                            className="p-1.5 text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 rounded-lg transition-colors" title="Düzenle">
                             <Pencil size={14} />
                           </button>
                           {isAdmin() && (
                             <button onClick={() => handleDelete(s)} disabled={deleting === s.id}
-                              className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
+                              className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Sil">
                               {deleting === s.id
                                 ? <div className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
                                 : <Trash2 size={14} />}

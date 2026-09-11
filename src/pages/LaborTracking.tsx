@@ -1,13 +1,12 @@
 import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
-import { useAuth } from '../contexts/AuthContext';
 import { Employee, AttendanceRecord, PayrollTransaction, PayrollPayment } from '../types';
 import Modal from '../components/Modal';
 import {
-  Users, Calendar, Clock, DollarSign, Plus, Search,
-  Edit2, Trash2, CheckCircle2, AlertCircle, Printer,
-  FileSpreadsheet, ArrowRight, Wallet, TrendingUp,
-  ChevronLeft, ChevronRight, UserPlus, Save, RefreshCw,
+  Users, Calendar, Plus, Search,
+  Edit2, Trash2, Printer,
+  FileSpreadsheet, Wallet, TrendingUp,
+  UserPlus, Save, RefreshCw,
   Sun, Moon
 } from 'lucide-react';
 
@@ -26,8 +25,6 @@ const STATUS_CONFIG: Record<string, { label: string; short: string; bg: string; 
 };
 
 export default function LaborTracking() {
-  const { isAdmin, isFieldManager } = useAuth();
-
   const [activeTab, setActiveTab] = useState<Tab>('puantaj');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
