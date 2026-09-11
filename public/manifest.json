@@ -1,0 +1,21 @@
+﻿{
+  " short_name\: \Parke ERP\,
+ \name\: \Parke ERP - Fabrika Yonetim Sistemi\,
+ \icons\: [
+ {
+ \src\: \/image.png\,
+ \type\: \image/png\,
+ \sizes\: \192x192\
+ },
+ {
+ \src\: \/image.png\,
+ \type\: \image/png\,
+ \sizes\: \512x512\
+ }
+ ],
+ \start_url\: \/\,
+ \background_color\: \#0f172a\,
+ \theme_color\: \#1e40af\,
+ \display\: \standalone\,
+ \orientation\: \portrait\
+}
