@@ -286,6 +286,7 @@ export interface MachineDefinition {
   daily_capacity_m2: number;
   shift_count: number;
   specialized_types?: string[];
+  product_capacities?: Record<string, number>;
   notes?: string;
   is_active: boolean;
   created_at?: string;

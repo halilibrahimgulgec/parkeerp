@@ -61,6 +61,15 @@ export interface AIPlanningResult {
   };
 }
 
+export function getMachineProductCapacity(machine?: MachineDefinition, product?: Product): number {
+  if (!machine) return 1000;
+  if (machine.product_capacities && product?.id && machine.product_capacities[product.id] !== undefined) {
+    const val = Number(machine.product_capacities[product.id]);
+    if (val > 0) return val;
+  }
+  return Math.round(Number(machine.daily_capacity_m2 || 1000));
+}
+
 export function generateSmartProductionPlan({
   products,
   stockMap,
@@ -219,9 +228,6 @@ export function generateSmartProductionPlan({
     is_active: true,
   };
 
-  // 10 saatlik vardiya kapasitesi
-  const shiftCapM1 = Math.round(Number(m1Def.daily_capacity_m2 || 1000));
-  const shiftCapM2 = Math.round(Number(m2Def.daily_capacity_m2 || 1000));
 
   // 3. Date & Shift Grid Generation (Pazar Günleri Tatil Kontrolü)
   const shifts: ('Gündüz' | 'Gece')[] = options.shiftsPerDay === 2 ? ['Gündüz', 'Gece'] : ['Gündüz'];
@@ -288,31 +294,43 @@ export function generateSmartProductionPlan({
     return pt.includes('bordür') || pt.includes('oluk') || pt.includes('tretuar') || pt.includes('begonit');
   };
 
+  // Helper for product-specific daily capacity
+  const getProductCap = (machDef: MachineDefinition, prod: Product) => {
+    if (machDef.product_capacities && prod?.id && machDef.product_capacities[prod.id] !== undefined) {
+      const val = Number(machDef.product_capacities[prod.id]);
+      if (val > 0) return val;
+    }
+    return Math.round(Number(machDef.daily_capacity_m2 || 1000));
+  };
+
   // 4. Fill Slots Day by Day (Sadece Çalışma Günleri - Pazarlar Hariç)
   workingDates.forEach(dateStr => {
     shifts.forEach(shift => {
       // Allocate for Machine 1
-      const slotCap1 = shiftCapM1;
-      allocateForMachine('1', slotCap1, dateStr, shift);
+      allocateForMachine('1', dateStr, shift);
 
       // Allocate for Machine 2
-      const slotCap2 = shiftCapM2;
-      allocateForMachine('2', slotCap2, dateStr, shift);
+      allocateForMachine('2', dateStr, shift);
     });
   });
 
+  let productCustomCapacityUsage = 0;
+
   function allocateForMachine(
     machineNo: '1' | '2',
-    capacity: number,
     dateStr: string,
     shift: 'Gündüz' | 'Gece'
   ) {
     if (queue.length === 0) return;
 
+    const mDef = machineNo === '1' ? m1Def : m2Def;
+    const otherDef = machineNo === '1' ? m2Def : m1Def;
+
     // Find best queue item for this machine:
     // 1) Match current mold on this machine if possible
-    // 2) Or match specialized type
-    // 3) Or highest urgency
+    // 2) Or match product with custom capacity defined on this machine
+    // 3) Or match specialized type
+    // 4) Or highest urgency
     let chosenIdx = -1;
     const currentMold = machineState[machineNo].currentMold;
 
@@ -323,7 +341,17 @@ export function generateSmartProductionPlan({
       }
     }
 
-    // If no current mold match, find specialization preference
+    // Check if item has specific capacity configured on this machine
+    if (chosenIdx === -1) {
+      chosenIdx = queue.findIndex(q => {
+        if (q.remainingQty <= 0) return false;
+        const hasThis = !!(mDef.product_capacities && mDef.product_capacities[q.product.id]);
+        const hasOther = !!(otherDef.product_capacities && otherDef.product_capacities[q.product.id]);
+        return hasThis && !hasOther;
+      });
+    }
+
+    // If no specific match, find specialization preference
     if (chosenIdx === -1) {
       chosenIdx = queue.findIndex(q => {
         if (q.remainingQty <= 0) return false;
@@ -340,7 +368,13 @@ export function generateSmartProductionPlan({
     if (chosenIdx === -1) return;
 
     const item = queue[chosenIdx];
-    const qtyToProduce = Math.min(item.remainingQty, capacity);
+    const effectiveCapacity = getProductCap(mDef, item.product);
+
+    if (mDef.product_capacities && mDef.product_capacities[item.product.id]) {
+      productCustomCapacityUsage++;
+    }
+
+    const qtyToProduce = Math.min(item.remainingQty, effectiveCapacity);
 
     item.remainingQty -= qtyToProduce;
     machineState[machineNo].currentMold = item.moldKey;
@@ -367,7 +401,7 @@ export function generateSmartProductionPlan({
       produced_m2: 0,
       status: 'scheduled',
       sequence_order: planItems.length + 1,
-      notes: `${item.product.name} (${item.product.thickness || '6cm'}/${item.product.color || 'Gri'}) — ${shift} (10 Saat)`,
+      notes: `${item.product.name} (${item.product.thickness || '6cm'}/${item.product.color || 'Gri'}) — ${shift} (Kapasite: ${effectiveCapacity.toLocaleString('tr-TR')} ${item.product.unit}/10s)`,
       products: item.product,
     });
   }
@@ -394,6 +428,10 @@ export function generateSmartProductionPlan({
   
   if (moldChangesSaved > 0) {
     reasoning.push(`Kalıp optimizasyonu sayesinde aynı kalıp tipindeki ürünler peş peşe kümelenerek yaklaşık ${moldChangesSaved} gereksiz kalıp söküm-takım işleminden tasarruf edildi.`);
+  }
+
+  if (productCustomCapacityUsage > 0) {
+    reasoning.push(`🎯 Ürün Bazlı Özel Kapasiteler: ${productCustomCapacityUsage} adet iş emri, makineler için tanımlanan ürüne özel günlük baskı kapasitelerine göre hassas olarak planlandı.`);
   }
 
   if (options.excludedProductIds && options.excludedProductIds.length > 0) {

@@ -8,6 +8,7 @@ import {
 import Modal from '../components/Modal';
 import {
   generateSmartProductionPlan,
+  getMachineProductCapacity,
   PlanningOptions,
   AIPlanningResult,
   ProductShipmentVelocity
@@ -88,6 +89,88 @@ export default function ProductionPlanning() {
   const [scheduleDateFilter, setScheduleDateFilter] = useState('');
   const [scheduleMachineFilter, setScheduleMachineFilter] = useState<'all' | '1' | '2'>('all');
 
+  // Machine Product Capacity Selection State: machine_no -> { productId: '', capacity: 1000 }
+  const [newProdCapMap, setNewProdCapMap] = useState<Record<string, { productId: string; capacity: number }>>({
+    '1': { productId: '', capacity: 1200 },
+    '2': { productId: '', capacity: 1000 },
+  });
+
+  const handleSetProductCapacity = (machineNo: string, productId: string, capacity: number) => {
+    if (!productId || capacity <= 0) return;
+    setMachines(prev => prev.map(m => {
+      if (m.machine_no !== machineNo) return m;
+      const updated = { ...(m.product_capacities || {}) };
+      updated[productId] = capacity;
+      return { ...m, product_capacities: updated };
+    }));
+  };
+
+  const handleRemoveProductCapacity = (machineNo: string, productId: string) => {
+    setMachines(prev => prev.map(m => {
+      if (m.machine_no !== machineNo) return m;
+      const updated = { ...(m.product_capacities || {}) };
+      delete updated[productId];
+      return { ...m, product_capacities: updated };
+    }));
+  };
+
+  const handlePopulateAllProducts = (machineNo: string) => {
+    setMachines(prev => prev.map(m => {
+      if (m.machine_no !== machineNo) return m;
+      const updated = { ...(m.product_capacities || {}) };
+      const defaultCap = Number(m.daily_capacity_m2) || 1000;
+      products.forEach(p => {
+        if (!updated[p.id]) {
+          updated[p.id] = defaultCap;
+        }
+      });
+      return { ...m, product_capacities: updated };
+    }));
+  };
+
+  const handleClearProductCapacities = (machineNo: string) => {
+    if (window.confirm('Bu makineye ait tanımlanmış tüm ürün kapasiteleri temizlenecektir. Devam etmek istiyor musunuz?')) {
+      setMachines(prev => prev.map(m => m.machine_no === machineNo ? { ...m, product_capacities: {} } : m));
+    }
+  };
+
+  const handleSaveMachine = async (m: MachineDefinition) => {
+    try {
+      // 1. Always update localStorage cache
+      localStorage.setItem(`parke_erp_machine_${m.machine_no}_capacities`, JSON.stringify(m.product_capacities || {}));
+
+      // 2. Try direct upsert with product_capacities
+      const payload: any = {
+        machine_no: m.machine_no,
+        name: m.name,
+        daily_capacity_m2: m.daily_capacity_m2,
+        shift_count: m.shift_count,
+        specialized_types: m.specialized_types,
+        product_capacities: m.product_capacities || {},
+        notes: m.notes,
+        is_active: true,
+      };
+
+      const { error: upsertErr } = await supabase.from('machine_definitions').upsert(payload);
+      if (upsertErr) {
+        console.warn('Direct column upsert failed, using notes fallback:', upsertErr.message);
+        const fallbackNotes = `${m.notes || ''}\n[PRODUCT_CAPACITIES]${JSON.stringify(m.product_capacities || {})}[/PRODUCT_CAPACITIES]`;
+        const fallbackPayload = {
+          ...payload,
+          product_capacities: undefined,
+          notes: fallbackNotes,
+        };
+        const { error: fbErr } = await supabase.from('machine_definitions').upsert(fallbackPayload);
+        if (fbErr) throw fbErr;
+      }
+
+      alert(`✅ ${m.name} ayarları ve ürün kapasiteleri başarıyla kaydedildi.`);
+    } catch (err: any) {
+      console.error('Machine save error:', err);
+      alert(`Kaydetme hatası: ${err.message || 'Bilinmeyen hata'}`);
+    }
+  };
+
   // -------------------------------------------------------------
   // Data Fetching
   // -------------------------------------------------------------
@@ -133,29 +216,64 @@ export default function ProductionPlanning() {
       if (orderRes.data) setOrders(orderRes.data as any);
 
       // Machines fallback if table empty
+      const parseMachine = (m: any): MachineDefinition => {
+        let productCapacities: Record<string, number> = {};
+        if (m.product_capacities && typeof m.product_capacities === 'object') {
+          productCapacities = { ...m.product_capacities };
+        } else if (typeof m.product_capacities === 'string') {
+          try { productCapacities = JSON.parse(m.product_capacities); } catch {}
+        }
+        let cleanNotes = m.notes || '';
+        const match = cleanNotes.match(/\[PRODUCT_CAPACITIES\]([\s\S]*?)\[\/PRODUCT_CAPACITIES\]/);
+        if (match) {
+          try {
+            const parsed = JSON.parse(match[1]);
+            productCapacities = { ...parsed, ...productCapacities };
+          } catch {}
+          cleanNotes = cleanNotes.replace(/\[PRODUCT_CAPACITIES\][\s\S]*?\[\/PRODUCT_CAPACITIES\]/, '').trim();
+        }
+        try {
+          const cached = localStorage.getItem(`parke_erp_machine_${m.machine_no}_capacities`);
+          if (cached) {
+            const parsedLocal = JSON.parse(cached);
+            productCapacities = { ...parsedLocal, ...productCapacities };
+          }
+        } catch {}
+
+        return {
+          machine_no: m.machine_no,
+          name: m.name,
+          daily_capacity_m2: Number(m.daily_capacity_m2) || 1000,
+          shift_count: Number(m.shift_count) || 1,
+          specialized_types: m.specialized_types || [],
+          product_capacities: productCapacities,
+          notes: cleanNotes,
+          is_active: m.is_active !== false,
+        };
+      };
+
       if (machRes.data && machRes.data.length > 0) {
-        setMachines(machRes.data);
+        setMachines(machRes.data.map(parseMachine));
       } else {
-        setMachines([
-          {
-            machine_no: '1',
-            name: '1 Nolu Parke Baskı Makinesi',
-            daily_capacity_m2: 1000,
-            shift_count: 2,
-            specialized_types: ['Kilitli', 'Aşık', 'Prizma', 'Küp Taşı'],
-            notes: 'Ana parke hattı',
-            is_active: true,
-          },
-          {
-            machine_no: '2',
-            name: '2 Nolu Parke & Bordür Makinesi',
-            daily_capacity_m2: 1000,
-            shift_count: 2,
-            specialized_types: ['Bordür', 'Oluk', 'Kilitli', 'Begonit', 'Tretuar'],
-            notes: 'Bordür ve ikincil parke hattı',
-            is_active: true,
-          },
-        ]);
+        const defaultM1 = parseMachine({
+          machine_no: '1',
+          name: '1 Nolu Parke Baskı Makinesi',
+          daily_capacity_m2: 1000,
+          shift_count: 1,
+          specialized_types: ['Kilitli', 'Aşık', 'Prizma', 'Küp Taşı'],
+          notes: 'Ana parke hattı',
+          is_active: true,
+        });
+        const defaultM2 = parseMachine({
+          machine_no: '2',
+          name: '2 Nolu Parke & Bordür Makinesi',
+          daily_capacity_m2: 1000,
+          shift_count: 1,
+          specialized_types: ['Bordür', 'Oluk', 'Kilitli', 'Begonit', 'Tretuar'],
+          notes: 'Bordür ve ikincil parke hattı',
+          is_active: true,
+        });
+        setMachines([defaultM1, defaultM2]);
       }
 
       // Stock Map
@@ -648,7 +766,11 @@ export default function ProductionPlanning() {
               <p className="text-2xl font-black text-slate-800 font-mono">
                 {((machines.find(m => m.machine_no === '1')?.daily_capacity_m2 || 1000)).toLocaleString('tr-TR')} m²/gün
               </p>
-              <span className="text-[11px] text-slate-400">Günlük 10 Saat Çalışma</span>
+              <span className="text-[11px] text-slate-400">
+                {Object.keys(machines.find(m => m.machine_no === '1')?.product_capacities || {}).length > 0
+                  ? `⚡ ${Object.keys(machines.find(m => m.machine_no === '1')?.product_capacities || {}).length} ürüne özel kapasite tanımlı`
+                  : 'Varsayılan Genel Kapasite (10 Saat)'}
+              </span>
             </div>
 
             <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-xs">
@@ -659,7 +781,11 @@ export default function ProductionPlanning() {
               <p className="text-2xl font-black text-slate-800 font-mono">
                 {((machines.find(m => m.machine_no === '2')?.daily_capacity_m2 || 1000)).toLocaleString('tr-TR')} m²/gün
               </p>
-              <span className="text-[11px] text-slate-400">Günlük 10 Saat Çalışma</span>
+              <span className="text-[11px] text-slate-400">
+                {Object.keys(machines.find(m => m.machine_no === '2')?.product_capacities || {}).length > 0
+                  ? `⚡ ${Object.keys(machines.find(m => m.machine_no === '2')?.product_capacities || {}).length} ürüne özel kapasite tanımlı`
+                  : 'Varsayılan Genel Kapasite (10 Saat)'}
+              </span>
             </div>
           </div>
 
@@ -1715,72 +1841,271 @@ export default function ProductionPlanning() {
       {/* ========================================================================= */}
       {activeTab === 'machines' && (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {machines.map(m => (
-              <div key={m.machine_no} className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-600 flex items-center justify-center font-black">
-                      {m.machine_no}
+          <div className="bg-amber-500/10 border border-amber-200/80 rounded-2xl p-4 text-xs text-amber-950 flex items-center gap-3">
+            <Sliders size={20} className="text-amber-600 flex-shrink-0" />
+            <div>
+              <strong className="font-bold block text-sm">Ürün Bazlı Makine Kapasite Ayarları</strong>
+              <span>
+                Beton parke, bordür ve yağmur oluklarının üretim hızları birbirinden farklıdır. Her makinede üretilen taş/ürün için 10 saatlik net günlük kapasite belirleyin. Akıllı Asistan (AI) üretim çizelgesini bu değerleri esas alarak oluşturacaktır.
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {machines.map(m => {
+              const customCapEntries = Object.entries(m.product_capacities || {});
+              const currentNew = newProdCapMap[m.machine_no] || { productId: '', capacity: Number(m.daily_capacity_m2) || 1000 };
+              const selectedProd = products.find(p => p.id === currentNew.productId);
+
+              return (
+                <div key={m.machine_no} className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-5">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-600 flex items-center justify-center font-black text-base">
+                        {m.machine_no}
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-slate-900 text-base">{m.name}</h3>
+                        <p className="text-xs text-slate-400">Tesis Makine Parametreleri & Ürün Kapasiteleri</p>
+                      </div>
                     </div>
+
+                    <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 font-bold text-xs rounded-full border border-emerald-200 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      Aktif
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                     <div>
-                      <h3 className="font-bold text-slate-900 text-base">{m.name}</h3>
-                      <p className="text-xs text-slate-400">Tesis Makine Parametresi</p>
+                      <label className="block font-semibold text-slate-700 mb-1">
+                        Varsayılan Genel Kapasite (10 Saat)
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          value={m.daily_capacity_m2}
+                          onChange={e => {
+                            const val = Number(e.target.value);
+                            setMachines(prev => prev.map(x => x.machine_no === m.machine_no ? { ...x, daily_capacity_m2: val } : x));
+                          }}
+                          className="w-full border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400 pr-16"
+                        />
+                        <span className="absolute right-3 top-2 text-slate-400 text-xs font-semibold">m²/gün</span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 mt-0.5 block">Özel tanımı olmayan ürünler için</span>
+                    </div>
+
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">Varsayılan Vardiya Düzeni</label>
+                      <select
+                        value={m.shift_count}
+                        onChange={e => {
+                          const val = Number(e.target.value);
+                          setMachines(prev => prev.map(x => x.machine_no === m.machine_no ? { ...x, shift_count: val } : x));
+                        }}
+                        className="w-full border border-slate-200 rounded-xl px-3 py-2 font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      >
+                        <option value={1}>1 Vardiya (Günlük 10 Saat)</option>
+                        <option value={2}>2 Vardiya (10 + 10 Saat)</option>
+                      </select>
+                      <span className="text-[10px] text-slate-400 mt-0.5 block">Pazar günleri tatil</span>
                     </div>
                   </div>
 
-                  <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 font-bold text-xs rounded-full border border-emerald-200">
-                    Aktif
-                  </span>
-                </div>
-
-                <div className="space-y-3 text-xs">
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">Günlük Üretim Kapasitesi (m² / 10 Saat)</label>
-                    <input
-                      type="number"
-                      value={m.daily_capacity_m2}
-                      onChange={e => {
-                        const val = Number(e.target.value);
-                        setMachines(prev => prev.map(x => x.machine_no === m.machine_no ? { ...x, daily_capacity_m2: val } : x));
-                      }}
-                      className="w-full border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">Varsayılan Vardiya Düzeni</label>
-                    <select
-                      value={m.shift_count}
-                      onChange={e => {
-                        const val = Number(e.target.value);
-                        setMachines(prev => prev.map(x => x.machine_no === m.machine_no ? { ...x, shift_count: val } : x));
-                      }}
-                      className="w-full border border-slate-200 rounded-xl px-3 py-2 font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400"
-                    >
-                      <option value={1}>1 Vardiya (Günlük 10 Saat)</option>
-                      <option value={2}>2 Vardiya (10 + 10 Saat)</option>
-                    </select>
-                  </div>
-
-                  <div>
+                  <div className="text-xs">
                     <label className="block font-semibold text-slate-700 mb-1">Uzmanlaştığı Ürün Tipleri</label>
-                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-700">
+                    <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-700">
                       {m.specialized_types && m.specialized_types.length > 0 ? (
                         <div className="flex flex-wrap gap-1.5">
                           {m.specialized_types.map((st, i) => (
-                            <span key={i} className="bg-white border border-slate-200 px-2 py-0.5 rounded-md font-medium text-slate-800">
+                            <span key={i} className="bg-white border border-slate-200 px-2 py-0.5 rounded-md font-semibold text-slate-800 text-[11px]">
                               {st}
                             </span>
                           ))}
                         </div>
                       ) : (
-                        <span>Tüm Ürün Tipleri (Kısıtlama Yok)</span>
+                        <span className="text-slate-500">Tüm Ürün Tipleri (Kısıtlama Yok)</span>
                       )}
                     </div>
                   </div>
 
-                  <div>
+                  {/* 🎯 ÖZEL BÖLÜM: ÜRÜN BAZLI GÜNLÜK KAPASİTE AYARLARI */}
+                  <div className="border border-amber-200 bg-amber-50/40 rounded-2xl p-4 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                          <Sliders size={14} className="text-amber-600" />
+                          Ürüne Özel Günlük Kapasite Belirleme
+                        </h4>
+                        <p className="text-[11px] text-slate-500">
+                          Bu makinede üretilecek ürünün günlük baskı kapasitesini belirleyin.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handlePopulateAllProducts(m.machine_no)}
+                          className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-bold shadow-2xs transition-colors flex items-center gap-1"
+                          title="Fabrikadaki tüm ürünleri otomatik ekle"
+                        >
+                          <Plus size={12} />
+                          Tüm Ürünleri Getir
+                        </button>
+                        {customCapEntries.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => handleClearProductCapacities(m.machine_no)}
+                            className="px-2 py-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg text-[11px] font-medium transition-colors"
+                            title="Tüm ürün kapasitelerini temizle"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Ürün Seç & Kapasite Ekle Barı */}
+                    <div className="bg-white border border-amber-200 rounded-xl p-3 grid grid-cols-1 sm:grid-cols-12 gap-2 text-xs items-end shadow-2xs">
+                      <div className="sm:col-span-6">
+                        <label className="block font-semibold text-slate-700 mb-1 text-[11px]">Ürün Seç *</label>
+                        <select
+                          value={currentNew.productId}
+                          onChange={e => {
+                            const pid = e.target.value;
+                            const existingCap = m.product_capacities?.[pid] || Number(m.daily_capacity_m2) || 1200;
+                            setNewProdCapMap(prev => ({
+                              ...prev,
+                              [m.machine_no]: { productId: pid, capacity: existingCap }
+                            }));
+                          }}
+                          className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 font-medium"
+                        >
+                          <option value="">Ürün Seçiniz...</option>
+                          {products.map(p => (
+                            <option key={p.id} value={p.id}>
+                              {p.name} ({p.thickness || 'Standart'} - {p.color || 'Gri'}) [{p.unit}]
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="sm:col-span-3">
+                        <label className="block font-semibold text-slate-700 mb-1 text-[11px]">
+                          Kapasite ({selectedProd?.unit || 'm²'}/10s)
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          placeholder="Kapasite"
+                          value={currentNew.capacity || ''}
+                          onChange={e => {
+                            const val = Number(e.target.value);
+                            setNewProdCapMap(prev => ({
+                              ...prev,
+                              [m.machine_no]: { ...prev[m.machine_no], capacity: val }
+                            }));
+                          }}
+                          className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-3">
+                        <button
+                          type="button"
+                          disabled={!currentNew.productId || !currentNew.capacity}
+                          onClick={() => {
+                            handleSetProductCapacity(m.machine_no, currentNew.productId, currentNew.capacity);
+                            setNewProdCapMap(prev => ({
+                              ...prev,
+                              [m.machine_no]: { productId: '', capacity: Number(m.daily_capacity_m2) || 1000 }
+                            }));
+                          }}
+                          className="w-full py-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-bold rounded-lg text-xs transition-colors flex items-center justify-center gap-1 shadow-2xs"
+                        >
+                          <Plus size={14} />
+                          Ekle / Güncelle
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Tanımlı Ürün Kapasiteleri Listesi */}
+                    <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                      {customCapEntries.length === 0 ? (
+                        <div className="text-center py-4 bg-white/60 rounded-xl border border-dashed border-amber-200 text-slate-400 text-xs">
+                          Henüz bu makineye özel bir ürün kapasitesi eklenmedi.
+                          <br />
+                          <span className="text-[11px] text-slate-400">
+                            Özel kapasite belirlemek için yukarıdan ürün seçin veya <strong>"Tüm Ürünleri Getir"</strong> butonuna basın.
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden text-xs">
+                          {customCapEntries.map(([pid, cap]) => {
+                            const prod = products.find(p => p.id === pid);
+                            const unit = prod?.unit || 'm²';
+                            const pallets = prod?.m2_per_pallet && prod.m2_per_pallet > 0
+                              ? (cap / prod.m2_per_pallet).toFixed(1)
+                              : null;
+
+                            return (
+                              <div key={pid} className="p-2.5 flex items-center justify-between gap-2 hover:bg-slate-50 transition-colors">
+                                <div className="min-w-0 flex-1">
+                                  <div className="font-bold text-slate-900 truncate">
+                                    {prod ? prod.name : 'Bilinmeyen / Silinmiş Ürün'}
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 flex items-center gap-2">
+                                    <span>{prod?.product_type || 'Parke'}</span>
+                                    <span>•</span>
+                                    <span>{prod?.thickness || 'Standart'}</span>
+                                    <span>•</span>
+                                    <span>{prod?.color || 'Gri'}</span>
+                                    {pallets && (
+                                      <>
+                                        <span>•</span>
+                                        <span className="font-medium text-emerald-600">~{pallets} Palet/Gün</span>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 flex-shrink-0">
+                                  <div className="relative w-28">
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      value={cap}
+                                      onChange={e => {
+                                        const val = Number(e.target.value);
+                                        handleSetProductCapacity(m.machine_no, pid, val);
+                                      }}
+                                      className="w-full border border-slate-200 rounded-lg px-2 py-1 text-right font-mono font-black text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 pr-9"
+                                    />
+                                    <span className="absolute right-2 top-1 text-[10px] font-bold text-slate-400">
+                                      {unit}
+                                    </span>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveProductCapacity(m.machine_no, pid)}
+                                    className="w-7 h-7 flex items-center justify-center text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                    title="Ürünü makine listesinden kaldır"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Açıklama / Not */}
+                  <div className="text-xs">
                     <label className="block font-semibold text-slate-700 mb-1">Açıklama / Not</label>
                     <input
                       type="text"
@@ -1789,38 +2114,25 @@ export default function ProductionPlanning() {
                         const val = e.target.value;
                         setMachines(prev => prev.map(x => x.machine_no === m.machine_no ? { ...x, notes: val } : x));
                       }}
+                      placeholder="Makine hattı veya kalıp notları..."
                       className="w-full border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400"
                     />
                   </div>
-                </div>
 
-                <div className="pt-2">
-                  <button
-                    onClick={async () => {
-                      try {
-                        await supabase
-                          .from('machine_definitions')
-                          .upsert({
-                            machine_no: m.machine_no,
-                            name: m.name,
-                            daily_capacity_m2: m.daily_capacity_m2,
-                            shift_count: m.shift_count,
-                            specialized_types: m.specialized_types,
-                            notes: m.notes,
-                            is_active: true,
-                          });
-                        alert(`${m.name} ayarları kaydedildi.`);
-                      } catch (err: any) {
-                        alert('Hata: ' + err.message);
-                      }
-                    }}
-                    className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-colors"
-                  >
-                    Makine Ayarlarını Kaydet
-                  </button>
+                  {/* Kaydet Butonu */}
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={() => handleSaveMachine(m)}
+                      className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 active:scale-[0.99] text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-2"
+                    >
+                      <CheckCircle2 size={15} className="text-emerald-400" />
+                      {m.name} Ayarlarını & Ürün Kapasitelerini Kaydet
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -1888,6 +2200,20 @@ export default function ProductionPlanning() {
                   </option>
                 ))}
               </select>
+              {orderForm.product_id && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 bg-amber-50/50 px-2.5 py-1.5 rounded-lg border border-amber-200/60">
+                  <span className="font-semibold text-amber-900">Tesis Baskı Kapasitesi:</span>
+                  <span className="flex items-center gap-1 font-mono">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                    1 Nolu Makine: <strong className="text-slate-900">{getMachineProductCapacity(machines.find(m => m.machine_no === '1'), products.find(p => p.id === orderForm.product_id)).toLocaleString('tr-TR')} {orderForm.unit}/gün</strong>
+                  </span>
+                  <span className="text-amber-300">|</span>
+                  <span className="flex items-center gap-1 font-mono">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    2 Nolu Makine: <strong className="text-slate-900">{getMachineProductCapacity(machines.find(m => m.machine_no === '2'), products.find(p => p.id === orderForm.product_id)).toLocaleString('tr-TR')} {orderForm.unit}/gün</strong>
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-3 gap-3">
