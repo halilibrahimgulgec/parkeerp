@@ -70,6 +70,7 @@ export default function ProductionPlanning() {
   const [generatedPlan, setGeneratedPlan] = useState<AIPlanningResult | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSavingPlan, setIsSavingPlan] = useState(false);
+  const [saveStatusText, setSaveStatusText] = useState('');
 
   // Order Form Modal State
   const [showOrderModal, setShowOrderModal] = useState(false);
@@ -329,13 +330,29 @@ export default function ProductionPlanning() {
       setShipmentVelocityMap(vMap);
 
       // Plans & Items
-      const planList = (planRes.data || []) as ProductionPlan[];
+      let planList = (planRes.data || []) as ProductionPlan[];
+      let allPlanItems = (itemsRes.data || []) as any[];
+
+      // Check if there is an active local offline plan
+      try {
+        const localPlanRaw = localStorage.getItem('parke_erp_local_active_plan');
+        const localItemsRaw = localStorage.getItem('parke_erp_local_active_items');
+        if (localPlanRaw && localItemsRaw) {
+          const localPlanParsed = JSON.parse(localPlanRaw);
+          const localItemsParsed = JSON.parse(localItemsRaw);
+          if (!planList.some(p => p.id === localPlanParsed.id)) {
+            planList = [localPlanParsed, ...planList];
+            allPlanItems = [...localItemsParsed, ...allPlanItems];
+          }
+        }
+      } catch {}
+
       setPlans(planList);
       if (planList.length > 0) {
         const active = planList.find(p => p.status === 'active') || planList[0];
         setActivePlan(active);
       }
-      setPlanItems((itemsRes.data || []) as any);
+      setPlanItems(allPlanItems);
     } catch (err) {
       console.error('Veri yüklenirken hata:', err);
     } finally {
@@ -411,63 +428,133 @@ export default function ProductionPlanning() {
     });
   };
 
+  // Resilient retry helper for Supabase operations (handling cold-start / network blips)
+  const runWithRetry = async <T,>(
+    fn: () => Promise<T>,
+    maxRetries = 3,
+    delayMs = 1500,
+    onRetry?: (attempt: number) => void
+  ): Promise<T> => {
+    let lastErr: any;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (err: any) {
+        lastErr = err;
+        console.warn(`[Supabase Retry] Deneme ${attempt}/${maxRetries} başarısız oldu:`, err);
+        if (attempt < maxRetries) {
+          if (onRetry) onRetry(attempt);
+          await new Promise(res => setTimeout(res, delayMs * attempt));
+        }
+      }
+    }
+    throw lastErr;
+  };
+
   // Approve & Save Generated Plan
   const handleSaveAndActivatePlan = async () => {
     if (!generatedPlan || generatedPlan.items.length === 0) return;
     setIsSavingPlan(true);
+    setSaveStatusText('Sunucu bağlantısı ve oturum doğrulanıyor...');
+
+    // 0. Safety cache in local storage before doing anything
     try {
-      // 1. Insert new production plan
+      localStorage.setItem('parke_erp_last_generated_plan_backup', JSON.stringify(generatedPlan));
+    } catch {}
+
+    try {
+      // Refresh / confirm authenticated user session
+      let currentUserId = user?.id || null;
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData?.session?.user?.id) {
+          currentUserId = sessionData.session.user.id;
+        }
+      } catch (authErr) {
+        console.warn('Oturum kontrolünde uyarı:', authErr);
+      }
+
+      // 1. Insert new production plan with retry
+      setSaveStatusText('Üretim planı kaydediliyor (Sunucu uyandırılıyor)...');
       const planPayload = {
-        plan_name: generatedPlan.planName,
+        plan_name: (generatedPlan.planName || 'AI Üretim Planı').trim(),
         start_date: generatedPlan.startDate,
         end_date: generatedPlan.endDate,
         status: 'active',
-        ai_summary: generatedPlan.summary,
-        created_by: user?.id,
+        ai_summary: JSON.parse(JSON.stringify(generatedPlan.summary || {})),
+        created_by: currentUserId,
       };
 
-      const { data: createdPlan, error: planErr } = await supabase
-        .from('production_plans')
-        .insert(planPayload)
-        .select()
-        .single();
+      const createdPlan = await runWithRetry(
+        async () => {
+          const { data, error } = await supabase
+            .from('production_plans')
+            .insert(planPayload)
+            .select()
+            .single();
+          if (error) throw error;
+          return data;
+        },
+        3,
+        1500,
+        attempt => setSaveStatusText(`Sunucu yanıt vermedi, tekrar deneniyor (${attempt}/3)...`)
+      );
 
-      if (planErr) throw planErr;
-
-      // 2. Insert plan items
+      // 2. Insert plan items (in chunks of 25 to avoid payload timeouts)
+      setSaveStatusText('İş emirleri oluşturuluyor...');
       const itemsPayload = generatedPlan.items.map((it, idx) => ({
         plan_id: createdPlan.id,
-        machine_no: it.machine_no,
+        machine_no: String(it.machine_no || '1'),
         planned_date: it.planned_date,
-        shift: it.shift,
+        shift: it.shift || 'Gündüz',
         product_id: it.product_id,
         order_id: it.order_id || null,
         quota_id: it.quota_id || null,
-        planned_m2: it.planned_m2,
-        planned_pallets: it.planned_pallets || 0,
+        planned_m2: Math.round(Number(it.planned_m2) * 100) / 100,
+        planned_pallets: Math.round(Number(it.planned_pallets || 0)),
         produced_m2: 0,
-        status: 'scheduled',
+        status: 'scheduled' as const,
         sequence_order: idx + 1,
-        notes: it.notes || '',
+        notes: String(it.notes || ''),
       }));
 
-      const { error: itemsErr } = await supabase
-        .from('production_plan_items')
-        .insert(itemsPayload);
+      const chunkSize = 25;
+      for (let i = 0; i < itemsPayload.length; i += chunkSize) {
+        const chunk = itemsPayload.slice(i, i + chunkSize);
+        await runWithRetry(
+          async () => {
+            const { error } = await supabase.from('production_plan_items').insert(chunk);
+            if (error) throw error;
+          },
+          3,
+          1500,
+          attempt => setSaveStatusText(`İş emirleri aktarılıyor (Parça ${Math.floor(i / chunkSize) + 1}, Deneme ${attempt}/3)...`)
+        );
+      }
 
-      if (itemsErr) throw itemsErr;
-
-      // 3. Mark linked orders as 'planned'
+      // 3. Mark linked orders as 'planned' (isolated try-catch so it won't break plan creation if order was deleted)
+      setSaveStatusText('Sipariş durumları güncelleniyor...');
       const linkedOrderIds = generatedPlan.items
         .map(it => it.order_id)
         .filter(Boolean) as string[];
 
       if (linkedOrderIds.length > 0) {
-        await supabase
-          .from('production_orders')
-          .update({ status: 'planned' })
-          .in('id', linkedOrderIds);
+        try {
+          await supabase
+            .from('production_orders')
+            .update({ status: 'planned' })
+            .in('id', linkedOrderIds);
+        } catch (orderErr) {
+          console.warn('Sipariş durumları güncellenirken ikincil uyarı (önemsiz):', orderErr);
+        }
       }
+
+      // Clean up temporary local storage backup
+      try {
+        localStorage.removeItem('parke_erp_last_generated_plan_backup');
+        localStorage.removeItem('parke_erp_local_active_plan');
+        localStorage.removeItem('parke_erp_local_active_items');
+      } catch {}
 
       alert('Tebrikler! AI Üretim Planı başarıyla kaydedildi ve Makine Çalışma Çizelgesine aktarıldı.');
       setGeneratedPlan(null);
@@ -475,9 +562,69 @@ export default function ProductionPlanning() {
       setActiveTab('schedule');
     } catch (err: any) {
       console.error('Plan kaydedilirken hata:', err);
-      alert('Plan kaydedilirken bir hata oluştu: ' + (err.message || 'Bilinmeyen hata'));
+      const isNetworkError =
+        err?.message?.includes('fetch') ||
+        err?.name === 'TypeError' ||
+        err?.message?.includes('NetworkError') ||
+        err?.message?.includes('Failed to fetch') ||
+        err?.code === 'PGRST301';
+
+      if (isNetworkError) {
+        const confirmSaveLocally = window.confirm(
+          '⚠️ Sunucu / İnternet Bağlantı Uyarısı:\n\n' +
+          'Supabase sunucusu uyku modundan henüz uyanamadı veya geçici bir ağ kesintisi yaşandı.\n\n' +
+          'Hazırladığınız AI Üretim Planını kaybetmemek için yerel tarayıcı hafızasına (Çevrimdışı Mod) kaydedip Makine Çalışma Çizelgenize aktarmak ister misiniz?'
+        );
+
+        if (confirmSaveLocally) {
+          const localPlanId = `local-plan-${Date.now()}`;
+          const localPlan: ProductionPlan = {
+            id: localPlanId,
+            plan_name: generatedPlan.planName + ' (Yerel Yedek)',
+            start_date: generatedPlan.startDate,
+            end_date: generatedPlan.endDate,
+            status: 'active',
+            ai_summary: generatedPlan.summary,
+            created_at: new Date().toISOString(),
+          };
+
+          const localItems: ProductionPlanItem[] = generatedPlan.items.map((it, idx) => ({
+            id: `local-item-${Date.now()}-${idx}`,
+            plan_id: localPlanId,
+            machine_no: it.machine_no,
+            planned_date: it.planned_date,
+            shift: it.shift,
+            product_id: it.product_id,
+            order_id: it.order_id || null,
+            quota_id: it.quota_id || null,
+            planned_m2: it.planned_m2,
+            planned_pallets: it.planned_pallets || 0,
+            produced_m2: 0,
+            status: 'scheduled',
+            sequence_order: idx + 1,
+            notes: it.notes || '',
+            products: products.find(p => p.id === it.product_id),
+          }));
+
+          try {
+            localStorage.setItem('parke_erp_local_active_plan', JSON.stringify(localPlan));
+            localStorage.setItem('parke_erp_local_active_items', JSON.stringify(localItems));
+          } catch {}
+
+          setPlans(prev => [localPlan, ...prev]);
+          setActivePlan(localPlan);
+          setPlanItems(prev => [...localItems, ...prev]);
+          setGeneratedPlan(null);
+          setActiveTab('schedule');
+          alert('AI Planı yerel tarayıcı hafızasına güvenle aktarıldı ve Makine Çalışma Çizelgeniz oluşturuldu!');
+          return;
+        }
+      }
+
+      alert('Plan kaydedilirken bir hata oluştu: ' + (err.message || 'Bilinmeyen hata') + '\n\nLütfen internet bağlantınızı kontrol edip birkaç saniye sonra tekrar deneyiniz.');
     } finally {
       setIsSavingPlan(false);
+      setSaveStatusText('');
     }
   };
 
@@ -1018,14 +1165,14 @@ export default function ProductionPlanning() {
                   <button
                     onClick={handleSaveAndActivatePlan}
                     disabled={isSavingPlan}
-                    className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold shadow-md shadow-emerald-600/20 transition-all disabled:opacity-50"
+                    className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold shadow-md shadow-emerald-600/20 transition-all disabled:opacity-80 cursor-pointer disabled:cursor-wait"
                   >
                     {isSavingPlan ? (
                       <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     ) : (
                       <CheckCircle2 size={18} />
                     )}
-                    <span>Planı Onayla & İş Emirlerine Dönüştür</span>
+                    <span>{isSavingPlan ? (saveStatusText || 'Kaydediliyor...') : 'Planı Onayla & İş Emirlerine Dönüştür'}</span>
                   </button>
                 </div>
               </div>
