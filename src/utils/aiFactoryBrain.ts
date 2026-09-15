@@ -18,6 +18,20 @@ export interface CustomerPalletDebtor {
   sevkiyat: number;
 }
 
+export interface TodayShipmentDetail {
+  customer: string;
+  site: string;
+  qty: string;
+  invoice: string;
+  plate?: string;
+  driver?: string;
+  items: { name: string; m2: number; unit: string }[];
+  totalM2: number;
+  totalMetre: number;
+  totalAdet: number;
+  netWeight: number;
+}
+
 export interface FactorySnapshot {
   timestamp: string;
   todayDate: string;
@@ -42,7 +56,7 @@ export interface FactorySnapshot {
   todayShipmentBordurMetre: number;
   todayShipmentAdet: number;
   todayShipmentTonnage: number;
-  todayRecentShipments: { customer: string; site: string; qty: string; invoice: string }[];
+  todayRecentShipments: TodayShipmentDetail[];
   // Orders & Quotas
   pendingOrdersCount: number;
   criticalOrders: { orderNo: string; customer: string; product: string; qty: string; dueDate?: string }[];
@@ -172,28 +186,57 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
     const todayRecent: FactorySnapshot['todayRecentShipments'] = [];
 
     shipToday.forEach((s: any) => {
-      todayShipTonnage += (Number(s.net_weight || 0)) / 1000;
+      const actualNet = Number(s.net_weight || 0) || (Number(s.gross_weight || 0) && Number(s.tare_weight || 0) ? Number(s.gross_weight) - Number(s.tare_weight) : 0);
+      todayShipTonnage += actualNet / 1000;
+
       const items = s.shipment_items || [];
-      let shipmentDesc = '';
+      const itemDescriptions: string[] = [];
+      const parsedItems: { name: string; m2: number; unit: string }[] = [];
+      let sM2 = 0;
+      let sMetre = 0;
+      let sAdet = 0;
+
       if (items.length > 0) {
         items.forEach((it: any) => {
           const u = it.products?.unit || it.unit || 'm2';
           const q = Number(it.m2 || 0);
-          if (u === 'metre') todayShipMetre += q;
-          else if (u === 'adet') todayShipAdet += q;
-          else todayShipM2 += q;
+          const pName = it.products?.name || 'Ürün';
+          parsedItems.push({ name: pName, m2: q, unit: u });
+
+          if (u === 'metre') {
+            todayShipMetre += q;
+            sMetre += q;
+            itemDescriptions.push(`${q} metre ${pName}`);
+          } else if (u === 'adet') {
+            todayShipAdet += q;
+            sAdet += q;
+            itemDescriptions.push(`${q} adet ${pName}`);
+          } else {
+            todayShipM2 += q;
+            sM2 += q;
+            itemDescriptions.push(`${q} m² ${pName}`);
+          }
         });
-        shipmentDesc = items.map((it: any) => `${it.m2} ${it.products?.unit || 'm²'} ${it.products?.name || ''}`).join(', ');
       } else {
-        todayShipM2 += Number(s.total_m2 || 0);
-        shipmentDesc = `${s.total_m2} m²`;
+        const fallbackM2 = Number(s.total_m2 || 0);
+        todayShipM2 += fallbackM2;
+        sM2 += fallbackM2;
+        itemDescriptions.push(`${fallbackM2} m²`);
+        parsedItems.push({ name: 'Parke Taşı', m2: fallbackM2, unit: 'm²' });
       }
 
       todayRecent.push({
         customer: s.customers?.name || 'Belirtilmemiş Müşteri',
-        site: s.sites?.name || 'Ana Şantiye',
-        qty: shipmentDesc,
+        site: s.sites?.name || 'Ana Şantiye / Merkez',
+        qty: itemDescriptions.join(', '),
         invoice: s.invoice_no || '-',
+        plate: s.vehicle_plate || '',
+        driver: s.driver_name || '',
+        items: parsedItems,
+        totalM2: sM2,
+        totalMetre: sMetre,
+        totalAdet: sAdet,
+        netWeight: actualNet,
       });
     });
 
@@ -400,19 +443,126 @@ export function runLocalFactoryIntelligence(query: string, data: FactorySnapshot
   }
 
   // 3. Shipment / Kantar
-  if (q.includes('sevk') || q.includes('kantar') || q.includes('kamyon') || q.includes('tonaj') || q.includes('irsaliye')) {
-    let text = `${matchingRuleBanner}🚚 **Bugünkü Sevkiyat & Kantar Durumu**\n\n`;
+  if (q.includes('sevk') || q.includes('kantar') || q.includes('kamyon') || q.includes('tonaj') || q.includes('irsaliye') || qNorm.includes('sevk')) {
+    // 1. Check if query mentions a specific site (e.g. "HACI KEL", "ALTINOVA", "MUSTAFA KAYA", "MUSTAFA YILMAZ")
+    const matchedSite = data.todayRecentShipments.find(s => {
+      const sNorm = normalizeTurkish(s.site);
+      return sNorm.length >= 3 && qNorm.includes(sNorm);
+    });
+
+    // 2. Check if query mentions a specific customer (e.g. "ONİKİŞUBAT", "MEDİKENT")
+    const matchedCustomer = data.todayRecentShipments.find(s => {
+      const cNorm = normalizeTurkish(s.customer);
+      return cNorm.length >= 3 && qNorm.includes(cNorm);
+    });
+
+    // Case A: Query is for a specific site (or site + customer)
+    if (matchedSite) {
+      const sNorm = normalizeTurkish(matchedSite.site);
+      const siteShipments = data.todayRecentShipments.filter(s => normalizeTurkish(s.site) === sNorm);
+      const custName = matchedSite.customer;
+      const siteName = matchedSite.site;
+
+      let totalSiteM2 = 0;
+      let totalSiteMetre = 0;
+      let totalSiteAdet = 0;
+      let totalSiteWeight = 0;
+
+      siteShipments.forEach(s => {
+        totalSiteM2 += s.totalM2;
+        totalSiteMetre += s.totalMetre;
+        totalSiteAdet += s.totalAdet;
+        totalSiteWeight += s.netWeight;
+      });
+
+      let text = `${matchingRuleBanner}🚚 **${custName.toUpperCase()} - ${siteName.toUpperCase()} ŞANTİYESİ SEVKİYATI**\n\n`;
+      text += `Bugün **${siteName}** şantiyesine tamamlanan toplam **${siteShipments.length} sefer/çıkış** yapılmıştır:\n\n`;
+
+      siteShipments.forEach((s, idx) => {
+        text += `📄 **${idx + 1}. Sefer [İrsaliye No: ${s.invoice}]**\n`;
+        if (s.plate || s.driver) {
+          text += `   🚛 Araç: ${s.plate || '-'} ${s.driver ? `| Şoför: ${s.driver}` : ''}\n`;
+        }
+        if (s.items && s.items.length > 0) {
+          s.items.forEach(it => {
+            text += `   • **${it.m2} ${it.unit === 'metre' ? 'Metre' : it.unit === 'adet' ? 'Adet' : 'm²'}** ${it.name}\n`;
+          });
+        } else {
+          text += `   • ${s.qty}\n`;
+        }
+        text += `\n`;
+      });
+
+      text += `📊 **${siteName} Şantiyesi Günlük Toplamı:**\n`;
+      if (totalSiteM2 > 0) text += `• **Toplam Parke Taşı:** **${totalSiteM2.toLocaleString('tr-TR')} m²**\n`;
+      if (totalSiteMetre > 0) text += `• **Toplam Bordür / Hat:** **${totalSiteMetre.toLocaleString('tr-TR')} Metre**\n`;
+      if (totalSiteAdet > 0) text += `• **Toplam Adetli Ürün:** **${totalSiteAdet.toLocaleString('tr-TR')} Adet**\n`;
+      text += `• **Toplam İrsaliye / Kamyon:** **${siteShipments.length} Sefer**\n`;
+      if (totalSiteWeight > 0) {
+        text += `• **Net Kantar Tonajı:** **${(totalSiteWeight / 1000).toFixed(1)} Ton**\n`;
+      }
+
+      return text;
+    }
+
+    // Case B: Query is for a specific customer without a specific site
+    if (matchedCustomer) {
+      const cNorm = normalizeTurkish(matchedCustomer.customer);
+      const custShipments = data.todayRecentShipments.filter(s => normalizeTurkish(s.customer) === cNorm);
+      const custName = matchedCustomer.customer;
+
+      let totalCustM2 = 0;
+      let totalCustMetre = 0;
+      let totalCustAdet = 0;
+
+      const siteGroups: Record<string, typeof custShipments> = {};
+      custShipments.forEach(s => {
+        totalCustM2 += s.totalM2;
+        totalCustMetre += s.totalMetre;
+        totalCustAdet += s.totalAdet;
+        if (!siteGroups[s.site]) siteGroups[s.site] = [];
+        siteGroups[s.site].push(s);
+      });
+
+      let text = `${matchingRuleBanner}🚚 **${custName.toUpperCase()} - BUGÜNKÜ SEVKİYAT RAPORU**\n\n`;
+      text += `Bugün **${custName}** adına toplam **${custShipments.length} araç/irsaliye** çıkışı yapılmıştır:\n\n`;
+
+      Object.entries(siteGroups).forEach(([sName, sList]) => {
+        text += `📍 **${sName} Şantiyesi (${sList.length} Sefer):**\n`;
+        sList.forEach(s => {
+          text += `• [İrs: ${s.invoice}] ${s.qty}${s.plate ? ` (Plaka: ${s.plate})` : ''}\n`;
+        });
+        text += `\n`;
+      });
+
+      text += `📊 **${custName} Günlük Toplamı:**\n`;
+      if (totalCustM2 > 0) text += `• Toplam Parke: **${totalCustM2.toLocaleString('tr-TR')} m²**\n`;
+      if (totalCustMetre > 0) text += `• Toplam Bordür: **${totalCustMetre.toLocaleString('tr-TR')} Metre**\n`;
+      if (totalCustAdet > 0) text += `• Toplam Adet: **${totalCustAdet.toLocaleString('tr-TR')} Adet**\n`;
+      text += `• Toplam Çıkış: **${custShipments.length} Sefer**\n`;
+
+      return text;
+    }
+
+    // Case C: General shipment overview (all factory)
+    let text = `${matchingRuleBanner}🚚 **Bugünkü Genel Sevkiyat & Kantar Durumu**\n\n`;
     text += `* **Tamamlanan Çıkış:** **${data.todayShipmentsCount} araç/irsaliye**\n`;
-    text += `* **Kantar Net Tonajı:** **${data.todayShipmentTonnage.toLocaleString('tr-TR')} Ton**\n`;
+    if (data.todayShipmentTonnage > 0) {
+      text += `* **Kantar Net Tonajı:** **${data.todayShipmentTonnage.toLocaleString('tr-TR')} Ton**\n`;
+    } else {
+      const estimatedWeight = Math.round(((data.todayShipmentParkeM2 * 180) + (data.todayShipmentBordurMetre * 90)) / 1000);
+      text += `* **Kantar Net Tonajı:** Kantar tartım fişi girilmemiş (Tahmini: **~${estimatedWeight} Ton**)\n`;
+    }
     if (data.todayShipmentParkeM2 > 0) text += `* **Parke Çıkışı:** ${data.todayShipmentParkeM2.toLocaleString('tr-TR')} m²\n`;
     if (data.todayShipmentBordurMetre > 0) text += `* **Bordür Çıkışı:** ${data.todayShipmentBordurMetre.toLocaleString('tr-TR')} Metre\n`;
     if (data.todayShipmentAdet > 0) text += `* **Adetli Çıkış:** ${data.todayShipmentAdet.toLocaleString('tr-TR')} Adet\n\n`;
 
     if (data.todayRecentShipments.length > 0) {
-      text += `📋 **Son Sevkiyatlar:**\n`;
+      text += `📋 **Günün Sevkiyat Listesi (${data.todayRecentShipments.length} İrsaliye):**\n`;
       data.todayRecentShipments.forEach(s => {
         text += `• **${s.customer}** (${s.site}) ➔ ${s.qty} [İrs: ${s.invoice}]\n`;
       });
+      text += `\n💡 *Örnek: "Hacı Kel şantiyesine ne kadar gitti?" veya "Mustafa Yılmaz'a kaç metre bordür gitti?" şeklinde özel şantiye sorgulayabilirsiniz.*`;
     } else {
       text += `*Bugün henüz tamamlanmış kantar sevkiyatı bulunmuyor.*\n`;
     }
@@ -702,6 +852,9 @@ AŞAĞIDA FABRİKANIN ŞU ANKİ CANLI VERİTABANI RÖNTGENİ YER ALMAKTADIR:
 - Tarih: ${data.todayDate}, Saat: ${data.timestamp}
 - Bugünkü Üretim: Toplam ${data.todayProductionTotalM2} birim (Parke: ${data.todayProductionParkeM2} m², Bordür: ${data.todayProductionBordurMetre} m, Oluk: ${data.todayProductionAdet} adet). Makine 1: ${data.todayMachine1Output}, Makine 2: ${data.todayMachine2Output}. Fire: ${data.todayScrapTotalM2} m². Toplam ${data.todayEntriesCount} vardiya girişi.
 - Bugünkü Sevkiyat & Kantar: Toplam ${data.todayShipmentsCount} kamyon çıkışı, Net Tonaj: ${data.todayShipmentTonnage} Ton, Sevk: ${data.todayShipmentParkeM2} m² parke, ${data.todayShipmentBordurMetre} m bordür.
+- BUGÜNKÜ ŞANTİYE BAZLI SEVKİYAT VE İRSALİYE LİSTESİ:
+${data.todayRecentShipments.map(s => `  * Müşteri: ${s.customer} | Şantiye: ${s.site} | İrsaliye: ${s.invoice} | Ürünler: ${s.qty} (Plaka: ${s.plate || '-'}, Şoför: ${s.driver || '-'})`).join('\n') || '  * Bugün sevkiyat yok.'}
+- SEVKİYAT SORULARI İÇİN TALİMAT: Kullanıcı belirli bir müşteri veya şantiye sevkiyatını sorduğunda (Örn: "Onikişubat Hacı Kel şantiyesine ne kadar gitti?"), kesinlikle tüm fabrikanın sevkiyat özetini sıralama! Yalnızca o şantiyeye/müşteriye ait çıkışları, irsaliye numaralarını ve o şantiyeye giden ürün toplamını net olarak listele.
 - Mevcut Depo Stoku: Parke: ${data.totalStockParkeM2} m², Bordür: ${data.totalStockBordurMetre} m, Adet: ${data.totalStockAdet} adet.
 - Kritik Stok Emniyet Altında Olan Ürünler: ${data.lowStockItems.map(i => `${i.name}: ${i.current} ${i.unit} (Min: ${i.min})`).join(', ') || 'Yok'}
 - Bekleyen Siparişler: ${data.pendingOrdersCount} adet. Acil siparişler: ${data.criticalOrders.map(o => `${o.customer} (${o.product} ${o.qty})`).join(', ') || 'Yok'}.
