@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase';
-import { getLearnedRules, formatRulesForPrompt } from './aiTrainingKnowledge';
+import { getLearnedRules, formatRulesForPrompt, AILearnedRule } from './aiTrainingKnowledge';
 
 export interface CustomerPalletDetail {
   customer: string;
@@ -401,6 +401,28 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
   }
 }
 
+export function extractPalletPricesFromLearnedRules(rules: AILearnedRule[]): { tahtaPrice: number; uretimPrice: number } {
+  let tahtaPrice = 300;
+  let uretimPrice = 600;
+
+  for (const r of rules) {
+    const text = normalizeTurkish(r.rule);
+    const mTahta = text.match(/tahta[^\d]*(\d+[\d\.\,]*)\s*(?:tl|lira)/i) || text.match(/(\d+[\d\.\,]*)\s*(?:tl|lira)[^\.\,]*tahta/i);
+    if (mTahta) {
+      const val = parseFloat(mTahta[1].replace(/\./g, '').replace(',', '.'));
+      if (!isNaN(val) && val > 0) tahtaPrice = val;
+    }
+
+    const mUretim = text.match(/uretim[^\d]*(\d+[\d\.\,]*)\s*(?:tl|lira)/i) || text.match(/(\d+[\d\.\,]*)\s*(?:tl|lira)[^\.\,]*uretim/i);
+    if (mUretim) {
+      const val = parseFloat(mUretim[1].replace(/\./g, '').replace(',', '.'));
+      if (!isNaN(val) && val > 0) uretimPrice = val;
+    }
+  }
+
+  return { tahtaPrice, uretimPrice };
+}
+
 // ---------------------------------------------------------------------------
 // 2. Deterministic / Zero-Config Factory Intelligence Engine (Instant Answer)
 // ---------------------------------------------------------------------------
@@ -410,6 +432,8 @@ export function runLocalFactoryIntelligence(query: string, data: FactorySnapshot
 
   // Check learned rules for matches
   const learnedRules = getLearnedRules();
+  const { tahtaPrice, uretimPrice } = extractPalletPricesFromLearnedRules(learnedRules);
+
   let matchingRuleBanner = '';
   const matchedRule = learnedRules.find(r => {
     if (r.originalQuery && qNorm.includes(normalizeTurkish(r.originalQuery))) return true;
@@ -667,19 +691,43 @@ export function runLocalFactoryIntelligence(query: string, data: FactorySnapshot
         text += `\n`;
       }
 
-      const estValue = (uretimBal * 600) + (tahtaBal * 300);
-      text += `💰 **Tahmini Palet Teminatı / Değeri:** **~₺${estValue.toLocaleString('tr-TR')}**\n`;
+      const estValue = (uretimBal * uretimPrice) + (tahtaBal * tahtaPrice);
+      text += `💰 **Tahmini Palet Teminatı / Değeri:** **~₺${estValue.toLocaleString('tr-TR')}** *(Üretim: ₺${uretimPrice}, Tahta: ₺${tahtaPrice})*\n`;
       text += `💡 *Tavsiye: Sıradaki sevkiyatta aracın ${custName} şantiyesinden boş paletleri toplaması için kantar fişine not düşünüz.*`;
       return text;
     }
 
-    // General Pallet Summary
+    // General Pallet Summary & Valuation
+    const totalUretimVal = data.totalUnreturnedUretim * uretimPrice;
+    const totalTahtaVal = data.totalUnreturnedTahta * tahtaPrice;
+    const totalPalletVal = totalUretimVal + totalTahtaVal;
+
+    const isValueQuery = qNorm.includes('deger') || qNorm.includes('fiyat') || qNorm.includes('tutar') || qNorm.includes('kac tl') || qNorm.includes('para');
+
+    if (isValueQuery) {
+      let text = `${matchingRuleBanner}💰 **Şantiyelerdeki Paletlerin Finansal Değer Raporu**\n\n`;
+      text += `• 🏭 **Üretim Paletleri:** **${data.totalUnreturnedUretim.toLocaleString('tr-TR')} Adet** x ₺${uretimPrice.toLocaleString('tr-TR')} = **₺${totalUretimVal.toLocaleString('tr-TR')}**\n`;
+      text += `• 🪵 **Tahta Paletler:** **${data.totalUnreturnedTahta.toLocaleString('tr-TR')} Adet** x ₺${tahtaPrice.toLocaleString('tr-TR')} = **₺${totalTahtaVal.toLocaleString('tr-TR')}**\n`;
+      text += `════════════════════════════════════════════════\n`;
+      text += `💵 **TOPLAM ŞANTİYE PALET REHİN DEĞERİ:** **₺${totalPalletVal.toLocaleString('tr-TR')}**\n\n`;
+
+      text += `📦 **Toplam Bekleyen:** **${data.totalUnreturnedPallets.toLocaleString('tr-TR')} Adet Palet** şantiyelerdedir.\n\n`;
+
+      if (data.palletDebtors.length > 0) {
+        text += `⚠️ **Müşteri Bazlı Palet Finansal Riski:**\n`;
+        data.palletDebtors.slice(0, 6).forEach((d, idx) => {
+          const dVal = (d.uretim * uretimPrice) + (d.tahta * tahtaPrice);
+          text += `${idx + 1}. **${d.customer}**: **${d.balance} Adet** (Üretim: ${d.uretim} ad, Tahta: ${d.tahta} ad) ➔ **~₺${dVal.toLocaleString('tr-TR')}**\n`;
+        });
+      }
+      return text;
+    }
+
     let text = `${matchingRuleBanner}🪵 **Palet Takibi & Genel Şantiye Borç Durumu**\n\n`;
     text += `* **Şantiyelerde Bekleyen Toplam Palet:** **${data.totalUnreturnedPallets.toLocaleString('tr-TR')} Adet**\n`;
-    text += `  - 🏭 **Üretim Paleti:** **${data.totalUnreturnedUretim.toLocaleString('tr-TR')} Adet**\n`;
-    text += `  - 🪵 **Tahta Palet:** **${data.totalUnreturnedTahta.toLocaleString('tr-TR')} Adet**\n`;
-    const val = (data.totalUnreturnedUretim * 600) + (data.totalUnreturnedTahta * 300);
-    text += `* **Tahmini Rehin / Maliyet Değeri:** **~₺${val.toLocaleString('tr-TR')}**\n\n`;
+    text += `  - 🏭 **Üretim Paleti:** **${data.totalUnreturnedUretim.toLocaleString('tr-TR')} Adet** (Değer: ₺${totalUretimVal.toLocaleString('tr-TR')})\n`;
+    text += `  - 🪵 **Tahta Palet:** **${data.totalUnreturnedTahta.toLocaleString('tr-TR')} Adet** (Değer: ₺${totalTahtaVal.toLocaleString('tr-TR')})\n`;
+    text += `* **Tahmini Rehin / Maliyet Değeri:** **~₺${totalPalletVal.toLocaleString('tr-TR')}** *(Üretim: ₺${uretimPrice}, Tahta: ₺${tahtaPrice})*\n\n`;
 
     if (data.palletDebtors.length > 0) {
       text += `⚠️ **En Çok Palet Borcu Olan Müşteriler:**\n`;
@@ -750,6 +798,7 @@ Fabrikanızın tüm canlı veritabanına bağlıyım. Bana fabrikanızla ilgili 
 // 3. Generate Executive Briefing (Gün Sonu Özeti)
 // ---------------------------------------------------------------------------
 export function generateExecutiveBriefingText(d: FactorySnapshot): string {
+  const { tahtaPrice, uretimPrice } = extractPalletPricesFromLearnedRules(getLearnedRules());
   const dateFormatted = new Date(d.todayDate).toLocaleDateString('tr-TR', {
     weekday: 'long',
     year: 'numeric',
@@ -792,7 +841,7 @@ ${
 • Dışarıda Kalan Toplam Palet: ${d.totalUnreturnedPallets.toLocaleString('tr-TR')} Adet
   - Üretim Paleti: ${d.totalUnreturnedUretim.toLocaleString('tr-TR')} Adet
   - Tahta Palet: ${d.totalUnreturnedTahta.toLocaleString('tr-TR')} Adet
-• Tahmini Depozito Değeri: ~₺${((d.totalUnreturnedUretim * 600) + (d.totalUnreturnedTahta * 300)).toLocaleString('tr-TR')}
+• Tahmini Depozito Değeri: ~₺${((d.totalUnreturnedUretim * uretimPrice) + (d.totalUnreturnedTahta * tahtaPrice)).toLocaleString('tr-TR')} (Üretim: ₺${uretimPrice}, Tahta: ₺${tahtaPrice})
 • En Çok Palet Borcu Olanlar:
 ${
   d.palletDebtors.slice(0, 4).map(p => `  - ${p.customer}: ${p.balance} Adet (Üretim: ${p.uretim}, Tahta: ${p.tahta})`).join('\n') || '  - Riskli bakiye yok.'
