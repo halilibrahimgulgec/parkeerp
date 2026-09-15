@@ -1,6 +1,7 @@
 import { ReactNode, useState } from 'react';
 import Sidebar from './Sidebar';
 import NotificationBell from './NotificationBell';
+import AIAssistantModal from './AIAssistantModal';
 import { Menu, X } from 'lucide-react';
 
 type Page = 'dashboard' | 'production' | 'production_planning' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking';
@@ -64,6 +65,9 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
           {children}
         </div>
       </main>
+
+      {/* Floating AI Factory Assistant */}
+      <AIAssistantModal />
     </div>
   );
 }
