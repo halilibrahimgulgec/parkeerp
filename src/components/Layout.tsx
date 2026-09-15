@@ -47,9 +47,11 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
       )}
 
       {/* Sidebar Sliding Drawer */}
-      <div className={`no-print fixed inset-y-0 left-0 z-50 w-64 transform transition-transform duration-300 md:relative md:translate-x-0 md:flex h-full
-        ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <Sidebar currentPage={currentPage} onNavigate={handleNavigate} />
+      <div
+        className={`no-print fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] transform transition-transform duration-300 md:relative md:translate-x-0 md:flex h-[100dvh] md:h-screen md:sticky md:top-0 shadow-2xl md:shadow-none overflow-hidden
+        ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
+      >
+        <Sidebar currentPage={currentPage} onNavigate={handleNavigate} onCloseMobile={() => setIsSidebarOpen(false)} />
       </div>
 
       {/* Main Content Pane */}
