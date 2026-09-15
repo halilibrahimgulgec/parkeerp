@@ -35,6 +35,7 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        continue-on-error: true
 
       - name: Build Web Assets (Vite)
         run: npm run build
