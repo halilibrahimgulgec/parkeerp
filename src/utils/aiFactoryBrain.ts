@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { getLearnedRules, formatRulesForPrompt, AILearnedRule } from './aiTrainingKnowledge';
+import { matchAndAnswer60Questions, FACTORY_CORE_RULES } from './aiFactorySelfLearningEngine';
 
 export interface CustomerPalletDetail {
   customer: string;
@@ -402,8 +403,8 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
 }
 
 export function extractPalletPricesFromLearnedRules(rules: AILearnedRule[]): { tahtaPrice: number; uretimPrice: number } {
-  let tahtaPrice = 300;
-  let uretimPrice = 600;
+  let tahtaPrice = FACTORY_CORE_RULES.PALLET_PRICES.tahta; // 300 TL
+  let uretimPrice = FACTORY_CORE_RULES.PALLET_PRICES.uretim; // 3000 TL
 
   for (const r of rules) {
     const text = normalizeTurkish(r.rule);
@@ -427,6 +428,12 @@ export function extractPalletPricesFromLearnedRules(rules: AILearnedRule[]): { t
 // 2. Deterministic / Zero-Config Factory Intelligence Engine (Instant Answer)
 // ---------------------------------------------------------------------------
 export function runLocalFactoryIntelligence(query: string, data: FactorySnapshot): string {
+  // Check 60-Question benchmark & autonomous intent engine first
+  const ans60 = matchAndAnswer60Questions(query, data);
+  if (ans60) {
+    return ans60;
+  }
+
   const q = (query || '').toLowerCase();
   const qNorm = normalizeTurkish(query);
 

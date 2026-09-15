@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Sparkles,
   Bot,
@@ -15,10 +15,9 @@ import {
   Printer,
   MessageSquare,
   Zap,
-  GraduationCap,
-  Trash2,
-  Plus,
-  CheckCircle2,
+  HelpCircle,
+  Search,
+  ArrowRight,
 } from 'lucide-react';
 import {
   getLiveFactorySnapshot,
@@ -27,18 +26,17 @@ import {
   FactorySnapshot,
 } from '../utils/aiFactoryBrain';
 import {
-  AILearnedRule,
-  getLearnedRules,
-  addLearnedRule,
-  deleteLearnedRule,
-} from '../utils/aiTrainingKnowledge';
+  FACTORY_60_QUESTIONS,
+  FACTORY_CORE_RULES,
+  QuestionDefinition,
+} from '../utils/aiFactorySelfLearningEngine';
 
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   text: string;
   time: string;
-  userQuery?: string; // The user query that prompted this assistant answer
+  userQuery?: string;
 }
 
 const QUICK_PROMPTS = [
@@ -52,9 +50,19 @@ const QUICK_PROMPTS = [
   { label: '📋 Gün Sonu Özeti', query: 'Fabrika geneli için kapsamlı bir Gün Sonu Yönetici Özeti hazırla.' },
 ];
 
+const CATEGORY_TABS = [
+  { id: 'all', label: 'Tümü (60)' },
+  { id: 'production', label: '🏭 Üretim (10)' },
+  { id: 'shipment', label: '🚚 Sevkiyat (10)' },
+  { id: 'pallet', label: '🪵 Palet (10)' },
+  { id: 'stock', label: '📦 Stok (10)' },
+  { id: 'order', label: '🎯 Sipariş (10)' },
+  { id: 'finance', label: '💰 Finans (10)' },
+];
+
 export default function AIAssistantModal() {
   const [isOpen, setIsOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'chat' | 'briefing' | 'training'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'briefing' | 'questions'>('chat');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -67,28 +75,17 @@ export default function AIAssistantModal() {
   const [copiedBriefing, setCopiedBriefing] = useState(false);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
 
-  // Training & Learning State
-  const [learnedRules, setLearnedRules] = useState<AILearnedRule[]>([]);
-  const [trainingModalOpen, setTrainingModalOpen] = useState(false);
-  const [trainingTargetQuery, setTrainingTargetQuery] = useState('');
-  const [trainingTargetAnswer, setTrainingTargetAnswer] = useState('');
-  const [trainingRuleText, setTrainingRuleText] = useState('');
-  const [trainingCategory, setTrainingCategory] = useState<AILearnedRule['category']>('pallet');
-  const [trainingSuccessMsg, setTrainingSuccessMsg] = useState<string | null>(null);
-
-  // New Rule State in Training Tab
-  const [newRuleInput, setNewRuleInput] = useState('');
-  const [newRuleCategory, setNewRuleCategory] = useState<AILearnedRule['category']>('pallet');
-  const [showAddRuleForm, setShowAddRuleForm] = useState(false);
+  // 60 Questions State
+  const [questionCategory, setQuestionCategory] = useState<string>('all');
+  const [questionSearch, setQuestionSearch] = useState<string>('');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
 
-  // Load saved API key & learned rules on mount
+  // Load saved API key on mount
   useEffect(() => {
     const savedKey = localStorage.getItem('parke_gemini_api_key') || '';
     setApiKey(savedKey);
-    setLearnedRules(getLearnedRules());
   }, []);
 
   // Initial welcome message
@@ -98,7 +95,7 @@ export default function AIAssistantModal() {
         {
           id: 'welcome-1',
           role: 'assistant',
-          text: `👋 **Merhaba! Ben Parke ERP Fabrika Zekası.**\n\nFabrikanızın tüm canlı üretim hatlarını, kantar tartımlarını, depo stoklarını ve şantiyelerdeki paletleri anlık olarak izliyorum.\n\n💡 *Bana sorduğunuz bir soruya eksik veya hatalı cevap verirsem, mesajın altındaki **"🎓 Eğit / Düzelt"** butonuna basarak bana doğrusunu öğretebilirsiniz. Öğrettiğiniz her kural hafızama kaydedilir!*`,
+          text: `👋 **Merhaba! Ben Parke ERP Otonom Fabrika Zekası.**\n\nFabrikanızın tüm canlı üretim hatlarını, kantar tartımlarını, depo stoklarını ve şantiyelerdeki palet borçlarını otonom kurallar çerçevesinde anlık olarak analiz ediyorum.\n\n⚙️ **Öğrenilmiş Sabit Fabrika Kuralları:**\n- 🏭 **Üretim Paleti Bedeli:** ₺${FACTORY_CORE_RULES.PALLET_PRICES.uretim.toLocaleString('tr-TR')} / Adet\n- 🪵 **Tahta Palet Bedeli:** ₺${FACTORY_CORE_RULES.PALLET_PRICES.tahta.toLocaleString('tr-TR')} / Adet\n- ⏰ **Fabrika Mesaisi:** Günde ${FACTORY_CORE_RULES.WORK_HOURS_PER_DAY} Saat (Pazar günleri tatil)\n\n💡 *Yukarıdaki **"💡 60 Soru Rehberi"** sekmesine tıklayarak yapay zekaya sorabileceğiniz tüm soruları görebilir ve tek tıkla test edebilirsiniz!*`,
           time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
         },
       ]);
@@ -288,73 +285,23 @@ export default function AIAssistantModal() {
     setShowSettings(false);
   };
 
-  // Open Training Modal for a specific assistant message
-  const openTrainingForMessage = (msg: ChatMessage) => {
-    // Find the associated user question
-    let userQuery = msg.userQuery || '';
-    if (!userQuery) {
-      const idx = messages.findIndex((m) => m.id === msg.id);
-      if (idx > 0 && messages[idx - 1].role === 'user') {
-        userQuery = messages[idx - 1].text;
-      }
-    }
-
-    setTrainingTargetQuery(userQuery);
-    setTrainingTargetAnswer(msg.text);
-    setTrainingRuleText('');
-    setTrainingSuccessMsg(null);
-
-    // Auto-detect category
-    const qLower = (userQuery + ' ' + msg.text).toLowerCase();
-    if (qLower.includes('palet')) setTrainingCategory('pallet');
-    else if (qLower.includes('üretim') || qLower.includes('makine')) setTrainingCategory('production');
-    else if (qLower.includes('sevk') || qLower.includes('kantar')) setTrainingCategory('shipment');
-    else if (qLower.includes('stok')) setTrainingCategory('stock');
-    else if (qLower.includes('maliyet') || qLower.includes('ciro')) setTrainingCategory('cost');
-    else setTrainingCategory('general');
-
-    setTrainingModalOpen(true);
+  // Select a question from the 60 questions catalog
+  const handleSelectQuestion = (questionText: string) => {
+    setActiveTab('chat');
+    handleSendMessage(questionText);
   };
 
-  // Save Training Rule & Re-generate
-  const handleSaveTraining = async () => {
-    if (!trainingRuleText.trim()) return;
-
-    addLearnedRule(
-      trainingRuleText,
-      trainingCategory,
-      trainingTargetQuery,
-      trainingTargetAnswer
-    );
-
-    setLearnedRules(getLearnedRules());
-    setTrainingSuccessMsg('✅ Kural başarıyla hafızaya kaydedildi! Yapay zeka artık bu kuralı uygulayacak.');
-
-    setTimeout(async () => {
-      setTrainingModalOpen(false);
-      setTrainingSuccessMsg(null);
-
-      // Re-trigger the query so the user immediately sees the corrected answer
-      if (trainingTargetQuery) {
-        await handleSendMessage(trainingTargetQuery);
-      }
-    }, 1200);
-  };
-
-  // Add rule manually from Training tab
-  const handleAddManualRule = () => {
-    if (!newRuleInput.trim()) return;
-    addLearnedRule(newRuleInput, newRuleCategory);
-    setLearnedRules(getLearnedRules());
-    setNewRuleInput('');
-    setShowAddRuleForm(false);
-  };
-
-  // Delete learned rule
-  const handleDeleteRule = (id: string) => {
-    deleteLearnedRule(id);
-    setLearnedRules(getLearnedRules());
-  };
+  // Filtered 60 questions list
+  const filteredQuestions = useMemo(() => {
+    return FACTORY_60_QUESTIONS.filter((q) => {
+      const matchesCategory = questionCategory === 'all' || q.category === questionCategory;
+      const matchesSearch =
+        !questionSearch.trim() ||
+        q.question.toLowerCase().includes(questionSearch.toLowerCase()) ||
+        q.categoryTitle.toLowerCase().includes(questionSearch.toLowerCase());
+      return matchesCategory && matchesSearch;
+    });
+  }, [questionCategory, questionSearch]);
 
   // Helper to format markdown in chat cleanly
   const renderFormattedMarkdown = (rawText: string) => {
@@ -447,7 +394,7 @@ export default function AIAssistantModal() {
       {/* 2. Floating AI Drawer / Modal */}
       {isOpen && (
         <div
-          className="no-print fixed inset-x-0 bottom-0 sm:bottom-20 sm:right-6 sm:left-auto w-full sm:w-[500px] h-[85vh] sm:h-[680px] max-h-[92vh] bg-white sm:rounded-2xl rounded-t-2xl shadow-2xl border border-slate-200/80 flex flex-col z-50 overflow-hidden transition-all duration-300"
+          className="no-print fixed inset-x-0 bottom-0 sm:bottom-20 sm:right-6 sm:left-auto w-full sm:w-[540px] h-[88vh] sm:h-[700px] max-h-[94vh] bg-white sm:rounded-2xl rounded-t-2xl shadow-2xl border border-slate-200/80 flex flex-col z-50 overflow-hidden transition-all duration-300"
           style={{ boxShadow: '0 20px 50px rgba(15, 23, 42, 0.25)' }}
         >
           {/* Header */}
@@ -461,10 +408,10 @@ export default function AIAssistantModal() {
                   <h3 className="font-bold text-sm text-slate-100">Parke AI Danışmanı</h3>
                   <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    Canlı Veri
+                    Otonom Zeka
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-400 truncate max-w-[200px]">
+                <p className="text-[11px] text-slate-400 truncate max-w-[220px]">
                   {apiKey ? 'Google Gemini 2.0 Flash' : 'Dahili Fabrika Zekası Motoru'}
                 </p>
               </div>
@@ -528,15 +475,18 @@ export default function AIAssistantModal() {
               Gün Sonu Özeti
             </button>
             <button
-              onClick={() => setActiveTab('training')}
+              onClick={() => setActiveTab('questions')}
               className={`flex items-center gap-1.5 pb-2 px-3 border-b-2 whitespace-nowrap transition-all ${
-                activeTab === 'training'
+                activeTab === 'questions'
                   ? 'border-amber-500 text-amber-600 font-bold bg-white rounded-t-lg'
                   : 'border-transparent text-slate-500 hover:text-slate-800'
               }`}
             >
-              <GraduationCap className="w-3.5 h-3.5 text-amber-600" />
-              Model Eğitimi ({learnedRules.length})
+              <HelpCircle className="w-3.5 h-3.5 text-amber-500" />
+              <span>💡 60 Soru Rehberi</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-100 text-amber-800 font-bold">
+                60
+              </span>
             </button>
           </div>
 
@@ -550,7 +500,7 @@ export default function AIAssistantModal() {
                 <span className="text-[10px] text-slate-400">İsteğe Bağlı</span>
               </div>
               <p className="text-slate-300 text-[11px] mb-2 leading-relaxed">
-                Google AI Studio üzerinden alacağınız ücretsiz <strong>Gemini 2.0 Flash</strong> anahtarını buraya ekleyerek daha derin tahminleme gücüne erişebilirsiniz. Anahtar girilmezse sistem dahili Fabrika Motoru sıfır konfigürasyonla kesintisiz çalışır.
+                Google AI Studio üzerinden temin edebileceğiniz ücretsiz <strong>Gemini 2.0 Flash</strong> anahtarını buraya ekleyerek daha derin tahminleme gücüne erişebilirsiniz. Anahtar girilmezse sistem dahili Otonom Fabrika Motoru sıfır konfigürasyonla kesintisiz çalışır.
               </p>
               <div className="flex gap-2">
                 <input
@@ -575,10 +525,19 @@ export default function AIAssistantModal() {
 
           {/* Content Area */}
           <div className="flex-1 overflow-hidden flex flex-col bg-slate-50/50 relative">
+            {/* TAB 1: CHAT */}
             {activeTab === 'chat' && (
               <>
                 {/* Quick Prompts Bar */}
-                <div className="overflow-x-auto py-2 px-3 border-b border-slate-100 bg-white flex gap-1.5 no-scrollbar shrink-0">
+                <div className="overflow-x-auto py-2 px-3 border-b border-slate-100 bg-white flex gap-1.5 no-scrollbar shrink-0 items-center">
+                  <button
+                    onClick={() => setActiveTab('questions')}
+                    className="whitespace-nowrap px-3 py-1 text-xs bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-full transition-all duration-150 flex items-center gap-1 active:scale-95 shadow-sm shrink-0"
+                  >
+                    <HelpCircle className="w-3.5 h-3.5" />
+                    <span>💡 60 Soru Rehberi</span>
+                  </button>
+
                   {QUICK_PROMPTS.map((qp, index) => (
                     <button
                       key={index}
@@ -617,7 +576,7 @@ export default function AIAssistantModal() {
                             {/* Copy button */}
                             <button
                               onClick={() => handleCopyMessage(msg.id, msg.text)}
-                              className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-0.5 rounded text-[11px] flex items-center gap-1 transition-colors"
+                              className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-2.5 py-1 rounded text-[11px] flex items-center gap-1 font-medium transition-colors"
                               title="Cevabı kopyala"
                             >
                               {copiedMsgId === msg.id ? (
@@ -631,16 +590,6 @@ export default function AIAssistantModal() {
                                   <span>Kopyala</span>
                                 </>
                               )}
-                            </button>
-
-                            {/* Train / Correct button */}
-                            <button
-                              onClick={() => openTrainingForMessage(msg)}
-                              className="bg-amber-50 hover:bg-amber-100 text-amber-700 px-2 py-0.5 rounded text-[11px] flex items-center gap-1 font-semibold border border-amber-200 transition-colors"
-                              title="Bu cevabı düzelt veya modele doğru bilgiyi öğret"
-                            >
-                              <GraduationCap className="w-3 h-3 text-amber-600" />
-                              <span>Düzelt / Eğit</span>
                             </button>
                           </div>
                         )}
@@ -656,7 +605,7 @@ export default function AIAssistantModal() {
                         <div className="w-2 h-2 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '0ms' }} />
                         <div className="w-2 h-2 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '150ms' }} />
                         <div className="w-2 h-2 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '300ms' }} />
-                        <span className="text-xs text-slate-500 font-medium ml-1">Fabrika verileri taranıyor...</span>
+                        <span className="text-xs text-slate-500 font-medium ml-1">Fabrika zekası analiz ediyor...</span>
                       </div>
                     </div>
                   )}
@@ -708,7 +657,7 @@ export default function AIAssistantModal() {
               </>
             )}
 
-            {/* Briefing Tab */}
+            {/* TAB 2: BRIEFING */}
             {activeTab === 'briefing' && (
               <div className="flex-1 flex flex-col overflow-hidden p-4">
                 {/* Actions Toolbar */}
@@ -785,200 +734,100 @@ export default function AIAssistantModal() {
               </div>
             )}
 
-            {/* Training Tab */}
-            {activeTab === 'training' && (
-              <div className="flex-1 flex flex-col overflow-hidden p-4">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1 bg-amber-100 text-amber-700 rounded-lg">
-                      <GraduationCap className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-slate-800 text-sm">Model Eğitimi & Kural Tabanı</h4>
-                      <p className="text-[11px] text-slate-500">Yapay zekanın bildiği özel kurallar</p>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => setShowAddRuleForm(!showAddRuleForm)}
-                    className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-medium flex items-center gap-1 transition-colors"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Yeni Kural</span>
-                  </button>
-                </div>
-
-                {/* Add Rule Inline Form */}
-                {showAddRuleForm && (
-                  <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-2">
-                    <span className="text-xs font-bold text-amber-900 block">Yeni Fabrika Kuralı Öğret:</span>
-                    <textarea
-                      rows={2}
-                      value={newRuleInput}
-                      onChange={(e) => setNewRuleInput(e.target.value)}
-                      placeholder="Örn: Medikent şantiyesine giden paletlerin cinsi Üretim Paletidir ve depozito bedeli 600 TL'dir..."
-                      className="w-full text-xs p-2 rounded-lg border border-amber-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                    />
-                    <div className="flex items-center justify-between">
-                      <select
-                        value={newRuleCategory}
-                        onChange={(e) => setNewRuleCategory(e.target.value as any)}
-                        className="text-xs bg-white border border-amber-300 rounded px-2 py-1"
-                      >
-                        <option value="pallet">Palet Takibi</option>
-                        <option value="production">Üretim & Mesai</option>
-                        <option value="shipment">Sevkiyat & Kantar</option>
-                        <option value="stock">Stoklar</option>
-                        <option value="cost">Finans & Maliyet</option>
-                        <option value="general">Genel</option>
-                      </select>
-                      <div className="flex gap-1.5">
-                        <button
-                          onClick={() => setShowAddRuleForm(false)}
-                          className="px-2 py-1 text-xs text-slate-600 hover:bg-slate-200 rounded"
-                        >
-                          İptal
-                        </button>
-                        <button
-                          onClick={handleAddManualRule}
-                          disabled={!newRuleInput.trim()}
-                          className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-xs font-semibold disabled:opacity-50"
-                        >
-                          Öğret ve Kaydet
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Rules List */}
-                <div className="flex-1 overflow-y-auto mt-3 space-y-2.5">
-                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-800 leading-relaxed">
-                    💡 <strong>Nasıl Çalışır?</strong> Burada yer alan tüm kurallar yapay zekanın hafızasına işlenir. Asistan hem yerel sorgulamalarda hem de Google Gemini üzerinden cevap verirken bu kuralları <strong>en yüksek öncelikle</strong> uygular.
-                  </div>
-
-                  {learnedRules.length === 0 ? (
-                    <div className="text-center py-8 text-slate-400 text-xs">
-                      Henüz özel bir fabrika kuralı öğretilmedi.
-                    </div>
-                  ) : (
-                    learnedRules.map((rule) => (
-                      <div
-                        key={rule.id}
-                        className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-start justify-between gap-3 text-xs"
-                      >
-                        <div className="space-y-1 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 uppercase">
-                              {rule.category}
-                            </span>
-                            {rule.originalQuery && (
-                              <span className="text-[10px] text-slate-400 truncate max-w-[200px]">
-                                Soru: "{rule.originalQuery}"
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-slate-800 leading-relaxed font-medium">{rule.rule}</p>
-                        </div>
-
-                        <button
-                          onClick={() => handleDeleteRule(rule.id)}
-                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors"
-                          title="Kuralı Sil"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* 3. Training / Error Correction Modal Popup (Overlaid on drawer) */}
-            {trainingModalOpen && (
-              <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm z-30 flex items-center justify-center p-3 animate-in fade-in duration-200">
-                <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 p-4 space-y-3.5">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+            {/* TAB 3: 60 QUESTIONS GUIDE */}
+            {activeTab === 'questions' && (
+              <div className="flex-1 flex flex-col overflow-hidden p-3.5">
+                {/* Header & Description */}
+                <div className="pb-2.5 border-b border-slate-200">
+                  <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="p-1.5 bg-amber-100 text-amber-700 rounded-lg">
-                        <GraduationCap className="w-5 h-5" />
+                        <HelpCircle className="w-4 h-4" />
                       </div>
                       <div>
-                        <h4 className="font-bold text-slate-800 text-sm">Yapay Zekayı Eğit & Cevabı Düzelt</h4>
-                        <p className="text-[11px] text-slate-500">Modele doğru kuralı veya fabrika bilgisini öğretin</p>
+                        <h4 className="font-bold text-slate-800 text-sm">1. Etap: 60 Soru Rehberi</h4>
+                        <p className="text-[11px] text-slate-500">
+                          Modele öğretilmiş hazır sorular. Tıklayarak doğrudan sorabilirsiniz.
+                        </p>
                       </div>
                     </div>
-                    <button
-                      onClick={() => setTrainingModalOpen(false)}
-                      className="p-1 text-slate-400 hover:text-slate-700 rounded-lg"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
+                    <span className="text-xs font-bold px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full">
+                      {filteredQuestions.length} Soru
+                    </span>
                   </div>
 
-                  {/* Previous context */}
-                  {trainingTargetQuery && (
-                    <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-xs space-y-1">
-                      <span className="text-slate-400 font-semibold block text-[10px] uppercase">Sorulan Soru:</span>
-                      <p className="text-slate-700 font-medium">{trainingTargetQuery}</p>
-                    </div>
-                  )}
-
-                  {/* Correction input */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-700 block">
-                      Yapay Zekaya Öğretilecek Doğru Bilgi / Kural:
-                    </label>
-                    <textarea
-                      rows={3}
-                      value={trainingRuleText}
-                      onChange={(e) => setTrainingRuleText(e.target.value)}
-                      placeholder="Örn: Medikent şantiyesinde 439 adet üretim paleti, 1650 adet tahta paleti vardır. Palet sorulduğunda bu ayrımı mutlaka belirt..."
-                      className="w-full text-xs p-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                  {/* Search Input */}
+                  <div className="mt-2.5 relative">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                    <input
+                      type="text"
+                      value={questionSearch}
+                      onChange={(e) => setQuestionSearch(e.target.value)}
+                      placeholder="60 soru içinde kelime ara..."
+                      className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
                     />
+                    {questionSearch && (
+                      <button
+                        onClick={() => setQuestionSearch('')}
+                        className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 text-xs"
+                      >
+                        ✕
+                      </button>
+                    )}
                   </div>
 
-                  {/* Category picker */}
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-slate-500 font-medium">Kategori:</span>
-                    <select
-                      value={trainingCategory}
-                      onChange={(e) => setTrainingCategory(e.target.value as any)}
-                      className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1 text-xs text-slate-700"
-                    >
-                      <option value="pallet">Palet Takibi</option>
-                      <option value="production">Üretim & İmalat</option>
-                      <option value="shipment">Sevkiyat & Kantar</option>
-                      <option value="stock">Stoklar</option>
-                      <option value="cost">Finans & Maliyet</option>
-                      <option value="general">Genel Kurallar</option>
-                    </select>
+                  {/* Category Filter Chips */}
+                  <div className="flex gap-1 overflow-x-auto mt-2 pb-1 no-scrollbar text-xs">
+                    {CATEGORY_TABS.map((cat) => (
+                      <button
+                        key={cat.id}
+                        onClick={() => setQuestionCategory(cat.id)}
+                        className={`px-2.5 py-1 rounded-full whitespace-nowrap text-[11px] font-medium transition-all ${
+                          questionCategory === cat.id
+                            ? 'bg-amber-500 text-white font-bold shadow-sm'
+                            : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        {cat.label}
+                      </button>
+                    ))}
                   </div>
+                </div>
 
-                  {trainingSuccessMsg && (
-                    <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 font-medium flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span>{trainingSuccessMsg}</span>
+                {/* Question List */}
+                <div className="flex-1 overflow-y-auto mt-2.5 space-y-2 pr-1">
+                  {filteredQuestions.length === 0 ? (
+                    <div className="text-center py-10 text-slate-400 text-xs">
+                      Aramanıza uygun soru bulunamadı.
                     </div>
-                  )}
+                  ) : (
+                    filteredQuestions.map((item: QuestionDefinition) => (
+                      <button
+                        key={item.id}
+                        onClick={() => handleSelectQuestion(item.question)}
+                        className="w-full text-left bg-white hover:bg-amber-50/50 p-2.5 rounded-xl border border-slate-200 hover:border-amber-300 shadow-sm transition-all group flex items-center justify-between gap-3"
+                      >
+                        <div className="space-y-1 flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-slate-100 text-slate-600">
+                              #{item.id}
+                            </span>
+                            <span className="text-[10px] text-amber-700 font-semibold truncate">
+                              {item.categoryTitle}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-800 font-medium group-hover:text-amber-900 line-clamp-2">
+                            "{item.question}"
+                          </p>
+                        </div>
 
-                  {/* Modal buttons */}
-                  <div className="flex gap-2 pt-1">
-                    <button
-                      onClick={() => setTrainingModalOpen(false)}
-                      className="flex-1 py-2 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
-                    >
-                      Vazgeç
-                    </button>
-                    <button
-                      onClick={handleSaveTraining}
-                      disabled={!trainingRuleText.trim()}
-                      className="flex-1 py-2 text-xs font-bold text-white bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 disabled:opacity-50 rounded-xl shadow-sm transition-all"
-                    >
-                      Öğret & Kaydet
-                    </button>
-                  </div>
+                        <div className="flex items-center gap-1 text-[11px] font-semibold text-amber-600 bg-amber-50 px-2 py-1 rounded-lg group-hover:bg-amber-500 group-hover:text-white transition-colors shrink-0">
+                          <span>Sor</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </div>
+                      </button>
+                    ))
+                  )}
                 </div>
               </div>
             )}
