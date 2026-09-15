@@ -1,4 +1,22 @@
 import { supabase } from '../lib/supabase';
+import { getLearnedRules, formatRulesForPrompt } from './aiTrainingKnowledge';
+
+export interface CustomerPalletDetail {
+  customer: string;
+  site: string;
+  palletType: 'uretim' | 'tahta' | 'sevkiyat' | string;
+  sent: number;
+  returned: number;
+  balance: number;
+}
+
+export interface CustomerPalletDebtor {
+  customer: string;
+  balance: number;
+  uretim: number;
+  tahta: number;
+  sevkiyat: number;
+}
 
 export interface FactorySnapshot {
   timestamp: string;
@@ -30,14 +48,30 @@ export interface FactorySnapshot {
   criticalOrders: { orderNo: string; customer: string; product: string; qty: string; dueDate?: string }[];
   activeQuotasCount: number;
   lowQuotaAlerts: { customer: string; product: string; remaining: number; unit: string }[];
-  // Pallets
-  palletDebtors: { customer: string; balance: number }[];
+  // Pallets (Detailed)
+  palletBalances: CustomerPalletDetail[];
+  palletDebtors: CustomerPalletDebtor[];
   totalUnreturnedPallets: number;
+  totalUnreturnedUretim: number;
+  totalUnreturnedTahta: number;
   // Financial
   monthlyRevenue: number;
   monthlyProductionM2: number;
   monthlyCostsTotal: number;
   estimatedUnitCost: number;
+}
+
+export function normalizeTurkish(str: string): string {
+  return (str || '')
+    .toLocaleLowerCase('tr-TR')
+    .replace(/i̇/g, 'i')
+    .replace(/ı/g, 'i')
+    .replace(/ş/g, 's')
+    .replace(/ğ/g, 'g')
+    .replace(/ü/g, 'u')
+    .replace(/ö/g, 'o')
+    .replace(/ç/g, 'c')
+    .trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -66,7 +100,7 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
       supabase.from('shipments').select('*, customers(name), sites(name), shipment_items(*, products(name, unit))').eq('shipment_date', todayDate).eq('status', 'completed'),
       supabase.from('production_orders').select('*, customers(name), products(name, unit)').in('status', ['pending', 'planned']),
       supabase.from('customer_quotas').select('*, customers(name), sites(name), products(name, unit)').eq('is_active', true),
-      supabase.from('pallet_tracking').select('*, customers(name)'),
+      supabase.from('v_pallet_balances').select('*'),
       supabase.from('cost_entries').select('cost_type, total_amount').eq('period_month', currentMonth).eq('period_year', currentYear),
       supabase.from('production_entries').select('net_m2').gte('date', startOfMonth),
       supabase.from('shipments').select('total_m2, sale_price_per_m2').gte('shipment_date', startOfMonth).eq('status', 'completed'),
@@ -77,7 +111,7 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
     const shipToday = shipTodayRes.data || [];
     const orders = ordersRes.data || [];
     const quotas = quotasRes.data || [];
-    const pallets = palletRes.data || [];
+    const rawPallets = palletRes.data || [];
     const costs = costsRes.data || [];
 
     // Stocks
@@ -109,20 +143,25 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
     let todayProdM2 = 0;
     let todayProdMetre = 0;
     let todayProdAdet = 0;
-    let todayScrap = 0;
-    let m1M2 = 0;
-    let m2M2 = 0;
+    let todayScrapM2 = 0;
+    let m1Parke = 0;
+    let m2Bordur = 0;
 
     prodToday.forEach((p: any) => {
-      const u = p.products?.unit || 'm2';
       const net = Number(p.net_m2 || 0);
-      todayScrap += Number(p.scrap_m2 || 0);
-      if (u === 'metre') todayProdMetre += net;
-      else if (u === 'adet') todayProdAdet += net;
-      else todayProdM2 += net;
+      const scrap = Number(p.scrap_m2 || 0);
+      const unit = p.products?.unit || 'm2';
+      todayScrapM2 += scrap;
 
-      if (p.machine_no === '1') m1M2 += net;
-      else m2M2 += net;
+      if (unit === 'metre') {
+        todayProdMetre += net;
+        m2Bordur += net;
+      } else if (unit === 'adet') {
+        todayProdAdet += net;
+      } else {
+        todayProdM2 += net;
+        m1Parke += net;
+      }
     });
 
     // Today Shipments
@@ -180,67 +219,108 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
         unit: q.products?.unit || 'm²',
       }));
 
-    // Pallets
-    const customerPalletMap: Record<string, number> = {};
+    // Pallets (Real data from v_pallet_balances)
+    const palletBalances: CustomerPalletDetail[] = [];
+    const customerPalletMap: Record<string, { uretim: number; tahta: number; sevkiyat: number; total: number }> = {};
     let totalUnreturnedPallets = 0;
-    pallets.forEach((p: any) => {
-      const cName = p.customers?.name || 'Müşteri';
-      const balance = (Number(p.given_pallets) || 0) - (Number(p.returned_pallets) || 0);
-      if (balance > 0) {
-        customerPalletMap[cName] = (customerPalletMap[cName] || 0) + balance;
-        totalUnreturnedPallets += balance;
+    let totalUnreturnedUretim = 0;
+    let totalUnreturnedTahta = 0;
+
+    rawPallets.forEach((p: any) => {
+      const cName = (p.customer_name || 'Müşteri').trim();
+      const bal = Number(p.balance) || 0;
+      const pType = (p.pallet_type || 'tahta').toLowerCase();
+
+      palletBalances.push({
+        customer: cName,
+        site: p.site_name || '',
+        palletType: pType,
+        sent: Number(p.total_sent) || 0,
+        returned: Number(p.total_returned) || 0,
+        balance: bal,
+      });
+
+      if (!customerPalletMap[cName]) {
+        customerPalletMap[cName] = { uretim: 0, tahta: 0, sevkiyat: 0, total: 0 };
+      }
+
+      if (bal > 0) {
+        totalUnreturnedPallets += bal;
+        if (pType === 'uretim') {
+          totalUnreturnedUretim += bal;
+          customerPalletMap[cName].uretim += bal;
+        } else if (pType === 'tahta') {
+          totalUnreturnedTahta += bal;
+          customerPalletMap[cName].tahta += bal;
+        } else {
+          customerPalletMap[cName].sevkiyat += bal;
+        }
+        customerPalletMap[cName].total += bal;
       }
     });
 
-    const palletDebtors = Object.entries(customerPalletMap)
-      .map(([customer, balance]) => ({ customer, balance }))
-      .sort((a, b) => b.balance - a.balance)
-      .slice(0, 5);
+    const palletDebtors: CustomerPalletDebtor[] = Object.entries(customerPalletMap)
+      .map(([customer, stats]) => ({
+        customer,
+        balance: stats.total,
+        uretim: stats.uretim,
+        tahta: stats.tahta,
+        sevkiyat: stats.sevkiyat,
+      }))
+      .filter((d) => d.balance > 0)
+      .sort((a, b) => b.balance - a.balance);
 
     // Financial
-    const monthlyCostsTotal = costs.reduce((s: number, c: any) => s + (Number(c.total_amount) || 0), 0);
+    const monthlyCostsTotal = costs.reduce((sum: number, c: any) => sum + Number(c.total_amount || 0), 0);
     const monthlyProdRows = prodMonthRes.data || [];
-    const monthlyProductionM2 = monthlyProdRows.reduce((s: number, r: any) => s + (Number(r.net_m2) || 0), 0);
-    const estimatedUnitCost = monthlyProductionM2 > 0 ? monthlyCostsTotal / monthlyProductionM2 : 0;
-    const monthlyRevenue = (shipMonthRes.data || []).reduce((s: number, r: any) => s + (Number(r.total_m2 || 0) * Number(r.sale_price_per_m2 || 0)), 0);
+    const monthlyProductionM2 = monthlyProdRows.reduce((sum: number, p: any) => sum + Number(p.net_m2 || 0), 0);
+    const monthlyShipRows = shipMonthRes.data || [];
+    const monthlyRevenue = monthlyShipRows.reduce(
+      (sum: number, s: any) => sum + (Number(s.total_m2 || 0) * Number(s.sale_price_per_m2 || 0)),
+      0
+    );
+    const estimatedUnitCost = monthlyProductionM2 > 0 ? Math.round(monthlyCostsTotal / monthlyProductionM2) : 0;
 
     return {
       timestamp: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
       todayDate,
       totalProductsCount: stocks.length,
       lowStockItems,
-      totalStockParkeM2: Math.round(totalStockParkeM2),
-      totalStockBordurMetre: Math.round(totalStockBordurMetre),
-      totalStockAdet: Math.round(totalStockAdet),
-      todayProductionTotalM2: Math.round(todayProdM2 + todayProdMetre),
-      todayProductionParkeM2: Math.round(todayProdM2),
-      todayProductionBordurMetre: Math.round(todayProdMetre),
-      todayProductionAdet: Math.round(todayProdAdet),
-      todayMachine1Output: `${Math.round(m1M2)} m²`,
-      todayMachine2Output: `${Math.round(m2M2)} m²/m`,
-      todayScrapTotalM2: Math.round(todayScrap),
+      totalStockParkeM2,
+      totalStockBordurMetre,
+      totalStockAdet,
+      todayProductionTotalM2: todayProdM2 + todayProdMetre + todayProdAdet,
+      todayProductionParkeM2: todayProdM2,
+      todayProductionBordurMetre: todayProdMetre,
+      todayProductionAdet: todayProdAdet,
+      todayMachine1Output: `${m1Parke} m² (Parke)`,
+      todayMachine2Output: `${m2Bordur} m (Bordür)`,
+      todayScrapTotalM2: todayScrapM2,
       todayEntriesCount: prodToday.length,
       todayShipmentsCount: shipToday.length,
-      todayShipmentParkeM2: Math.round(todayShipM2),
-      todayShipmentBordurMetre: Math.round(todayShipMetre),
-      todayShipmentAdet: Math.round(todayShipAdet),
-      todayShipmentTonnage: parseFloat(todayShipTonnage.toFixed(1)),
+      todayShipmentParkeM2: todayShipM2,
+      todayShipmentBordurMetre: todayShipMetre,
+      todayShipmentAdet: todayShipAdet,
+      todayShipmentTonnage: Number(todayShipTonnage.toFixed(1)),
       todayRecentShipments: todayRecent,
       pendingOrdersCount: orders.length,
       criticalOrders,
       activeQuotasCount: quotas.length,
       lowQuotaAlerts,
+      palletBalances,
       palletDebtors,
       totalUnreturnedPallets,
-      monthlyRevenue: Math.round(monthlyRevenue),
-      monthlyProductionM2: Math.round(monthlyProductionM2),
-      monthlyCostsTotal: Math.round(monthlyCostsTotal),
-      estimatedUnitCost: parseFloat(estimatedUnitCost.toFixed(2)),
+      totalUnreturnedUretim,
+      totalUnreturnedTahta,
+      monthlyRevenue,
+      monthlyProductionM2,
+      monthlyCostsTotal,
+      estimatedUnitCost,
     };
-  } catch (err) {
-    console.error('Snapshot alınırken hata:', err);
+  } catch (error) {
+    console.error('getLiveFactorySnapshot hatası:', error);
     return {
-      timestamp: new Date().toLocaleTimeString('tr-TR'),
+      timestamp: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
       todayDate,
       totalProductsCount: 0,
       lowStockItems: [],
@@ -252,7 +332,7 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
       todayProductionBordurMetre: 0,
       todayProductionAdet: 0,
       todayMachine1Output: '0 m²',
-      todayMachine2Output: '0 m²',
+      todayMachine2Output: '0 m',
       todayScrapTotalM2: 0,
       todayEntriesCount: 0,
       todayShipmentsCount: 0,
@@ -265,8 +345,11 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
       criticalOrders: [],
       activeQuotasCount: 0,
       lowQuotaAlerts: [],
+      palletBalances: [],
       palletDebtors: [],
       totalUnreturnedPallets: 0,
+      totalUnreturnedUretim: 0,
+      totalUnreturnedTahta: 0,
       monthlyRevenue: 0,
       monthlyProductionM2: 0,
       monthlyCostsTotal: 0,
@@ -276,26 +359,37 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Built-in Smart Factory Intelligence Engine (Zero-Config Fallback)
+// 2. Deterministic / Zero-Config Factory Intelligence Engine (Instant Answer)
 // ---------------------------------------------------------------------------
 export function runLocalFactoryIntelligence(query: string, data: FactorySnapshot): string {
-  const q = query.toLowerCase().trim();
+  const q = (query || '').toLowerCase();
+  const qNorm = normalizeTurkish(query);
 
-  // 1. Executive Summary / Gün Sonu Özeti
-  if (q.includes('gün sonu') || q.includes('özet') || q.includes('röntgen') || q.includes('brifing') || q.includes('durum raporu')) {
+  // Check learned rules for matches
+  const learnedRules = getLearnedRules();
+  let matchingRuleBanner = '';
+  const matchedRule = learnedRules.find(r => {
+    if (r.originalQuery && qNorm.includes(normalizeTurkish(r.originalQuery))) return true;
+    return false;
+  });
+  if (matchedRule) {
+    matchingRuleBanner = `🎓 **Öğrenilmiş Fabrika Kuralı:** *${matchedRule.rule}*\n\n`;
+  }
+
+  // 1. Executive Briefing Request
+  if (q.includes('özet') || q.includes('rapor') || q.includes('gün sonu') || q.includes('durum nedir')) {
     return generateExecutiveBriefingText(data);
   }
 
   // 2. Production
-  if (q.includes('üretim') || q.includes('pres') || q.includes('makine') || q.includes('baskı') || q.includes('kaç m2 basıldı')) {
-    let text = `🏭 **Bugünkü Üretim Raporu (${data.todayDate})**\n\n`;
-    if (data.todayEntriesCount === 0) {
-      text += `Bugün sisteme henüz tamamlanmış bir üretim vardiyası girişi yapılmamış.\n\n`;
-    } else {
-      text += `* **Toplam Net Üretim:** **${data.todayProductionTotalM2.toLocaleString('tr-TR')}** birim (${data.todayEntriesCount} vardiya)\n`;
-      if (data.todayProductionParkeM2 > 0) text += `  • 🧱 Parke Taşları: **${data.todayProductionParkeM2.toLocaleString('tr-TR')} m²**\n`;
-      if (data.todayProductionBordurMetre > 0) text += `  • 📏 Bordür Taşları: **${data.todayProductionBordurMetre.toLocaleString('tr-TR')} metre**\n`;
-      if (data.todayProductionAdet > 0) text += `  • 📦 Parça/Oluk: **${data.todayProductionAdet.toLocaleString('tr-TR')} adet**\n`;
+  if (q.includes('üretim') || q.includes('imalat') || q.includes('makine') || q.includes('fire') || q.includes('döküm')) {
+    let text = `${matchingRuleBanner}🏭 **Bugünkü Üretim Röntgeni (${data.todayDate})**\n\n`;
+    text += `* **Toplam Net Üretim:** **${data.todayProductionTotalM2.toLocaleString('tr-TR')} birim**\n`;
+    text += `  - 🧱 Parke: **${data.todayProductionParkeM2.toLocaleString('tr-TR')} m²**\n`;
+    text += `  - 📏 Bordür: **${data.todayProductionBordurMetre.toLocaleString('tr-TR')} Metre**\n`;
+    if (data.todayProductionAdet > 0) text += `  - 🔘 Oluk / Kapak: **${data.todayProductionAdet.toLocaleString('tr-TR')} Adet**\n`;
+    text += `\n* **Vardiya Giriş Sayısı:** ${data.todayEntriesCount} kayıt\n`;
+    if (data.todayEntriesCount > 0) {
       text += `* **1 Nolu Makine (Parke):** ${data.todayMachine1Output}\n`;
       text += `* **2 Nolu Makine (Bordür):** ${data.todayMachine2Output}\n`;
       text += `* **Fire / Iskarta:** ${data.todayScrapTotalM2} m² (%${data.todayProductionTotalM2 > 0 ? ((data.todayScrapTotalM2 / data.todayProductionTotalM2) * 100).toFixed(1) : 0})\n\n`;
@@ -307,7 +401,7 @@ export function runLocalFactoryIntelligence(query: string, data: FactorySnapshot
 
   // 3. Shipment / Kantar
   if (q.includes('sevk') || q.includes('kantar') || q.includes('kamyon') || q.includes('tonaj') || q.includes('irsaliye')) {
-    let text = `🚚 **Bugünkü Sevkiyat & Kantar Durumu**\n\n`;
+    let text = `${matchingRuleBanner}🚚 **Bugünkü Sevkiyat & Kantar Durumu**\n\n`;
     text += `* **Tamamlanan Çıkış:** **${data.todayShipmentsCount} araç/irsaliye**\n`;
     text += `* **Kantar Net Tonajı:** **${data.todayShipmentTonnage.toLocaleString('tr-TR')} Ton**\n`;
     if (data.todayShipmentParkeM2 > 0) text += `* **Parke Çıkışı:** ${data.todayShipmentParkeM2.toLocaleString('tr-TR')} m²\n`;
@@ -327,7 +421,7 @@ export function runLocalFactoryIntelligence(query: string, data: FactorySnapshot
 
   // 4. Critical Stock
   if (q.includes('stok') || q.includes('kritik') || q.includes('azalan') || q.includes('depo')) {
-    let text = `📦 **Stok Durumu & Kritik Alarm Röntgeni**\n\n`;
+    let text = `${matchingRuleBanner}📦 **Stok Durumu & Kritik Alarm Röntgeni**\n\n`;
     text += `* **Mevcut Parke Stoku:** **${data.totalStockParkeM2.toLocaleString('tr-TR')} m²**\n`;
     text += `* **Mevcut Bordür Stoku:** **${data.totalStockBordurMetre.toLocaleString('tr-TR')} Metre**\n`;
     text += `* **Mevcut Parça Stoku:** **${data.totalStockAdet.toLocaleString('tr-TR')} Adet**\n\n`;
@@ -344,17 +438,103 @@ export function runLocalFactoryIntelligence(query: string, data: FactorySnapshot
     return text;
   }
 
-  // 5. Pallets
-  if (q.includes('palet') || q.includes('iade') || q.includes('tahta') || q.includes('ahşap')) {
-    let text = `🪵 **Palet Takibi & Şantiye Borç Durumu**\n\n`;
+  // 5. Pallets (Smart Customer + Pallet Type Lookup)
+  if (q.includes('palet') || q.includes('iade') || q.includes('tahta') || q.includes('ahşap') || qNorm.includes('palet')) {
+    // Check if a specific customer is mentioned
+    const targetDebtor = data.palletDebtors.find(d => {
+      const cNorm = normalizeTurkish(d.customer);
+      return cNorm.length >= 3 && qNorm.includes(cNorm);
+    }) || data.palletBalances.find(p => {
+      const cNorm = normalizeTurkish(p.customer);
+      return cNorm.length >= 3 && qNorm.includes(cNorm);
+    });
+
+    if (targetDebtor) {
+      const custName = targetDebtor.customer;
+      const custRecords = data.palletBalances.filter(p => normalizeTurkish(p.customer) === normalizeTurkish(custName));
+      
+      let totalUretimSent = 0, totalUretimRet = 0, uretimBal = 0;
+      let totalTahtaSent = 0, totalTahtaRet = 0, tahtaBal = 0;
+      let totalSevkSent = 0, totalSevkRet = 0, sevkiyatBal = 0;
+
+      // Group by site for breakdown
+      const siteMap: Record<string, { uretim: number; tahta: number }> = {};
+
+      custRecords.forEach(r => {
+        const sName = r.site || 'Merkez / Genel';
+        if (!siteMap[sName]) siteMap[sName] = { uretim: 0, tahta: 0 };
+
+        if (r.palletType === 'uretim') {
+          totalUretimSent += r.sent;
+          totalUretimRet += r.returned;
+          uretimBal += r.balance;
+          siteMap[sName].uretim += r.balance;
+        } else if (r.palletType === 'tahta') {
+          totalTahtaSent += r.sent;
+          totalTahtaRet += r.returned;
+          tahtaBal += r.balance;
+          siteMap[sName].tahta += r.balance;
+        } else {
+          totalSevkSent += r.sent;
+          totalSevkRet += r.returned;
+          sevkiyatBal += r.balance;
+        }
+      });
+
+      const totalCustBal = uretimBal + tahtaBal + sevkiyatBal;
+
+      let text = `${matchingRuleBanner}🪵 **${custName.toUpperCase()} - Palet Zimmet & Alacak Durumu**\n\n`;
+
+      const isUretimSpecific = qNorm.includes('uretim');
+      const isTahtaSpecific = qNorm.includes('tahta') || qNorm.includes('ahsap');
+
+      if (isUretimSpecific) {
+        text += `🎯 **ÜRETİM PALETİ ALACAĞI: ${uretimBal} Adet**\n`;
+        text += `• **Toplam Sevk Edilen:** ${totalUretimSent} Adet\n`;
+        text += `• **İade Alınan:** ${totalUretimRet} Adet\n`;
+        text += `• **Kalan Net Alacak:** **${uretimBal} Adet Üretim Paleti**\n\n`;
+        text += `ℹ️ *Ayrıca bu müşteride **${tahtaBal} Adet Tahta Palet** bulunmaktadır (Genel Toplam: **${totalCustBal} Adet**).*\n\n`;
+      } else if (isTahtaSpecific) {
+        text += `🎯 **TAHTA PALET ALACAĞI: ${tahtaBal} Adet**\n`;
+        text += `• **Toplam Sevk Edilen:** ${totalTahtaSent} Adet\n`;
+        text += `• **İade Alınan:** ${totalTahtaRet} Adet\n`;
+        text += `• **Kalan Net Alacak:** **${tahtaBal} Adet Tahta Palet**\n\n`;
+        text += `ℹ️ *Ayrıca bu müşteride **${uretimBal} Adet Üretim Paleti** bulunmaktadır (Genel Toplam: **${totalCustBal} Adet**).*\n\n`;
+      } else {
+        text += `* 🏭 **Üretim Paleti:** **${uretimBal} Adet** (Sevk: ${totalUretimSent}, İade: ${totalUretimRet})\n`;
+        text += `* 🪵 **Tahta Palet:** **${tahtaBal} Adet** (Sevk: ${totalTahtaSent}, İade: ${totalTahtaRet})\n`;
+        if (sevkiyatBal > 0) text += `* 📦 **Sevkiyat Paleti:** **${sevkiyatBal} Adet**\n`;
+        text += `\n🎯 **Toplam Kalan Palet Alacağı:** **${totalCustBal} Adet**\n\n`;
+      }
+
+      // Site Breakdown if multiple sites
+      const sitesList = Object.entries(siteMap).filter(([_, s]) => (s.uretim + s.tahta) > 0);
+      if (sitesList.length > 1) {
+        text += `📍 **Şantiye Bazlı Dağılım:**\n`;
+        sitesList.forEach(([sName, s]) => {
+          text += `• **${sName}:** ${s.uretim} Üretim Paleti, ${s.tahta} Tahta Palet (Toplam: ${s.uretim + s.tahta} ad)\n`;
+        });
+        text += `\n`;
+      }
+
+      const estValue = (uretimBal * 600) + (tahtaBal * 300);
+      text += `💰 **Tahmini Palet Teminatı / Değeri:** **~₺${estValue.toLocaleString('tr-TR')}**\n`;
+      text += `💡 *Tavsiye: Sıradaki sevkiyatta aracın ${custName} şantiyesinden boş paletleri toplaması için kantar fişine not düşünüz.*`;
+      return text;
+    }
+
+    // General Pallet Summary
+    let text = `${matchingRuleBanner}🪵 **Palet Takibi & Genel Şantiye Borç Durumu**\n\n`;
     text += `* **Şantiyelerde Bekleyen Toplam Palet:** **${data.totalUnreturnedPallets.toLocaleString('tr-TR')} Adet**\n`;
-    const val = data.totalUnreturnedPallets * 300; // ~300 TL per pallet
-    text += `* **Tahmini Rehin / Maliyet Değeri:** **₺${val.toLocaleString('tr-TR')}**\n\n`;
+    text += `  - 🏭 **Üretim Paleti:** **${data.totalUnreturnedUretim.toLocaleString('tr-TR')} Adet**\n`;
+    text += `  - 🪵 **Tahta Palet:** **${data.totalUnreturnedTahta.toLocaleString('tr-TR')} Adet**\n`;
+    const val = (data.totalUnreturnedUretim * 600) + (data.totalUnreturnedTahta * 300);
+    text += `* **Tahmini Rehin / Maliyet Değeri:** **~₺${val.toLocaleString('tr-TR')}**\n\n`;
 
     if (data.palletDebtors.length > 0) {
-      text += `⚠️ **En Çok Palet Borcu Olan İlk 5 Müşteri:**\n`;
-      data.palletDebtors.forEach((d, idx) => {
-        text += `${idx + 1}. **${d.customer}**: **${d.balance} Adet Palet**\n`;
+      text += `⚠️ **En Çok Palet Borcu Olan Müşteriler:**\n`;
+      data.palletDebtors.slice(0, 6).forEach((d, idx) => {
+        text += `${idx + 1}. **${d.customer}**: **${d.balance} Adet** (Üretim: ${d.uretim} ad, Tahta: ${d.tahta} ad)\n`;
       });
       text += `\n💡 *Tavsiye: Yeni sevkiyat yaparken boş palet getirmeyen araçlara palet teslim tutanağı imzalattırınız.*`;
     } else {
@@ -365,7 +545,7 @@ export function runLocalFactoryIntelligence(query: string, data: FactorySnapshot
 
   // 6. Orders & Quotas
   if (q.includes('sipariş') || q.includes('kota') || q.includes('müşteri') || q.includes('bekleyen')) {
-    let text = `🎯 **Siparişler & Müşteri Kotaları**\n\n`;
+    let text = `${matchingRuleBanner}🎯 **Siparişler & Müşteri Kotaları**\n\n`;
     text += `* **Bekleyen Sipariş Sayısı:** **${data.pendingOrdersCount} Adet**\n`;
     text += `* **Aktif Müşteri Kotası:** **${data.activeQuotasCount} Sözleşme**\n\n`;
 
@@ -389,7 +569,7 @@ export function runLocalFactoryIntelligence(query: string, data: FactorySnapshot
 
   // 7. Finance & Costs
   if (q.includes('ciro') || q.includes('maliyet') || q.includes('kar') || q.includes('para') || q.includes('fiyat') || q.includes('gider')) {
-    let text = `💰 **Aylık Finans & Birim Maliyet Röntgeni**\n\n`;
+    let text = `${matchingRuleBanner}💰 **Aylık Finans & Birim Maliyet Röntgeni**\n\n`;
     text += `* **Bu Ay Toplam Ciro:** **₺${data.monthlyRevenue.toLocaleString('tr-TR')}**\n`;
     text += `* **Bu Ay Toplam Gider:** **₺${data.monthlyCostsTotal.toLocaleString('tr-TR')}**\n`;
     text += `* **Ortalama Birim Maliyet:** **₺${data.estimatedUnitCost}/m²**\n`;
@@ -400,17 +580,20 @@ export function runLocalFactoryIntelligence(query: string, data: FactorySnapshot
   }
 
   // Default Greeting / Help
-  return `👋 **Merhaba! Ben Parke ERP Yapay Zeka Fabrika Danışmanınızım.**
+  return `${matchingRuleBanner}👋 **Merhaba! Ben Parke ERP Yapay Zeka Fabrika Danışmanınızım.**
 
 Fabrikanızın tüm canlı veritabanına bağlıyım. Bana fabrikanızla ilgili her şeyi sorabilirsiniz:
 
 * 📊 *"Bugünkü üretim ve sevkiyat durumu nedir?"*
 * 🚨 *"Kritik stokta hangi taşlar var?"*
 * ⚖️ *"Kantar ve tonaj çıkışları nasıl?"*
+* 🪵 *"Medikent'in ne kadar üretim paleti alacağı var?"*
 * 🪵 *"Hangi müşteride kaç paletimiz kaldı?"*
 * 🎯 *"Bekleyen acil siparişler neler?"*
 * 💰 *"Aylık ciro ve birim maliyetimiz kaç TL?"*
-* 📋 *"Bana gün sonu yöneticisi özeti çıkar"*`;
+* 📋 *"Bana gün sonu yöneticisi özeti çıkar"*
+
+*💡 Eğer bana yanlış veya eksik bilgi verdiğimi düşünürseniz, cevabın altındaki "🎓 Eğit / Düzelt" butonuna tıklayarak bana doğrusunu öğretebilirsiniz.*`;
 }
 
 // ---------------------------------------------------------------------------
@@ -419,59 +602,74 @@ Fabrikanızın tüm canlı veritabanına bağlıyım. Bana fabrikanızla ilgili 
 export function generateExecutiveBriefingText(d: FactorySnapshot): string {
   const dateFormatted = new Date(d.todayDate).toLocaleDateString('tr-TR', {
     weekday: 'long',
-    day: 'numeric',
+    year: 'numeric',
     month: 'long',
-    year: 'numeric'
+    day: 'numeric',
   });
 
-  let report = `📋 **YÖNETİCİ GÜN SONU RÖNTGEN ÖZETİ**\n📅 *${dateFormatted} | Saat: ${d.timestamp}*\n\n`;
+  const grossProfit = d.monthlyRevenue - d.monthlyCostsTotal;
 
-  // Üretim
-  report += `### 1. 🏭 Üretim Performansı\n`;
-  if (d.todayEntriesCount === 0) {
-    report += `• Bugün sisteme henüz üretim vardiya kaydı girilmedi.\n`;
-  } else {
-    report += `• Toplam Üretim: **${d.todayProductionTotalM2.toLocaleString('tr-TR')}** birim (${d.todayProductionParkeM2} m² Parke, ${d.todayProductionBordurMetre} m Bordür, ${d.todayProductionAdet} ad. Oluk)\n`;
-    report += `• Makine 1 Çıkışı: **${d.todayMachine1Output}** | Makine 2 Çıkışı: **${d.todayMachine2Output}**\n`;
-    report += `• Günlük Fire Oranı: **${d.todayScrapTotalM2} m²** (%${d.todayProductionTotalM2 > 0 ? ((d.todayScrapTotalM2 / d.todayProductionTotalM2) * 100).toFixed(1) : 0})\n`;
-  }
-  report += `\n`;
+  return `🏭 GÜN SONU YÖNETİCİ ÖZETİ (EXECUTIVE BRIEFING)
+══════════════════════════════════════════════════════
+Tarih: ${dateFormatted} | Hazırlayan: Parke AI Direktörü
 
-  // Sevkiyat & Kantar
-  report += `### 2. 🚚 Sevkiyat & Kantar Çıkışları\n`;
-  report += `• Sevk Edilen Araç: **${d.todayShipmentsCount} Kamyon/İrsaliye**\n`;
-  report += `• Net Kantar Tonajı: **${d.todayShipmentTonnage.toLocaleString('tr-TR')} Ton**\n`;
-  report += `• Sevk Miktarı: **${d.todayShipmentParkeM2} m² Parke** + **${d.todayShipmentBordurMetre} m Bordür**\n`;
-  report += `\n`;
+1. 🧱 ÜRETİM & İMALAT PERFORMANSI
+------------------------------------------------------
+• Toplam Net Üretim: ${d.todayProductionTotalM2.toLocaleString('tr-TR')} birim
+  - Parke Üretimi (1 Nolu Makine): ${d.todayProductionParkeM2.toLocaleString('tr-TR')} m²
+  - Bordür Üretimi (2 Nolu Makine): ${d.todayProductionBordurMetre.toLocaleString('tr-TR')} Metre
+  - Yağmur Oluğu / Parça: ${d.todayProductionAdet.toLocaleString('tr-TR')} Adet
+• Fire & Iskarta: ${d.todayScrapTotalM2} m² (%${d.todayProductionTotalM2 > 0 ? ((d.todayScrapTotalM2 / d.todayProductionTotalM2) * 100).toFixed(1) : 0})
+• Aylık Kümülatif Üretim: ${d.monthlyProductionM2.toLocaleString('tr-TR')} m²
 
-  // Stok & Riskler
-  report += `### 3. 🚨 Kritik Stok & Risk Radarı\n`;
-  if (d.lowStockItems.length > 0) {
-    report += `• **${d.lowStockItems.length} ürün emniyet stokunun altına indi:** ` +
-      d.lowStockItems.map(it => `${it.name} (${it.current} ${it.unit})`).join(', ') + `\n`;
-  } else {
-    report += `• Tüm kritik ürünlerin stok seviyeleri emniyet eşiğinin üzerindedir.\n`;
-  }
-  report += `• Şantiyelerdeki Toplam Palet: **${d.totalUnreturnedPallets} adet** (Değeri: ₺${(d.totalUnreturnedPallets * 300).toLocaleString('tr-TR')})\n`;
-  report += `\n`;
+2. 🚚 SEVKİYAT & KANTAR RAPORU
+------------------------------------------------------
+• Tamamlanan İrsaliyeli Çıkış: ${d.todayShipmentsCount} Sefer
+• Kantar Net Sevk Tonajı: ${d.todayShipmentTonnage.toLocaleString('tr-TR')} Ton
+• Sevk Edilen Parke: ${d.todayShipmentParkeM2.toLocaleString('tr-TR')} m²
+• Sevk Edilen Bordür: ${d.todayShipmentBordurMetre.toLocaleString('tr-TR')} Metre
 
-  // Yarın İçin Tavsiyeler
-  report += `### 4. 💡 Yarınki Vardiya İçin AI Tavsiyeleri\n`;
-  if (d.lowStockItems.length > 0) {
-    report += `1. **Öncelikli Kalıp:** 1 Nolu makinede stok açığı veren **${d.lowStockItems[0]?.name}** kalıbı takılmalıdır.\n`;
-  } else {
-    report += `1. **Planlı Üretim:** Mevcut üretim planına göre devam edilebilir.\n`;
-  }
-  if (d.palletDebtors.length > 0) {
-    report += `2. **Palet Toplama:** **${d.palletDebtors[0]?.customer}** şantiyesine gidecek araçların dönüşte boş palet alması talimatlandırılmalıdır.\n`;
-  }
-  report += `3. **Sevkiyat Hazırlığı:** Bekleyen ${d.pendingOrdersCount} sipariş için sevkiyat sahası palet düzeni kontrol edilmelidir.`;
+3. 📦 KRİTİK STOK & EMNİYET EŞİĞİ ALARMLARI
+------------------------------------------------------
+${
+  d.lowStockItems.length > 0
+    ? d.lowStockItems.map(i => `⚠️ ALARM: ${i.name} -> Kalan: ${i.current} ${i.unit} (Emniyet Stoğu: ${i.min})`).join('\n')
+    : '✅ Emniyet stoğu altına inen kritik ürün bulunmamaktadır.'
+}
 
-  return report;
+4. 🪵 PALET TAKİBİ & ŞANTİYE RİSKİ
+------------------------------------------------------
+• Dışarıda Kalan Toplam Palet: ${d.totalUnreturnedPallets.toLocaleString('tr-TR')} Adet
+  - Üretim Paleti: ${d.totalUnreturnedUretim.toLocaleString('tr-TR')} Adet
+  - Tahta Palet: ${d.totalUnreturnedTahta.toLocaleString('tr-TR')} Adet
+• Tahmini Depozito Değeri: ~₺${((d.totalUnreturnedUretim * 600) + (d.totalUnreturnedTahta * 300)).toLocaleString('tr-TR')}
+• En Çok Palet Borcu Olanlar:
+${
+  d.palletDebtors.slice(0, 4).map(p => `  - ${p.customer}: ${p.balance} Adet (Üretim: ${p.uretim}, Tahta: ${p.tahta})`).join('\n') || '  - Riskli bakiye yok.'
+}
+
+5. 🎯 SİPARİŞ & MÜŞTERİ KOTA ALARMLARI
+------------------------------------------------------
+• Bekleyen İş Emri Sayısı: ${d.pendingOrdersCount} Adet
+${
+  d.lowQuotaAlerts.length > 0
+    ? d.lowQuotaAlerts.map(q => `  - ${q.customer} (${q.product}): Kalan ${q.remaining} ${q.unit}`).join('\n')
+    : '  - Krita seviyede kota tükenmesi bulunmuyor.'
+}
+
+6. 💰 AYLIK FİNANSAL GÖRÜNÜM
+------------------------------------------------------
+• Bu Ay Toplam Ciro: ₺${d.monthlyRevenue.toLocaleString('tr-TR')}
+• Bu Ay Toplam Gider: ₺${d.monthlyCostsTotal.toLocaleString('tr-TR')}
+• Tahmini Birim Üretim Maliyeti: ₺${d.estimatedUnitCost}/m²
+• Brüt Karlılık: ${grossProfit >= 0 ? '+' : ''}₺${grossProfit.toLocaleString('tr-TR')}
+
+══════════════════════════════════════════════════════
+Rapor Sonu. İmzalı onay için kopyalayabilir veya yazdırabilirsiniz.`;
 }
 
 // ---------------------------------------------------------------------------
-// 4. Query External LLM (Google Gemini Flash) with Fallback
+// 4. Query External LLM (Google Gemini Flash) with Fallback & Learned Rules
 // ---------------------------------------------------------------------------
 export async function askFactoryAI({
   query,
@@ -483,18 +681,22 @@ export async function askFactoryAI({
   chatHistory?: { role: 'user' | 'assistant'; text: string }[];
 }): Promise<string> {
   const data = await getLiveFactorySnapshot();
+  const learnedRulesText = formatRulesForPrompt();
 
-  const geminiKey = apiKey || localStorage.getItem('parke_erp_gemini_api_key') || (import.meta as any).env?.VITE_GEMINI_API_KEY;
+  const geminiKey = apiKey || localStorage.getItem('parke_gemini_api_key') || (import.meta as any).env?.VITE_GEMINI_API_KEY;
 
   // If no Gemini key is provided, use deterministic factory intelligence engine
   if (!geminiKey || geminiKey.trim() === '') {
     return runLocalFactoryIntelligence(query, data);
   }
 
-  // System context prompt for Gemini
+  // System context prompt for Gemini with injected learned rules
   const systemPrompt = `Sen "Parke ERP" beton parke, bordür ve altyapı elemanları fabrikasının kıdemli Yapay Zeka Fabrika Direktörü ve Başdenetçisisin.
 Görevin fabrikanın üretim, kantar, sevkiyat, hammadde, palet ve maliyet verilerini analiz etmek, sorulara net, veriye dayalı, nazik ve profesyonel Türkçe yanıtlar vermektir.
 Cevaplarında kalın yazılar, emojiler, maddeler ve net sayılar kullan.
+
+AŞAĞIDA FABRİKA YÖNETİCİSİNİN SANA ÖĞRETTİĞİ FABRİKAYA ÖZEL KURALLAR VE DÜZELTMELER BULUNMAKTADIR. BU KURALLARA VE TALİMATLARA KESİNLİKLE VE ÖNCELİKLE UY:
+${learnedRulesText || 'Henüz ek kural girilmedi.'}
 
 AŞAĞIDA FABRİKANIN ŞU ANKİ CANLI VERİTABANI RÖNTGENİ YER ALMAKTADIR:
 - Tarih: ${data.todayDate}, Saat: ${data.timestamp}
@@ -504,10 +706,11 @@ AŞAĞIDA FABRİKANIN ŞU ANKİ CANLI VERİTABANI RÖNTGENİ YER ALMAKTADIR:
 - Kritik Stok Emniyet Altında Olan Ürünler: ${data.lowStockItems.map(i => `${i.name}: ${i.current} ${i.unit} (Min: ${i.min})`).join(', ') || 'Yok'}
 - Bekleyen Siparişler: ${data.pendingOrdersCount} adet. Acil siparişler: ${data.criticalOrders.map(o => `${o.customer} (${o.product} ${o.qty})`).join(', ') || 'Yok'}.
 - Müşteri Kotaları: ${data.activeQuotasCount} aktif sözleşme. Kalan kotası 500 m2 altı: ${data.lowQuotaAlerts.map(q => `${q.customer} (${q.remaining} ${q.unit})`).join(', ') || 'Yok'}.
-- Palet Durumu: Şantiyelerde dönmeyen ${data.totalUnreturnedPallets} adet palet (Değeri: ₺${data.totalUnreturnedPallets * 300}). En çok borçlu: ${data.palletDebtors.map(p => `${p.customer}: ${p.balance} ad`).join(', ') || 'Yok'}.
+- Palet Durumu: Şantiyelerde dönmeyen ${data.totalUnreturnedPallets} adet palet (Üretim: ${data.totalUnreturnedUretim} ad, Tahta: ${data.totalUnreturnedTahta} ad).
+- MÜŞTERİ PALET BORÇLARI DETAYI: ${data.palletDebtors.map(p => `${p.customer}: Toplam ${p.balance} ad (Üretim Paleti: ${p.uretim} ad, Tahta Palet: ${p.tahta} ad)`).join('; ') || 'Yok'}.
 - Finans: Aylık Ciro: ₺${data.monthlyRevenue}, Aylık Gider: ₺${data.monthlyCostsTotal}, Tahmini Birim Maliyet: ₺${data.estimatedUnitCost}/m².
 
-Kullanıcının sorusunu bu canlı verileri referans alarak eksiksiz yanıtla.`;
+Kullanıcının sorusunu bu canlı verileri ve öğretilmiş kuralları referans alarak eksiksiz, samimi ve net yanıtla.`;
 
   try {
     const contents = [
@@ -527,8 +730,8 @@ Kullanıcının sorusunu bu canlı verileri referans alarak eksiksiz yanıtla.`;
         },
         contents,
         generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 1000,
+          temperature: 0.2,
+          maxOutputTokens: 1200,
         }
       })
     });
