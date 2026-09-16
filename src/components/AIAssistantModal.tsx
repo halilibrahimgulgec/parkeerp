@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Sparkles,
   Bot,
@@ -15,9 +15,6 @@ import {
   Printer,
   MessageSquare,
   Zap,
-  HelpCircle,
-  Search,
-  ArrowRight,
 } from 'lucide-react';
 import {
   getLiveFactorySnapshot,
@@ -25,11 +22,7 @@ import {
   askFactoryAI,
   FactorySnapshot,
 } from '../utils/aiFactoryBrain';
-import {
-  FACTORY_60_QUESTIONS,
-  FACTORY_CORE_RULES,
-  QuestionDefinition,
-} from '../utils/aiFactorySelfLearningEngine';
+import { FACTORY_CORE_RULES } from '../utils/aiFactorySelfLearningEngine';
 
 interface ChatMessage {
   id: string;
@@ -41,28 +34,18 @@ interface ChatMessage {
 
 const QUICK_PROMPTS = [
   { label: '📊 Bugün Üretim & Sevk', query: 'Bugünkü üretim miktarları, fire durumu ve kantar sevkiyatları ne durumda?' },
+  { label: '📈 Aylık Kümülatif Üretim', query: 'Bu ay kümülatif toplam kaç m² parke ve bordür ürettik?' },
+  { label: '🪵 Paletlerin Değeri', query: 'Paletlerin toplam değeri ne kadar?' },
   { label: '🪵 Medikent Üretim Paleti', query: 'Medikent den ne kadar üretim paleti alacağımız var?' },
-  { label: '🪵 Palet Borçluları', query: 'Hangi müşterilerde paletimiz kalmış ve toplam dönmeyen palet sayısı kaç?' },
   { label: '🚨 Kritik Stoklar', query: 'Emniyet stoğu altına düşen kritik ürünler hangileri ve stokları kaç?' },
-  { label: '⚖️ Kantar Tonajı', query: 'Bugün kantardan çıkan toplam kamyon sayısı ve net sevk tonajı nedir?' },
-  { label: '🎯 Acil Siparişler', query: 'Bekleyen iş emirleri ve acil teslim edilmesi gereken siparişler neler?' },
-  { label: '💰 Finans & Birim Maliyet', query: 'Bu ayki ciro, toplam gider ve tahmini metrekare üretim maliyeti nedir?' },
-  { label: '📋 Gün Sonu Özeti', query: 'Fabrika geneli için kapsamlı bir Gün Sonu Yönetici Özeti hazırla.' },
-];
-
-const CATEGORY_TABS = [
-  { id: 'all', label: 'Tümü (60)' },
-  { id: 'production', label: '🏭 Üretim (10)' },
-  { id: 'shipment', label: '🚚 Sevkiyat (10)' },
-  { id: 'pallet', label: '🪵 Palet (10)' },
-  { id: 'stock', label: '📦 Stok (10)' },
-  { id: 'order', label: '🎯 Sipariş (10)' },
-  { id: 'finance', label: '💰 Finans (10)' },
+  { label: '⚖️ Kantar Tonajı', query: 'Bugünkü kantar net sevk tonajı ne kadar?' },
+  { label: '🎯 Acil Siparişler', query: 'Bekleyen acil iş emirleri ve siparişler hangileri?' },
+  { label: '💰 Finans & Birim Maliyet', query: '1 m² parkenin tahmini üretim maliyeti kaç TL dir?' },
 ];
 
 export default function AIAssistantModal() {
   const [isOpen, setIsOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'chat' | 'briefing' | 'questions'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'briefing'>('chat');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -74,10 +57,6 @@ export default function AIAssistantModal() {
   const [apiKey, setApiKey] = useState('');
   const [copiedBriefing, setCopiedBriefing] = useState(false);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
-
-  // 60 Questions State
-  const [questionCategory, setQuestionCategory] = useState<string>('all');
-  const [questionSearch, setQuestionSearch] = useState<string>('');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -95,7 +74,7 @@ export default function AIAssistantModal() {
         {
           id: 'welcome-1',
           role: 'assistant',
-          text: `👋 **Merhaba! Ben Parke ERP Otonom Fabrika Zekası.**\n\nFabrikanızın tüm canlı üretim hatlarını, kantar tartımlarını, depo stoklarını ve şantiyelerdeki palet borçlarını otonom kurallar çerçevesinde anlık olarak analiz ediyorum.\n\n⚙️ **Öğrenilmiş Sabit Fabrika Kuralları:**\n- 🏭 **Üretim Paleti Bedeli:** ₺${FACTORY_CORE_RULES.PALLET_PRICES.uretim.toLocaleString('tr-TR')} / Adet\n- 🪵 **Tahta Palet Bedeli:** ₺${FACTORY_CORE_RULES.PALLET_PRICES.tahta.toLocaleString('tr-TR')} / Adet\n- ⏰ **Fabrika Mesaisi:** Günde ${FACTORY_CORE_RULES.WORK_HOURS_PER_DAY} Saat (Pazar günleri tatil)\n\n💡 *Yukarıdaki **"💡 60 Soru Rehberi"** sekmesine tıklayarak yapay zekaya sorabileceğiniz tüm soruları görebilir ve tek tıkla test edebilirsiniz!*`,
+          text: `👋 **Merhaba! Ben Parke ERP Fabrika Zekası.**\n\nFabrikanızın tüm canlı üretim hatlarını, kantar tartımlarını, depo stoklarını ve şantiyelerdeki palet borçlarını anlık olarak analiz ediyorum.\n\n⚙️ **Öğrenilmiş Sabit Fabrika Kuralları:**\n• 🏭 **Üretim Paleti Bedeli:** ₺${FACTORY_CORE_RULES.PALLET_PRICES.uretim.toLocaleString('tr-TR')} / Adet\n• 🪵 **Tahta Palet Bedeli:** ₺${FACTORY_CORE_RULES.PALLET_PRICES.tahta.toLocaleString('tr-TR')} / Adet\n• ⏰ **Fabrika Mesaisi:** Günde ${FACTORY_CORE_RULES.WORK_HOURS_PER_DAY} Saat (Pazar günleri tatil)\n• 🎯 **Günlük Hedef:** ${FACTORY_CORE_RULES.DAILY_PRODUCTION_TARGET_M2.toLocaleString('tr-TR')} m²\n\nFabrika üretimi, kantar sevkleri, müşteri palet alacakları, kritik stoklar veya maliyetler hakkında doğrudan soru sorabilirsiniz.`,
           time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
         },
       ]);
@@ -285,24 +264,6 @@ export default function AIAssistantModal() {
     setShowSettings(false);
   };
 
-  // Select a question from the 60 questions catalog
-  const handleSelectQuestion = (questionText: string) => {
-    setActiveTab('chat');
-    handleSendMessage(questionText);
-  };
-
-  // Filtered 60 questions list
-  const filteredQuestions = useMemo(() => {
-    return FACTORY_60_QUESTIONS.filter((q) => {
-      const matchesCategory = questionCategory === 'all' || q.category === questionCategory;
-      const matchesSearch =
-        !questionSearch.trim() ||
-        q.question.toLowerCase().includes(questionSearch.toLowerCase()) ||
-        q.categoryTitle.toLowerCase().includes(questionSearch.toLowerCase());
-      return matchesCategory && matchesSearch;
-    });
-  }, [questionCategory, questionSearch]);
-
   // Helper to format markdown in chat cleanly
   const renderFormattedMarkdown = (rawText: string) => {
     const lines = rawText.split('\n');
@@ -394,7 +355,7 @@ export default function AIAssistantModal() {
       {/* 2. Floating AI Drawer / Modal */}
       {isOpen && (
         <div
-          className="no-print fixed inset-x-0 bottom-0 sm:bottom-20 sm:right-6 sm:left-auto w-full sm:w-[540px] h-[88vh] sm:h-[700px] max-h-[94vh] bg-white sm:rounded-2xl rounded-t-2xl shadow-2xl border border-slate-200/80 flex flex-col z-50 overflow-hidden transition-all duration-300"
+          className="no-print fixed inset-x-0 bottom-0 sm:bottom-20 sm:right-6 sm:left-auto w-full sm:w-[500px] h-[85vh] sm:h-[680px] max-h-[92vh] bg-white sm:rounded-2xl rounded-t-2xl shadow-2xl border border-slate-200/80 flex flex-col z-50 overflow-hidden transition-all duration-300"
           style={{ boxShadow: '0 20px 50px rgba(15, 23, 42, 0.25)' }}
         >
           {/* Header */}
@@ -405,10 +366,10 @@ export default function AIAssistantModal() {
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h3 className="font-bold text-sm text-slate-100">Parke AI Danışmanı</h3>
+                  <h3 className="font-bold text-sm text-slate-100">Parke AI Fabrika Zekası</h3>
                   <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    Otonom Zeka
+                    Canlı Veri
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-400 truncate max-w-[220px]">
@@ -445,7 +406,7 @@ export default function AIAssistantModal() {
             </div>
           </div>
 
-          {/* Navigation Tabs */}
+          {/* Navigation Tabs (Only 2 Tabs: Sohbet & Gün Sonu Özeti) */}
           <div className="flex border-b border-slate-100 bg-slate-50/70 px-3 pt-2 gap-1 text-xs font-semibold overflow-x-auto no-scrollbar">
             <button
               onClick={() => setActiveTab('chat')}
@@ -473,20 +434,6 @@ export default function AIAssistantModal() {
             >
               <FileText className="w-3.5 h-3.5" />
               Gün Sonu Özeti
-            </button>
-            <button
-              onClick={() => setActiveTab('questions')}
-              className={`flex items-center gap-1.5 pb-2 px-3 border-b-2 whitespace-nowrap transition-all ${
-                activeTab === 'questions'
-                  ? 'border-amber-500 text-amber-600 font-bold bg-white rounded-t-lg'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <HelpCircle className="w-3.5 h-3.5 text-amber-500" />
-              <span>💡 60 Soru Rehberi</span>
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-100 text-amber-800 font-bold">
-                60
-              </span>
             </button>
           </div>
 
@@ -530,14 +477,6 @@ export default function AIAssistantModal() {
               <>
                 {/* Quick Prompts Bar */}
                 <div className="overflow-x-auto py-2 px-3 border-b border-slate-100 bg-white flex gap-1.5 no-scrollbar shrink-0 items-center">
-                  <button
-                    onClick={() => setActiveTab('questions')}
-                    className="whitespace-nowrap px-3 py-1 text-xs bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-full transition-all duration-150 flex items-center gap-1 active:scale-95 shadow-sm shrink-0"
-                  >
-                    <HelpCircle className="w-3.5 h-3.5" />
-                    <span>💡 60 Soru Rehberi</span>
-                  </button>
-
                   {QUICK_PROMPTS.map((qp, index) => (
                     <button
                       key={index}
@@ -561,7 +500,7 @@ export default function AIAssistantModal() {
                         className={`group relative max-w-[90%] rounded-2xl px-3.5 py-2.5 shadow-sm text-sm ${
                           msg.role === 'user'
                             ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-br-none'
-                            : 'bg-white text-slate-800 border border-slate-200 rounded-bl-none pb-4'
+                            : 'bg-white text-slate-800 border border-slate-200 rounded-bl-none pb-3'
                         }`}
                       >
                         {msg.role === 'assistant' ? (
@@ -729,104 +668,6 @@ export default function AIAssistantModal() {
                         Özeti Hazırla
                       </button>
                     </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* TAB 3: 60 QUESTIONS GUIDE */}
-            {activeTab === 'questions' && (
-              <div className="flex-1 flex flex-col overflow-hidden p-3.5">
-                {/* Header & Description */}
-                <div className="pb-2.5 border-b border-slate-200">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="p-1.5 bg-amber-100 text-amber-700 rounded-lg">
-                        <HelpCircle className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h4 className="font-bold text-slate-800 text-sm">1. Etap: 60 Soru Rehberi</h4>
-                        <p className="text-[11px] text-slate-500">
-                          Modele öğretilmiş hazır sorular. Tıklayarak doğrudan sorabilirsiniz.
-                        </p>
-                      </div>
-                    </div>
-                    <span className="text-xs font-bold px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full">
-                      {filteredQuestions.length} Soru
-                    </span>
-                  </div>
-
-                  {/* Search Input */}
-                  <div className="mt-2.5 relative">
-                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                    <input
-                      type="text"
-                      value={questionSearch}
-                      onChange={(e) => setQuestionSearch(e.target.value)}
-                      placeholder="60 soru içinde kelime ara..."
-                      className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
-                    />
-                    {questionSearch && (
-                      <button
-                        onClick={() => setQuestionSearch('')}
-                        className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 text-xs"
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Category Filter Chips */}
-                  <div className="flex gap-1 overflow-x-auto mt-2 pb-1 no-scrollbar text-xs">
-                    {CATEGORY_TABS.map((cat) => (
-                      <button
-                        key={cat.id}
-                        onClick={() => setQuestionCategory(cat.id)}
-                        className={`px-2.5 py-1 rounded-full whitespace-nowrap text-[11px] font-medium transition-all ${
-                          questionCategory === cat.id
-                            ? 'bg-amber-500 text-white font-bold shadow-sm'
-                            : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
-                        }`}
-                      >
-                        {cat.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Question List */}
-                <div className="flex-1 overflow-y-auto mt-2.5 space-y-2 pr-1">
-                  {filteredQuestions.length === 0 ? (
-                    <div className="text-center py-10 text-slate-400 text-xs">
-                      Aramanıza uygun soru bulunamadı.
-                    </div>
-                  ) : (
-                    filteredQuestions.map((item: QuestionDefinition) => (
-                      <button
-                        key={item.id}
-                        onClick={() => handleSelectQuestion(item.question)}
-                        className="w-full text-left bg-white hover:bg-amber-50/50 p-2.5 rounded-xl border border-slate-200 hover:border-amber-300 shadow-sm transition-all group flex items-center justify-between gap-3"
-                      >
-                        <div className="space-y-1 flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-slate-100 text-slate-600">
-                              #{item.id}
-                            </span>
-                            <span className="text-[10px] text-amber-700 font-semibold truncate">
-                              {item.categoryTitle}
-                            </span>
-                          </div>
-                          <p className="text-xs text-slate-800 font-medium group-hover:text-amber-900 line-clamp-2">
-                            "{item.question}"
-                          </p>
-                        </div>
-
-                        <div className="flex items-center gap-1 text-[11px] font-semibold text-amber-600 bg-amber-50 px-2 py-1 rounded-lg group-hover:bg-amber-500 group-hover:text-white transition-colors shrink-0">
-                          <span>Sor</span>
-                          <ArrowRight className="w-3 h-3" />
-                        </div>
-                      </button>
-                    ))
                   )}
                 </div>
               </div>

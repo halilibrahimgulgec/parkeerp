@@ -456,7 +456,7 @@ export function runLocalFactoryIntelligence(query: string, data: FactorySnapshot
   }
 
   // 2. Production
-  if (q.includes('üretim') || q.includes('imalat') || q.includes('makine') || q.includes('fire') || q.includes('döküm')) {
+  if (q.includes('üretim') || q.includes('imalat') || q.includes('makine') || q.includes('fire') || q.includes('döküm') || qNorm.includes('uret') || qNorm.includes('kumulatif')) {
     let text = `${matchingRuleBanner}🏭 **Bugünkü Üretim Röntgeni (${data.todayDate})**\n\n`;
     text += `* **Toplam Net Üretim:** **${data.todayProductionTotalM2.toLocaleString('tr-TR')} birim**\n`;
     text += `  - 🧱 Parke: **${data.todayProductionParkeM2.toLocaleString('tr-TR')} m²**\n`;
@@ -784,21 +784,17 @@ export function runLocalFactoryIntelligence(query: string, data: FactorySnapshot
     return text;
   }
 
-  // Default Greeting / Help
-  return `${matchingRuleBanner}👋 **Merhaba! Ben Parke ERP Yapay Zeka Fabrika Danışmanınızım.**
+  // Default Greeting / Operational Overview
+  return `${matchingRuleBanner}👋 **Merhaba! Ben Parke ERP Fabrika Zekası.**
 
-Fabrikanızın tüm canlı veritabanına bağlıyım. Bana fabrikanızla ilgili her şeyi sorabilirsiniz:
+Fabrikanızın tüm canlı üretim, kantar, sevk, palet ve finansal kayıtlarına bağlıyım. Aşağıdaki başlıklarda doğrudan soru sorabilirsiniz:
 
-* 📊 *"Bugünkü üretim ve sevkiyat durumu nedir?"*
-* 🚨 *"Kritik stokta hangi taşlar var?"*
-* ⚖️ *"Kantar ve tonaj çıkışları nasıl?"*
-* 🪵 *"Medikent'in ne kadar üretim paleti alacağı var?"*
-* 🪵 *"Hangi müşteride kaç paletimiz kaldı?"*
-* 🎯 *"Bekleyen acil siparişler neler?"*
-* 💰 *"Aylık ciro ve birim maliyetimiz kaç TL?"*
-* 📋 *"Bana gün sonu yöneticisi özeti çıkar"*
-
-*💡 Eğer bana yanlış veya eksik bilgi verdiğimi düşünürseniz, cevabın altındaki "🎓 Eğit / Düzelt" butonuna tıklayarak bana doğrusunu öğretebilirsiniz.*`;
+* 🏭 **Üretim:** *"Bugün ne kadar üretim yapıldı?"* veya *"Bu ay kümülatif kaç m² ürettik?"*
+* 🚚 **Sevkiyat & Kantar:** *"Bugün kantardan çıkan net tonaj ne kadar?"* veya *"Hacı Kel şantiyesine ne gitti?"*
+* 🪵 **Palet Zimmetleri:** *"Paletlerin toplam değeri ne kadar?"* veya *"Medikent'in ne kadar üretim paleti alacağımız var?"*
+* 📦 **Depo & Stok:** *"Kritik emniyet stoğunda hangi taşlar var?"*
+* 🎯 **Siparişler & Kotalar:** *"Bekleyen acil iş emirleri ve sözleşmeler neler?"*
+* 💰 **Finans & Maliyet:** *"1 m² parke üretim maliyetimiz ve aylık ciromuz kaç TL?"*`;
 }
 
 // ---------------------------------------------------------------------------
