@@ -1,4 +1,4 @@
-import { FactorySnapshot, normalizeTurkish } from './aiFactoryBrain';
+import { FactorySnapshot, normalizeTurkish, ProductStockDetail } from './aiFactoryBrain';
 
 // ---------------------------------------------------------------------------
 // 1. HARDCODED FACTORY CORE CONSTANTS & RULES
@@ -25,11 +25,18 @@ export const FACTORY_CORE_RULES = {
 // ---------------------------------------------------------------------------
 // 2. CONVERSATION CONTEXT MEMORY (Autonomous Context Learning)
 // ---------------------------------------------------------------------------
-interface ConversationContext {
+export interface ConversationContext {
   lastCustomer?: string;
   lastSite?: string;
   lastInvoice?: string;
   lastTopic?: 'pallet' | 'production' | 'shipment' | 'stock' | 'order' | 'finance';
+  lastProduct?: {
+    id?: string;
+    name: string;
+    unit: string;
+    currentStock: number;
+    minStock: number;
+  };
 }
 
 const CONTEXT_KEY = 'parke_ai_auto_context';
@@ -49,6 +56,121 @@ export function updateAutoContext(update: Partial<ConversationContext>) {
     const merged = { ...current, ...update };
     localStorage.setItem(CONTEXT_KEY, JSON.stringify(merged));
   } catch {}
+}
+
+// ---------------------------------------------------------------------------
+// 2.5 DYNAMIC PRODUCT INVENTORY MATCHER (Real-Time Stock Query)
+// ---------------------------------------------------------------------------
+export function findMatchingProducts(query: string, products: ProductStockDetail[]): ProductStockDetail[] {
+  if (!products || products.length === 0) return [];
+  const qNorm = normalizeTurkish(query);
+  if (!qNorm) return [];
+
+  // Extract dimensions/numbers: e.g. "8", "6", "10", "20x10", "50*25*20"
+  const numbersInQuery: string[] = [];
+  const dimMatches = qNorm.match(/\b\d+([x*]\d+)?\b/g);
+  if (dimMatches) {
+    numbersInQuery.push(...dimMatches);
+  }
+  const likMatch = qNorm.match(/\b(\d+)\s*(lik|luk|likli)\b/);
+  if (likMatch && !numbersInQuery.includes(likMatch[1])) {
+    numbersInQuery.push(likMatch[1]);
+  }
+
+  // Common Turkish stop words in stock questions
+  const stopWords = new Set([
+    'ne', 'kadar', 'kac', 'var', 'mi', 'mu', 'mevcut', 'durumu', 'stok', 'stogu', 'depo',
+    'depoda', 'fiyat', 'fiyati', 'metre', 'metrekare', 'm2', 'adedi', 'adet', 'tasi', 'tas',
+    'urun', 'urunu', 'olan', 'kaldi', 'bitti', 'listesi', 'toplam', 'gunluk', 'su', 'an'
+  ]);
+
+  const keywords = qNorm
+    .split(/\s+/)
+    .filter(w => w.length >= 2 && !stopWords.has(w));
+
+  if (keywords.length === 0 && numbersInQuery.length === 0) return [];
+
+  interface ScoredProduct {
+    product: ProductStockDetail;
+    score: number;
+  }
+
+  const scored: ScoredProduct[] = [];
+  for (const p of products) {
+    const pNorm = normalizeTurkish(p.name);
+    let score = 0;
+
+    // Strict number / dimension matching if numbers specified
+    if (numbersInQuery.length > 0) {
+      const hasNumber = numbersInQuery.some(num => {
+        if (num.includes('x') || num.includes('*')) {
+          const alt1 = num.replace('*', 'x');
+          const alt2 = num.replace('x', '*');
+          return pNorm.includes(alt1) || pNorm.includes(alt2);
+        }
+        const pNums: string[] = pNorm.match(/\b\d+\b/g) || [];
+        return pNums.includes(num);
+      });
+      if (!hasNumber) continue;
+      score += 5;
+    }
+
+    // Keyword match
+    for (const kw of keywords) {
+      if (pNorm.includes(kw)) {
+        score += kw.length >= 4 ? 3 : 2;
+      }
+    }
+
+    if (score > 0) {
+      scored.push({ product: p, score });
+    }
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  if (scored.length === 0) return [];
+
+  const maxScore = scored[0].score;
+  return scored
+    .filter(s => s.score === maxScore || (s.score >= maxScore - 1 && s.score >= 4))
+    .map(s => s.product);
+}
+
+export function formatProductStockResponse(products: ProductStockDetail[]): string {
+  if (products.length === 0) return '';
+
+  if (products.length === 1) {
+    const p = products[0];
+    updateAutoContext({ lastProduct: p, lastTopic: 'stock' });
+    const isCritical = p.currentStock < p.minStock;
+    const unitUpper = p.unit.toLowerCase() === 'm2' ? 'm²' : p.unit;
+
+    let text = `🧱 **${p.name.trim()} - Güncel Depo Stoku**\n\n`;
+    text += `• **Mevcut Net Stok:** **${p.currentStock.toLocaleString('tr-TR')} ${unitUpper}**\n`;
+    text += `• **Emniyet Stoğu Sınırı:** ${p.minStock.toLocaleString('tr-TR')} ${unitUpper}\n`;
+    text += `• **Stok Durumu:** ${
+      isCritical
+        ? `🚨 **Kritik Seviye** (Emniyet stoğunun ${Math.abs(p.minStock - p.currentStock).toLocaleString('tr-TR')} ${unitUpper} altında!)`
+        : `✅ **Yeterli Seviye** (Sevkiyata ve siparişe uygun)`
+    }\n\n`;
+    text += `💡 *İpucu: Bu ürün için 'kaç metrekare var', 'termin süresi ne kadar' veya 'bugün sevkiyatı var mı' şeklinde devam soruları sorabilirsiniz.*`;
+    return text;
+  }
+
+  // Multiple products matched
+  updateAutoContext({ lastProduct: products[0], lastTopic: 'stock' });
+  const totalStock = products.reduce((acc, cur) => acc + cur.currentStock, 0);
+  const commonUnit = products[0].unit.toLowerCase() === 'm2' ? 'm²' : products[0].unit;
+
+  let text = `📦 **İlgili Ürün Grubu Stok Durumu (Toplam: ${totalStock.toLocaleString('tr-TR')} ${commonUnit})**\n\n`;
+  products.forEach(p => {
+    const unitUpper = p.unit.toLowerCase() === 'm2' ? 'm²' : p.unit;
+    const isCritical = p.currentStock < p.minStock;
+    const statusIcon = isCritical ? '🚨 Kritik' : '✅ Yeterli';
+    text += `• **${p.name.trim()}:** **${p.currentStock.toLocaleString('tr-TR')} ${unitUpper}** (Emniyet: ${p.minStock.toLocaleString('tr-TR')} ${unitUpper} - ${statusIcon})\n`;
+  });
+  text += `\n💡 *Tek bir ürünün detayını görmek için adını tam belirtebilirsiniz (Örn: "${products[0].name.trim()} ne kadar var").*`;
+  return text;
 }
 
 // ---------------------------------------------------------------------------
@@ -881,15 +1003,29 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
 
     // Soru 34: 8 lik kilit parke taşında ne kadar stok kaldı?
     case 34: {
-      const found = data.lowStockItems.find(i => normalizeTurkish(i.name).includes('8') && normalizeTurkish(i.name).includes('kilit'));
+      const found = (data.allProductsStock || []).find(i => {
+        const n = normalizeTurkish(i.name);
+        return (n.includes('8') || n.includes('sekiz')) && (n.includes('parke') || n.includes('kilit') || n.includes('naturel'));
+      });
+      if (found) {
+        return formatProductStockResponse([found]);
+      }
+      const low = data.lowStockItems.find(i => normalizeTurkish(i.name).includes('8') && normalizeTurkish(i.name).includes('kilit'));
       return `🧱 **8'lik Kilit Parke Taşı Stok Durumu**\n\n` +
         `* **Kullanım:** Ağır araç trafiği, cadde ve fabrika sahaları\n` +
-        `* **Depo Durumu:** ${found ? `Kritik eşikte: ${found.current} ${found.unit}` : "Düzenli imalat yapılmakta olup sevkiyata uygun stok mevcuttur."}\n` +
+        `* **Depo Durumu:** ${low ? `Kritik eşikte: ${low.current} ${low.unit}` : "Düzenli imalat yapılmakta olup sevkiyata uygun stok mevcuttur."}\n` +
         `* **Birim Ağırlık:** ~180 kg/m²`;
     }
 
     // Soru 35: 6 lık parke taşından depoda stok var mı?
     case 35: {
+      const found = (data.allProductsStock || []).find(i => {
+        const n = normalizeTurkish(i.name);
+        return (n.includes('6') || n.includes('alti')) && (n.includes('parke') || n.includes('kilit') || n.includes('naturel'));
+      });
+      if (found) {
+        return formatProductStockResponse([found]);
+      }
       return `🧱 **6'lık Parke Taşı Stok Durumu**\n\n` +
         `* **Kullanım:** Otopark, yaya yolları ve site içi peyzaj\n` +
         `* **Stok:** Depoda yeterli seviyede 6'lık kilit ve prizma taşı bulunmaktadır.\n` +
@@ -912,6 +1048,13 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
 
     // Soru 37: Ankara bordürü ve bahçe bordürü stok durumu nedir?
     case 37: {
+      const bordurler = (data.allProductsStock || []).filter(i => {
+        const n = normalizeTurkish(i.name);
+        return n.includes('ankara') || n.includes('bahce');
+      });
+      if (bordurler.length > 0) {
+        return formatProductStockResponse(bordurler);
+      }
       return `📏 **Bordür Grubu Stok Durumu**\n\n` +
         `* **Toplam Bordür Stoku:** **${data.totalStockBordurMetre.toLocaleString('tr-TR')} Metre**\n` +
         `* **50x25x20 Ankara Bordürü:** Yol projeleri için ana kalem, sevk edilebilir durumda.\n` +
@@ -920,6 +1063,13 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
 
     // Soru 38: Yağmur oluğu ve engelli takip taşı stokları ne kadar?
     case 38: {
+      const matched = (data.allProductsStock || []).filter(i => {
+        const n = normalizeTurkish(i.name);
+        return n.includes('oluk') || n.includes('engelli');
+      });
+      if (matched.length > 0) {
+        return formatProductStockResponse(matched);
+      }
       return `🔘 **Yağmur Oluğu & Engelli Taşı Durumu**\n\n` +
         `* **Adetli Ürün Depo Stoku:** **${data.totalStockAdet.toLocaleString('tr-TR')} Adet**\n` +
         `* **Engelli Takip Taşı:** Sarı ve gri yüzeyli hissedilebilir taşlar sevkiyata hazırdır.\n` +
@@ -935,6 +1085,18 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
 
     // Soru 40: Şu an depomuzda en yüksek stoklu olan ürün hangisidir?
     case 40: {
+      if (data.allProductsStock && data.allProductsStock.length > 0) {
+        const sorted = [...data.allProductsStock].sort((a, b) => b.currentStock - a.currentStock);
+        const top = sorted[0];
+        const second = sorted[1];
+        const unit1 = top.unit.toLowerCase() === 'm2' ? 'm²' : top.unit;
+        const unit2 = second ? (second.unit.toLowerCase() === 'm2' ? 'm²' : second.unit) : '';
+        return `📦 **Depoda En Yüksek Stoklu Ürün**\n\n` +
+          `* 🥇 **Lider Ürün:** **${top.name.trim()}**\n` +
+          `* **Mevcut Stok:** **${top.currentStock.toLocaleString('tr-TR')} ${unit1}** (Emniyet: ${top.minStock.toLocaleString('tr-TR')} ${unit1})\n` +
+          (second ? `* 🥈 **İkinci Sırada:** **${second.name.trim()}** (${second.currentStock.toLocaleString('tr-TR')} ${unit2})\n` : '') +
+          `\n💡 *Yüksek stoklu ürünler ani büyük belediye ve altyapı siparişleri için hazır tampon stoğu oluşturur.*`;
+      }
       return `📦 **Depoda En Yüksek Stoklu Ürün**\n\n` +
         `* **Lider Ürün:** **8'lik Kilit Parke Taşı (Gri)**\n` +
         `* **Neden:** En yaygın kamu ve müteahhit talebi bu üründe olduğu için tampon stok yüksek tutulmaktadır.`;
@@ -1182,6 +1344,40 @@ export function matchAndAnswer60Questions(query: string, data: FactorySnapshot):
     updateAutoContext({ lastSite: matchedSite.site });
   }
 
+  // 1.5 Conversational Context Follow-up Check
+  const isStockFollowUp = /^(kac\s*(metrekare|metre|m2|adet|tane)?\s*(var|kaldi|mevcut)?|ne\s*kadar\s*(var|kaldi|mevcut)?|bitti\s*mi|kaldi\s*mi|stokta\s*kac\s*var|stok\s*durumu\s*ne)\??$/i.test(qNorm.trim())
+    || ['kac metrekare var', 'kac metre var', 'ne kadar var', 'kac m2 var', 'kac m2', 'kac adet var', 'stokta ne kadar var', 'kac var', 'bitti mi', 'kaldi mi'].includes(qNorm);
+
+  const context = getAutoContext();
+  if (isStockFollowUp && context.lastProduct) {
+    const liveProduct = (data.allProductsStock || []).find(
+      p => (context.lastProduct?.id && p.id === context.lastProduct.id) ||
+           normalizeTurkish(p.name) === normalizeTurkish(context.lastProduct?.name || '')
+    ) || context.lastProduct;
+
+    const unitUpper = liveProduct.unit.toLowerCase() === 'm2' ? 'm²' : liveProduct.unit;
+    const isCritical = liveProduct.currentStock < liveProduct.minStock;
+
+    return `🧱 **${liveProduct.name.trim()} - Güncel Depo Stoku**\n\n` +
+      `• **Mevcut Net Stok:** **${liveProduct.currentStock.toLocaleString('tr-TR')} ${unitUpper}**\n` +
+      `• **Emniyet Stoğu Sınırı:** ${liveProduct.minStock.toLocaleString('tr-TR')} ${unitUpper}\n` +
+      `• **Durum:** ${isCritical ? `🚨 **Kritik Seviye** (Emniyet stoğunun ${Math.abs(liveProduct.minStock - liveProduct.currentStock).toLocaleString('tr-TR')} ${unitUpper} altında!)` : `✅ **Yeterli Seviye** (Sevkiyata ve siparişe uygun)`}\n\n` +
+      `💡 *Az önce sorduğunuz ürün hafızada tutularak anlık depo mevcudu getirilmiştir.*`;
+  }
+
+  const isShipmentFollowUp = /^(hangi\s*urunler\s*gitti|ne\s*gitti|irsaliye(si)?\s*kac|plaka(si)?\s*ne)\??$/i.test(qNorm);
+  if (isShipmentFollowUp && context.lastSite) {
+    const siteShipments = data.todayRecentShipments.filter(s => normalizeTurkish(s.site) === normalizeTurkish(context.lastSite || ''));
+    if (siteShipments.length > 0) {
+      let text = `🚚 **${(context.lastSite || '').toUpperCase()} Şantiyesi - Sevkiyat Detayları**\n\n`;
+      siteShipments.forEach(s => {
+        text += `• **İrsaliye:** ${s.invoice} | **Ürünler:** ${s.qty}\n`;
+        text += `  * Plaka: ${s.plate || '-'} | Şoför: ${s.driver || '-'}\n`;
+      });
+      return text;
+    }
+  }
+
   // 2. Exact or High-Score match against the 60 benchmark questions
   for (const item of FACTORY_60_QUESTIONS) {
     const itemNorm = normalizeTurkish(item.question);
@@ -1277,7 +1473,13 @@ export function matchAndAnswer60Questions(query: string, data: FactorySnapshot):
   if (qNorm.includes('tartimsiz') || qNorm.includes('fissiz')) return answerQuestion(18, data);
   if (qNorm.includes('son sevk') || qNorm.includes('son irsaliye')) return answerQuestion(17, data);
 
-  // --- STOKLAR (Soru 31-40) ---
+  // --- STOKLAR (Soru 31-40 + Canlı Dinamik Ürün Eşleyici) ---
+  // 1. Canlı veritabanındaki tekil ürünleri dinamik eşle
+  const matchedProds = findMatchingProducts(query, data.allProductsStock || []);
+  if (matchedProds.length > 0) {
+    return formatProductStockResponse(matchedProds);
+  }
+
   if (qNorm.includes('kritik stok') || qNorm.includes('emniyet stog') || qNorm.includes('azalan urun')) {
     return answerQuestion(33, data);
   }

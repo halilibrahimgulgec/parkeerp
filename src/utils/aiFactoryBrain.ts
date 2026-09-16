@@ -33,11 +33,22 @@ export interface TodayShipmentDetail {
   netWeight: number;
 }
 
+export interface ProductStockDetail {
+  id: string;
+  name: string;
+  unit: string;
+  currentStock: number;
+  minStock: number;
+  thickness?: string;
+  category?: string;
+}
+
 export interface FactorySnapshot {
   timestamp: string;
   todayDate: string;
   // Stocks
   totalProductsCount: number;
+  allProductsStock: ProductStockDetail[];
   lowStockItems: { name: string; current: number; min: number; unit: string; thickness?: string }[];
   totalStockParkeM2: number;
   totalStockBordurMetre: number;
@@ -153,6 +164,16 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
         });
       }
     });
+
+    const allProductsStock: ProductStockDetail[] = stocks.map((s: any) => ({
+      id: s.id || s.product_id || '',
+      name: (s.product_name || s.name || 'İsimsiz Ürün').trim(),
+      unit: s.unit || 'm2',
+      currentStock: Number(s.current_stock || 0),
+      minStock: Number(s.min_stock_alert || 0),
+      thickness: s.thickness,
+      category: s.category,
+    }));
 
     // Today Production
     let todayProdM2 = 0;
@@ -329,6 +350,7 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
       timestamp: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
       todayDate,
       totalProductsCount: stocks.length,
+      allProductsStock,
       lowStockItems,
       totalStockParkeM2,
       totalStockBordurMetre,
@@ -367,6 +389,7 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
       timestamp: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
       todayDate,
       totalProductsCount: 0,
+      allProductsStock: [],
       lowStockItems: [],
       totalStockParkeM2: 0,
       totalStockBordurMetre: 0,
@@ -773,7 +796,15 @@ export function runLocalFactoryIntelligence(query: string, data: FactorySnapshot
   }
 
   // 7. Finance & Costs
-  if (q.includes('ciro') || q.includes('maliyet') || q.includes('kar') || q.includes('para') || q.includes('fiyat') || q.includes('gider')) {
+  const isFinance = !qNorm.includes('metrekare') && !qNorm.includes('m2') && (
+    qNorm.includes('ciro') ||
+    qNorm.includes('maliyet') ||
+    qNorm.includes('gider') ||
+    qNorm.includes('masraf') ||
+    qNorm.includes('fiyat') ||
+    /\b(kar|karlilik|brut kar|kazanc)\b/i.test(qNorm)
+  );
+  if (isFinance) {
     let text = `${matchingRuleBanner}💰 **Aylık Finans & Birim Maliyet Röntgeni**\n\n`;
     text += `* **Bu Ay Toplam Ciro:** **₺${data.monthlyRevenue.toLocaleString('tr-TR')}**\n`;
     text += `* **Bu Ay Toplam Gider:** **₺${data.monthlyCostsTotal.toLocaleString('tr-TR')}**\n`;
@@ -908,6 +939,8 @@ AŞAĞIDA FABRİKANIN ŞU ANKİ CANLI VERİTABANI RÖNTGENİ YER ALMAKTADIR:
 ${data.todayRecentShipments.map(s => `  * Müşteri: ${s.customer} | Şantiye: ${s.site} | İrsaliye: ${s.invoice} | Ürünler: ${s.qty} (Plaka: ${s.plate || '-'}, Şoför: ${s.driver || '-'})`).join('\n') || '  * Bugün sevkiyat yok.'}
 - SEVKİYAT SORULARI İÇİN TALİMAT: Kullanıcı belirli bir müşteri veya şantiye sevkiyatını sorduğunda (Örn: "Onikişubat Hacı Kel şantiyesine ne kadar gitti?"), kesinlikle tüm fabrikanın sevkiyat özetini sıralama! Yalnızca o şantiyeye/müşteriye ait çıkışları, irsaliye numaralarını ve o şantiyeye giden ürün toplamını net olarak listele.
 - Mevcut Depo Stoku: Parke: ${data.totalStockParkeM2} m², Bordür: ${data.totalStockBordurMetre} m, Adet: ${data.totalStockAdet} adet.
+- TÜM ÜRÜNLERİN CANLI DEPO MEVCUDU:
+${data.allProductsStock && data.allProductsStock.length > 0 ? data.allProductsStock.map(p => `  * ${p.name}: ${p.currentStock.toLocaleString('tr-TR')} ${p.unit} (Emniyet Stoğu Sınırı: ${p.minStock.toLocaleString('tr-TR')} ${p.unit})`).join('\n') : '  * Ürün listesi boş.'}
 - Kritik Stok Emniyet Altında Olan Ürünler: ${data.lowStockItems.map(i => `${i.name}: ${i.current} ${i.unit} (Min: ${i.min})`).join(', ') || 'Yok'}
 - Bekleyen Siparişler: ${data.pendingOrdersCount} adet. Acil siparişler: ${data.criticalOrders.map(o => `${o.customer} (${o.product} ${o.qty})`).join(', ') || 'Yok'}.
 - Müşteri Kotaları: ${data.activeQuotasCount} aktif sözleşme. Kalan kotası 500 m2 altı: ${data.lowQuotaAlerts.map(q => `${q.customer} (${q.remaining} ${q.unit})`).join(', ') || 'Yok'}.
