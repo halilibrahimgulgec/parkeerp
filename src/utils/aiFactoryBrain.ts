@@ -47,8 +47,11 @@ export interface ProductStockDetail {
 export interface QuotaItemDetail {
   id: string;
   customerName: string;
+  customer?: string;
   siteName?: string;
+  site?: string;
   productName?: string;
+  product?: string;
   target: number;
   shipped: number;
   remaining: number;
@@ -113,7 +116,10 @@ export interface FactorySnapshot {
 
 export function normalizeTurkish(str: string): string {
   return (str || '')
+    .replace(/İ/g, 'i')
+    .replace(/I/g, 'i')
     .toLocaleLowerCase('tr-TR')
+    .replace(/\u0307/g, '')
     .replace(/i̇/g, 'i')
     .replace(/ı/g, 'i')
     .replace(/ş/g, 's')
@@ -333,11 +339,18 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
       const pct = Math.round((shipped / target) * 100);
       const threshold = Number(q.alert_threshold_pct) || 85;
 
+      const custName = q.customers?.name || 'Müşteri';
+      const prodName = q.products?.name || 'Parke Taşı';
+      const sName = q.sites?.name || '';
+
       const qItem: QuotaItemDetail = {
         id: q.id,
-        customerName: q.customers?.name || 'Müşteri',
-        siteName: q.sites?.name,
-        productName: q.products?.name,
+        customerName: custName,
+        customer: custName,
+        siteName: sName,
+        site: sName,
+        productName: prodName,
+        product: prodName,
         target,
         shipped,
         remaining,
@@ -890,9 +903,18 @@ export function runLocalFactoryIntelligence(query: string, data: FactorySnapshot
     }
 
     if (data.lowQuotaAlerts.length > 0) {
-      text += `⚠️ **Tükenmek Üzere Olan Müşteri Kotaları (<500 m²):**\n`;
+      text += `⚠️ **Tükenmek Üzere Olan / Dolan Müşteri Kotaları (<500 m²):**\n`;
       data.lowQuotaAlerts.forEach(q => {
-        text += `• **${q.customer}** (${q.product}): Kalan **${q.remaining} ${q.unit}**\n`;
+        const cust = q.customerName || q.customer || 'Müşteri';
+        const prod = q.productName || q.product || 'Ürün';
+        const site = q.siteName || q.site ? ` (${q.siteName || q.site})` : '';
+        const unit = q.unit.toLowerCase() === 'm2' ? 'm²' : q.unit;
+
+        if (q.isExceeded || q.remaining <= 0) {
+          text += `• 🛑 **${cust}**${site} - **${prod}**: 🚨 **KOTA %${q.pct} DOLDU / AŞILDI** (Taahhüt: ${q.target.toLocaleString('tr-TR')} | Sevk: ${q.shipped.toLocaleString('tr-TR')} ${unit} ➔ **${Math.abs(q.remaining).toLocaleString('tr-TR')} ${unit} aşım**)\n`;
+        } else {
+          text += `• ⚠️ **${cust}**${site} - **${prod}**: Kalan **${q.remaining.toLocaleString('tr-TR')} ${unit}** (Hedef: ${q.target.toLocaleString('tr-TR')} | Sevk: ${q.shipped.toLocaleString('tr-TR')} | Doluluk: %${q.pct})\n`;
+        }
       });
       text += `\n💡 *Satış ekibinin bu müşterilerle yeni sözleşme görüşmesi yapması önerilir.*`;
     }

@@ -174,6 +174,65 @@ export function formatProductStockResponse(products: ProductStockDetail[]): stri
 }
 
 // ---------------------------------------------------------------------------
+// 2.7 DYNAMIC INVOICE MATCHER & FORMATTER (Real-Time Waybill Lookup)
+// ---------------------------------------------------------------------------
+export function extractInvoiceNumber(query: string): string | null {
+  if (!query) return null;
+  const qNorm = normalizeTurkish(query);
+
+  const hasInvoiceWord = qNorm.includes('irsaliye') || qNorm.includes('irs') || qNorm.includes('fatura');
+  if (!hasInvoiceWord) return null;
+
+  // 1) "2453 nolu", "2453 no'lu", "2453 numarali", "2453 irsaliye"
+  const m1 = qNorm.match(/\b(\d{3,6})\s*(?:nolu|no'lu|numarali|numara|irsaliye|irs)\b/);
+  if (m1) return m1[1];
+
+  // 2) "irsaliye no 2453", "irsaliye 2453", "irs 2453", "fatura 2453"
+  const m2 = qNorm.match(/\b(?:irsaliye|irs|fatura|no)\s*[:#]?\s*(\d{3,6})\b/);
+  if (m2) return m2[1];
+
+  // 3) Any 3-6 digit number in an invoice-related query
+  const m3 = qNorm.match(/\b(\d{3,6})\b/);
+  if (m3) return m3[1];
+
+  return null;
+}
+
+export function handleDynamicInvoiceQuery(invoiceNo: string, data: FactorySnapshot): string {
+  const cleanInv = invoiceNo.trim();
+  const found = data.todayRecentShipments.find(s => {
+    const sInv = s.invoice.trim();
+    return sInv === cleanInv || sInv.includes(cleanInv) || cleanInv.includes(sInv);
+  });
+
+  if (found) {
+    let text = `📄 **İrsaliye No: ${found.invoice} Detayı**\n\n`;
+    text += `* 🏢 **Cari / Müşteri:** **${found.customer}**\n`;
+    text += `* 📍 **Teslim Şantiyesi:** **${found.site || 'Ana Şantiye / Merkez'}**\n`;
+    if (found.plate || found.driver) {
+      text += `* 🚛 **Araç / Şoför:** ${found.plate || '-'} ${found.driver ? `(${found.driver})` : ''}\n`;
+    }
+    text += `* 📦 **Sevk Edilen Malzeme:**\n`;
+    if (found.items && found.items.length > 0) {
+      found.items.forEach(it => {
+        const u = it.unit === 'metre' ? 'Metre' : it.unit === 'adet' ? 'Adet' : 'm²';
+        text += `   • **${it.m2.toLocaleString('tr-TR')} ${u}** ${it.name}\n`;
+      });
+    } else {
+      text += `   • ${found.qty}\n`;
+    }
+    if (found.netWeight > 0) {
+      text += `* ⚖️ **Kantar Net Tonajı:** **${(found.netWeight / 1000).toFixed(2)} Ton** (${found.netWeight.toLocaleString('tr-TR')} kg)\n`;
+    }
+    text += `* ⏱️ **Durum:** Kantar sevkiyatı tamamlandı ve sevk edildi.`;
+    return text;
+  }
+
+  return `ℹ️ **${cleanInv} nolu irsaliye bugünkü (${data.todayDate}) sevkiyatlar arasında bulunamadı.**\n\n` +
+    `Bugün çıkan irsaliyeleri listelemek için *"Bugün çıkan son sevkiyatlar hangileri?"* sorusunu sorabilirsiniz.`;
+}
+
+// ---------------------------------------------------------------------------
 // 3. 60-QUESTION INDUSTRIAL KNOWLEDGE & BENCHMARK CATALOG
 // ---------------------------------------------------------------------------
 export interface QuestionDefinition {
@@ -326,7 +385,7 @@ export const FACTORY_60_QUESTIONS: QuestionDefinition[] = [
     category: 'shipment',
     categoryTitle: '🚚 Sevkiyat & Kantar',
     question: 'Sevkiyatta 2400 nolu irsaliyede ne var?',
-    keywords: ['2400 nolu', 'irsaliye 2400', 'irs 2400', '2400 irsaliye'],
+    keywords: ['2400 nolu', 'irsaliye 2400', 'irs 2400', '2400 irsaliye', 'nolu irsaliyede ne var', 'nolu irsaliyede neler var', 'irsaliyede ne var', 'irsaliyede neler var'],
   },
 
   // ----------------- BÖLÜM 3: PALET TAKİBİ & ŞANTİYE ZİMMETLERİ (21-30) -----------------
@@ -521,7 +580,11 @@ export const FACTORY_60_QUESTIONS: QuestionDefinition[] = [
     category: 'order',
     categoryTitle: '🎯 Siparişler & Kotalar',
     question: 'Hangi müşterinin taahhüt kotası %100 doldu?',
-    keywords: ['taahhut kotasi %100 doldu', 'kotasi dolan musteri', 'kota asimi'],
+    keywords: [
+      'taahhut kotasi %100 doldu', 'kotasi dolan musteri', 'kota asimi',
+      'sozlesmesi biten', 'sozlesmesi dolan', 'sozlesmesi biten musteri',
+      'kotasi biten', 'sozlesmesi biten var mi', 'biten sozlesme', 'kotasi doldu'
+    ],
   },
   {
     id: 48,
@@ -875,18 +938,7 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
 
     // Soru 20: Sevkiyatta 2400 nolu irsaliyede ne var?
     case 20: {
-      const targetInv = data.todayRecentShipments.find(s => s.invoice.includes('2400'));
-      if (targetInv) {
-        return `📄 **İrsaliye No: ${targetInv.invoice} Detayı**\n\n` +
-          `* **Cari / Müşteri:** ${targetInv.customer}\n` +
-          `* **Şantiye:** ${targetInv.site}\n` +
-          `* **Araç / Şoför:** ${targetInv.plate || '-'} ${targetInv.driver ? `(${targetInv.driver})` : ''}\n` +
-          `* **İçerik:** ${targetInv.qty}\n` +
-          `* **Kantar Net Tonajı:** ${targetInv.netWeight > 0 ? `${(targetInv.netWeight / 1000).toFixed(2)} Ton` : 'Tartım girilmedi'}\n` +
-          `* **Durum:** Sistemde kayıtlı ve sevk edilmiştir.`;
-      }
-      return `ℹ️ **2400 nolu irsaliye bugünkü (${data.todayDate}) sevkiyatlar arasında bulunmamaktadır.**\n\n` +
-        `Bugün çıkan aktif irsaliyeleri listelemek için *"Bugün çıkan son sevkiyatlar hangileri?"* sorusunu sorabilirsiniz.`;
+      return handleDynamicInvoiceQuery('2400', data);
     }
 
     // Soru 21: Paletlerin toplam değeri ne kadar?
@@ -1220,15 +1272,23 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
 
     // Soru 43: Medikent in taahhüt kotası doldu mu, ne kadar kaldı?
     case 43: {
-      const medQuota = (data.quotaDetails || []).find(q => normalizeTurkish(q.customer).includes('medikent'));
+      const medQuota = (data.quotaDetails || []).find(q => {
+        const c = q.customerName || q.customer || '';
+        return normalizeTurkish(c).includes('medikent');
+      });
       if (medQuota) {
+        const cust = medQuota.customerName || medQuota.customer || 'Medikent';
+        const prod = medQuota.productName || medQuota.product || 'Parke Taşı';
+        const site = medQuota.siteName || medQuota.site ? ` (${medQuota.siteName || medQuota.site})` : '';
+        const unit = medQuota.unit.toLowerCase() === 'm2' ? 'm²' : medQuota.unit;
+
         return `📋 **MEDİKENT - Taahhüt & Kota Takip Raporu**\n\n` +
-          `* **Cari / Şantiye:** ${medQuota.customer} ${medQuota.site ? `(${medQuota.site})` : ''}\n` +
-          `* **Ürün:** ${medQuota.product}\n` +
-          `* **Sözleşme / Hedef Kota:** **${medQuota.target.toLocaleString('tr-TR')} ${medQuota.unit}**\n` +
-          `* **Gerçekleşen Sevk:** **${medQuota.shipped.toLocaleString('tr-TR')} ${medQuota.unit}**\n` +
-          `* **Kalan Miktar:** **${medQuota.remaining.toLocaleString('tr-TR')} ${medQuota.unit}** (Doluluk: %${medQuota.pct})\n` +
-          `* **Durum:** ${medQuota.isExceeded ? '🚨 **Sözleşme kotası dolmuş/aşılmıştır!** Ek protokol hazırlanmalıdır.' : medQuota.remaining < 500 ? '⚠️ **Kritik eşikte** (500 birimin altında kaldı).' : '✅ Normal sevkiyat bandında devam ediyor.'}`;
+          `* **Cari / Şantiye:** **${cust}**${site}\n` +
+          `* **Sözleşmeli Ürün:** **${prod}**\n` +
+          `* **Sözleşme / Hedef Kota:** **${medQuota.target.toLocaleString('tr-TR')} ${unit}**\n` +
+          `* **Gerçekleşen Toplam Sevk:** **${medQuota.shipped.toLocaleString('tr-TR')} ${unit}**\n` +
+          `* **Kalan Kota:** **${medQuota.remaining <= 0 ? `🚨 0 ${unit} (KOTA %${medQuota.pct} AŞILDI)` : `${medQuota.remaining.toLocaleString('tr-TR')} ${unit}` }**\n` +
+          `* **Durum:** ${medQuota.isExceeded ? `🚨 **Sözleşme kotası dolmuş ve ${Math.abs(medQuota.remaining).toLocaleString('tr-TR')} ${unit} aşılmıştır!** Ek protokol hazırlanmalıdır.` : medQuota.remaining < 500 ? '⚠️ **Kritik eşikte** (500 birimin altında kaldı).' : '✅ Normal sevkiyat bandında devam ediyor.'}`;
       }
       return `ℹ️ **Medikent** adına tanımlı aktif bir sözleşme kotası bulunmamaktadır. Kotalar ekranından yeni sözleşme eklenebilir.`;
     }
@@ -1238,8 +1298,18 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
       if (data.lowQuotaAlerts && data.lowQuotaAlerts.length > 0) {
         let text = `⚠️ **Kotası 500 m² Altına Düşen veya Dolan Sözleşmeler**\n\n`;
         data.lowQuotaAlerts.forEach(q => {
-          text += `• **${q.customer}** ${q.site ? `(${q.site})` : ''} - ${q.product}:\n`;
-          text += `  Hedef: ${q.target.toLocaleString('tr-TR')} | Sevk: ${q.shipped.toLocaleString('tr-TR')} | **Kalan: ${q.remaining.toLocaleString('tr-TR')} ${q.unit}** (%${q.pct} doluluk)\n`;
+          const cust = q.customerName || q.customer || 'Müşteri';
+          const prod = q.productName || q.product || 'Parke Taşı';
+          const site = q.siteName || q.site ? ` (${q.siteName || q.site})` : '';
+          const unit = q.unit.toLowerCase() === 'm2' ? 'm²' : q.unit;
+
+          if (q.isExceeded || q.remaining <= 0) {
+            text += `• 🛑 **${cust}**${site} - **${prod}**:\n`;
+            text += `  Taahhüt: ${q.target.toLocaleString('tr-TR')} ${unit} | Sevk: ${q.shipped.toLocaleString('tr-TR')} ${unit} ➔ 🚨 **KOTA %${q.pct} AŞILDI** (${Math.abs(q.remaining).toLocaleString('tr-TR')} ${unit} fazla sevk)\n`;
+          } else {
+            text += `• ⚠️ **${cust}**${site} - **${prod}**:\n`;
+            text += `  Taahhüt: ${q.target.toLocaleString('tr-TR')} ${unit} | Sevk: ${q.shipped.toLocaleString('tr-TR')} ${unit} ➔ **Kalan: ${q.remaining.toLocaleString('tr-TR')} ${unit}** (%${q.pct} doluluk)\n`;
+          }
         });
         text += `\n💡 *Pazarlama ve sözleşme ekibinin bu müşterilerle yeni protokol yapması önerilir.*`;
         return text;
@@ -1262,26 +1332,39 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
         `* **Kapsam:** Belediye ihaleleri, toplu konut şantiyeleri ve müteahhit taahhütleri.`;
     }
 
-    // Soru 47: Hangi müşterinin taahhüt kotası %100 doldu?
+    // Soru 47: Hangi müşterinin taahhüt kotası %100 doldu? / Sözleşmesi biten müşteri var mı?
     case 47: {
       if (data.exceededQuotas && data.exceededQuotas.length > 0) {
-        let text = `🚨 **Taahhüt Kotası %100 Dolan / Aşan Müşteriler**\n\n`;
+        let text = `🚨 **Sözleşmesi Biten / Taahhüt Kotası %100 Dolan Müşteriler**\n\n`;
+        text += `Aşağıdaki müşterilerin sözleşme taahhüt kotaları tamamlanmış veya aşılmıştır:\n\n`;
         data.exceededQuotas.forEach(q => {
-          text += `• **${q.customer}** ${q.site ? `(${q.site})` : ''} - ${q.product}:\n`;
-          text += `  Taahhüt: ${q.target.toLocaleString('tr-TR')} ${q.unit} | Toplam Sevk: **${q.shipped.toLocaleString('tr-TR')} ${q.unit}** (Doluluk: **%${q.pct}**)\n`;
+          const cust = q.customerName || q.customer || 'Müşteri';
+          const prod = q.productName || q.product || 'Parke Taşı';
+          const site = q.siteName || q.site ? ` (${q.siteName || q.site})` : '';
+          const unit = q.unit.toLowerCase() === 'm2' ? 'm²' : q.unit;
+
+          text += `• 🛑 **${cust}**${site} - **${prod}**\n`;
+          text += `  - **Sözleşme Kotası:** ${q.target.toLocaleString('tr-TR')} ${unit}\n`;
+          text += `  - **Toplam Yapılan Sevk:** **${q.shipped.toLocaleString('tr-TR')} ${unit}** (Doluluk: **%${q.pct}**)\n`;
           if (q.remaining < 0) {
-            text += `  ⚠️ **Aşım Miktarı: ${Math.abs(q.remaining).toLocaleString('tr-TR')} ${q.unit} fazla sevk yapılmıştır!**\n`;
+            text += `  - ⚠️ **Kota Aşımı:** **${Math.abs(q.remaining).toLocaleString('tr-TR')} ${unit}** sözleşme üstü sevk yapılmıştır!\n`;
+          } else {
+            text += `  - ✅ **Durum:** Sözleşme taahhüdü tam olarak (%100) tamamlanmıştır.\n`;
           }
+          text += `\n`;
         });
-        text += `\n💡 *Sistemin bu carilere sevkiyatı durdurması veya ek sözleşme onayı istemesi tavsiye edilir.*`;
+        text += `💡 *Öneri: Sevkiyatın devamı için ilgili müşterilerle acilen ek protokol veya yeni sözleşme imzalanmalıdır.*`;
         return text;
       }
       if (data.quotaDetails && data.quotaDetails.length > 0) {
         const sorted = [...data.quotaDetails].sort((a, b) => b.pct - a.pct);
         const top = sorted[0];
-        return `✅ **Şu an kotası %100 dolan veya aşan müşteri bulunmamaktadır.**\n\n` +
-          `* **En Yüksek Doluluk Oranı:** **${top.customer}** (%${top.pct} - Kalan: ${top.remaining.toLocaleString('tr-TR')} ${top.unit})\n` +
-          `* Tüm açık taahhütler sözleşme limitleri dahilinde sevk edilmektedir.`;
+        const cust = top.customerName || top.customer || 'Müşteri';
+        const prod = top.productName || top.product || 'Parke Taşı';
+        const unit = top.unit.toLowerCase() === 'm2' ? 'm²' : top.unit;
+        return `✅ **Şu an taahhüt kotası %100 dolan veya aşan müşteri bulunmamaktadır.**\n\n` +
+          `* **Kotaya En Yakın Müşteri:** **${cust}** (${prod}) ➔ %${top.pct} doluluk (Kalan: ${top.remaining.toLocaleString('tr-TR')} ${unit})\n` +
+          `* Tüm açık sözleşmeler taahhüt sınırları dahilinde devam etmektedir.`;
       }
       return `ℹ️ Sistemde tanımlı aktif müşteri kotası bulunmamaktadır.`;
     }
@@ -1436,6 +1519,12 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
 export function matchAndAnswer60Questions(query: string, data: FactorySnapshot): string | null {
   const qNorm = normalizeTurkish(query);
   if (!qNorm) return null;
+
+  // 0. Dynamic Waybill / Invoice lookup (Handles e.g. "2453 nolu irsaliyede neler var", "2454 nolu irsaliye", "irsaliye 2450")
+  const invoiceNum = extractInvoiceNumber(query);
+  if (invoiceNum) {
+    return handleDynamicInvoiceQuery(invoiceNum, data);
+  }
 
   // 1. Context updates for customer/site in query
   const matchedSite = data.todayRecentShipments.find((s) => {
@@ -1632,6 +1721,12 @@ export function matchAndAnswer60Questions(query: string, data: FactorySnapshot):
   }
   if (qNorm.includes('500') && qNorm.includes('kota')) {
     return answerQuestion(44, data);
+  }
+  if (
+    (qNorm.includes('sozlesme') || qNorm.includes('kota') || qNorm.includes('taahhut')) &&
+    (qNorm.includes('biten') || qNorm.includes('dolan') || qNorm.includes('bitti') || qNorm.includes('doldu') || qNorm.includes('asan') || qNorm.includes('asim') || qNorm.includes('100') || qNorm.includes('tuken'))
+  ) {
+    return answerQuestion(47, data);
   }
   if (qNorm.includes('onikisubat') && (qNorm.includes('siparis') || qNorm.includes('is emri'))) {
     return answerQuestion(45, data);
