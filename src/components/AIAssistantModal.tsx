@@ -15,7 +15,10 @@ import {
   Printer,
   MessageSquare,
   Zap,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 import {
   getLiveFactorySnapshot,
   generateExecutiveBriefingText,
@@ -23,6 +26,10 @@ import {
   FactorySnapshot,
 } from '../utils/aiFactoryBrain';
 import { FACTORY_CORE_RULES } from '../utils/aiFactorySelfLearningEngine';
+import { AIActionApprovalCard } from './AIActionApprovalCard';
+import { ActionDraftPayload } from '../types/aiActionTypes';
+import { parseActionIntentFromQuery } from '../utils/aiActionEngine';
+import { speakTurkishText, stopSpeaking, isSpeaking } from '../utils/aiVoiceTTS';
 
 interface ChatMessage {
   id: string;
@@ -30,9 +37,13 @@ interface ChatMessage {
   text: string;
   time: string;
   userQuery?: string;
+  actionDraft?: ActionDraftPayload;
 }
 
 const QUICK_PROMPTS = [
+  { label: '🚚 Kantar Fişi Hazırla', query: "Ahmet Yılmaz 46 K 1234 kamyonuna 15 palet 8'lik kilit parke yüklendi kantar fişi hazırla" },
+  { label: '🏭 Üretim Girişi Yap', query: "1 nolu makinede 500 m2 8'lik parke basıldı 15 m2 fire var üretim kaydet" },
+  { label: '🪵 Palet İadesi Al', query: "Medikent şantiyesinden 40 tahta palet iade geldi" },
   { label: '📊 Bugün Üretim & Sevk', query: 'Bugünkü üretim miktarları, fire durumu ve kantar sevkiyatları ne durumda?' },
   { label: '📈 Aylık Kümülatif Üretim', query: 'Bu ay kümülatif toplam kaç m² parke ve bordür ürettik?' },
   { label: '🪵 Paletlerin Değeri', query: 'Paletlerin toplam değeri ne kadar?' },
@@ -44,6 +55,7 @@ const QUICK_PROMPTS = [
 ];
 
 export default function AIAssistantModal() {
+  const { user } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'chat' | 'briefing'>('chat');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -57,9 +69,32 @@ export default function AIAssistantModal() {
   const [apiKey, setApiKey] = useState('');
   const [copiedBriefing, setCopiedBriefing] = useState(false);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
+  const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
+  const [autoSpeak, setAutoSpeak] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
+
+  const handleToggleSpeak = (msgId: string, text: string) => {
+    if (speakingMsgId === msgId) {
+      stopSpeaking();
+      setSpeakingMsgId(null);
+    } else {
+      setSpeakingMsgId(msgId);
+      speakTurkishText(
+        text,
+        () => setSpeakingMsgId(msgId),
+        () => setSpeakingMsgId(null),
+        () => setSpeakingMsgId(null)
+      );
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      stopSpeaking();
+    };
+  }, []);
 
   // Load saved API key on mount
   useEffect(() => {
@@ -182,6 +217,26 @@ export default function AIAssistantModal() {
         setSnapshot(currentData);
       }
 
+      // 1. Action Intent Recognition (Kantar, Sevkiyat, Üretim, Palet İade Girişi)
+      const actionDraft = await parseActionIntentFromQuery(query, currentData);
+      if (actionDraft) {
+        const actionMsg: ChatMessage = {
+          id: `a-${Date.now()}`,
+          role: 'assistant',
+          text: `📋 **${actionDraft.title}** hazırlandı. Lütfen aşağıdaki bilgileri kontrol edip onaylayınız:`,
+          time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+          userQuery: query,
+          actionDraft,
+        };
+        setMessages((prev) => [...prev, actionMsg]);
+        if (autoSpeak) {
+          handleToggleSpeak(actionMsg.id, actionMsg.text);
+        }
+        setIsLoading(false);
+        return;
+      }
+
+      // 2. Standard Autonomous Question Answering
       const chatHistory = messages.map((m) => ({
         role: m.role,
         text: m.text,
@@ -198,6 +253,9 @@ export default function AIAssistantModal() {
       };
 
       setMessages((prev) => [...prev, aiMsg]);
+      if (autoSpeak) {
+        handleToggleSpeak(aiMsg.id, aiMsg.text);
+      }
     } catch (err) {
       console.error('AI yanıt üretirken hata:', err);
       setMessages((prev) => [
@@ -388,6 +446,15 @@ export default function AIAssistantModal() {
                 <RefreshCw className={`w-4 h-4 ${isRefreshingSnapshot ? 'animate-spin text-amber-400' : ''}`} />
               </button>
               <button
+                onClick={() => setAutoSpeak(!autoSpeak)}
+                className={`p-1.5 rounded-lg transition-colors ${
+                  autoSpeak ? 'bg-amber-500 text-white' : 'hover:bg-slate-700/60 text-slate-300 hover:text-white'
+                }`}
+                title={autoSpeak ? 'Otomatik Sesli Okuma Açık (Her yanıt okunur)' : 'Otomatik Sesli Okuma Kapalı'}
+              >
+                {autoSpeak ? <Volume2 className="w-4 h-4 text-white" /> : <VolumeX className="w-4 h-4 text-slate-400" />}
+              </button>
+              <button
                 onClick={() => setShowSettings(!showSettings)}
                 className={`p-1.5 rounded-lg transition-colors ${
                   showSettings ? 'bg-amber-500 text-white' : 'hover:bg-slate-700/60 text-slate-300 hover:text-white'
@@ -504,7 +571,22 @@ export default function AIAssistantModal() {
                         }`}
                       >
                         {msg.role === 'assistant' ? (
-                          renderFormattedMarkdown(msg.text)
+                          <>
+                            {renderFormattedMarkdown(msg.text)}
+
+                            {/* Action Approval Card (Human-in-the-Loop) */}
+                            {msg.actionDraft && (
+                              <AIActionApprovalCard
+                                draft={msg.actionDraft}
+                                currentUser={user}
+                                onUpdateDraft={(updated) => {
+                                  setMessages((prev) =>
+                                    prev.map((m) => (m.id === msg.id ? { ...m, actionDraft: updated } : m))
+                                  );
+                                }}
+                              />
+                            )}
+                          </>
                         ) : (
                           <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
                         )}
@@ -527,6 +609,29 @@ export default function AIAssistantModal() {
                                 <>
                                   <Copy className="w-3 h-3" />
                                   <span>Kopyala</span>
+                                </>
+                              )}
+                            </button>
+
+                            {/* Voice TTS Listen button */}
+                            <button
+                              onClick={() => handleToggleSpeak(msg.id, msg.text)}
+                              className={`px-2.5 py-1 rounded text-[11px] flex items-center gap-1 font-medium transition-colors ${
+                                speakingMsgId === msg.id
+                                  ? 'bg-amber-100 text-amber-800 font-bold animate-pulse'
+                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                              }`}
+                              title={speakingMsgId === msg.id ? 'Sesli okumayı durdur' : 'Cevabı sesli dinle'}
+                            >
+                              {speakingMsgId === msg.id ? (
+                                <>
+                                  <VolumeX className="w-3 h-3 text-amber-700" />
+                                  <span>Durdur</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Volume2 className="w-3 h-3 text-slate-500" />
+                                  <span>Dinle</span>
                                 </>
                               )}
                             </button>
