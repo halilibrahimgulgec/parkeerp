@@ -19,6 +19,8 @@ import {
   VolumeX,
   Camera,
   Image as ImageIcon,
+  ShieldAlert,
+  ArrowRight,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -33,6 +35,13 @@ import { ActionDraftPayload } from '../types/aiActionTypes';
 import { parseActionIntentFromQuery } from '../utils/aiActionEngine';
 import { speakTurkishText, stopSpeaking, isSpeaking } from '../utils/aiVoiceTTS';
 import { analyzeImageWithVision, compressImageFile } from '../utils/aiVisionOCREngine';
+import {
+  runFactoryWatchdogScan,
+  formatWatchdogReportForChat,
+  formatWatchdogBriefingForTTS,
+} from '../utils/aiWatchdogEngine';
+import { WatchdogScanResult } from '../types/aiWatchdogTypes';
+import { AIWatchdogPanel } from './AIWatchdogPanel';
 
 interface ChatMessage {
   id: string;
@@ -45,6 +54,7 @@ interface ChatMessage {
 }
 
 const QUICK_PROMPTS = [
+  { label: '🚨 Fabrika Risklerini Tara', query: 'Fabrikadaki kantar dara sapmaları, makine fireleri ve kritik riskleri denetle' },
   { label: '🚚 Kantar Fişi Hazırla', query: "Ahmet Yılmaz 46 K 1234 kamyonuna 15 palet 8'lik kilit parke yüklendi kantar fişi hazırla" },
   { label: '🏭 Üretim Girişi Yap', query: "1 nolu makinede 500 m2 8'lik parke basıldı 15 m2 fire var üretim kaydet" },
   { label: '🪵 Palet İadesi Al', query: "Medikent şantiyesinden 40 tahta palet iade geldi" },
@@ -63,7 +73,7 @@ const QUICK_PROMPTS = [
 export default function AIAssistantModal() {
   const { user } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'chat' | 'briefing'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'watchdog' | 'briefing'>('chat');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -77,6 +87,10 @@ export default function AIAssistantModal() {
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
   const [autoSpeak, setAutoSpeak] = useState(false);
+
+  // Phase 3: Watchdog Anomaly Detector States
+  const [watchdogResult, setWatchdogResult] = useState<WatchdogScanResult | null>(null);
+  const [isScanningWatchdog, setIsScanningWatchdog] = useState(false);
 
   // Phase 2: Vision OCR & Image Upload States
   const [selectedImage, setSelectedImage] = useState<{
@@ -166,10 +180,25 @@ export default function AIAssistantModal() {
       setSnapshot(data);
       const generated = generateExecutiveBriefingText(data);
       setBriefingText(generated);
+      loadWatchdogScan(data);
     } catch (err) {
       console.error('Fabrika verisi çekilemedi:', err);
     } finally {
       setIsRefreshingSnapshot(false);
+    }
+  };
+
+  // Run Watchdog Scan
+  const loadWatchdogScan = async (targetSnapshot?: FactorySnapshot) => {
+    setIsScanningWatchdog(true);
+    try {
+      const snap = targetSnapshot || snapshot || await getLiveFactorySnapshot();
+      const res = await runFactoryWatchdogScan(snap);
+      setWatchdogResult(res);
+    } catch (err) {
+      console.error('Bekçi tarama hatası:', err);
+    } finally {
+      setIsScanningWatchdog(false);
     }
   };
 
@@ -307,7 +336,39 @@ export default function AIAssistantModal() {
         return;
       }
 
-      // 2. Standard Autonomous Question Answering
+      // 2. Watchdog / Anomaly / Leakage Query Recognition
+      const qLower = query.toLowerCase();
+      const isWatchdogQuery =
+        qLower.includes('anomali') ||
+        qLower.includes('bekçi') ||
+        qLower.includes('risk') ||
+        qLower.includes('kaçak') ||
+        qLower.includes('açık var mı') ||
+        (qLower.includes('dara') && (qLower.includes('sapma') || qLower.includes('fark') || qLower.includes('şüphe') || qLower.includes('sorun') || qLower.includes('hafif') || qLower.includes('ağır')));
+
+      if (isWatchdogQuery) {
+        let wRes = watchdogResult;
+        if (!wRes) {
+          wRes = await runFactoryWatchdogScan(currentData);
+          setWatchdogResult(wRes);
+        }
+        const reportText = formatWatchdogReportForChat(wRes);
+        const aiMsg: ChatMessage = {
+          id: `a-${Date.now()}`,
+          role: 'assistant',
+          text: reportText,
+          time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+          userQuery: query,
+        };
+        setMessages((prev) => [...prev, aiMsg]);
+        if (autoSpeak) {
+          handleToggleSpeak(aiMsg.id, formatWatchdogBriefingForTTS(wRes));
+        }
+        setIsLoading(false);
+        return;
+      }
+
+      // 3. Standard Autonomous Question Answering
       const chatHistory = messages.map((m) => ({
         role: m.role,
         text: m.text,
@@ -544,11 +605,11 @@ export default function AIAssistantModal() {
             </div>
           </div>
 
-          {/* Navigation Tabs (Only 2 Tabs: Sohbet & Gün Sonu Özeti) */}
+          {/* Navigation Tabs (3 Tabs: Sohbet, Bekçi Alarmları & Gün Sonu Özeti) */}
           <div className="flex border-b border-slate-100 bg-slate-50/70 px-3 pt-2 gap-1 text-xs font-semibold overflow-x-auto no-scrollbar">
             <button
               onClick={() => setActiveTab('chat')}
-              className={`flex items-center gap-1.5 pb-2 px-3 border-b-2 whitespace-nowrap transition-all ${
+              className={`flex items-center gap-1.5 pb-2 px-3 border-b-2 whitespace-nowrap transition-all cursor-pointer ${
                 activeTab === 'chat'
                   ? 'border-amber-500 text-amber-600 font-bold bg-white rounded-t-lg'
                   : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -557,6 +618,29 @@ export default function AIAssistantModal() {
               <MessageSquare className="w-3.5 h-3.5" />
               Fabrika Sohbeti
             </button>
+
+            <button
+              onClick={() => {
+                setActiveTab('watchdog');
+                if (!watchdogResult && snapshot) {
+                  loadWatchdogScan(snapshot);
+                }
+              }}
+              className={`flex items-center gap-1.5 pb-2 px-3 border-b-2 whitespace-nowrap transition-all cursor-pointer ${
+                activeTab === 'watchdog'
+                  ? 'border-rose-500 text-rose-600 font-bold bg-white rounded-t-lg'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <ShieldAlert className="w-3.5 h-3.5" />
+              <span>Bekçi Alarmları</span>
+              {watchdogResult && watchdogResult.criticalCount > 0 && (
+                <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-rose-500 text-white font-black animate-pulse">
+                  {watchdogResult.criticalCount}
+                </span>
+              )}
+            </button>
+
             <button
               onClick={() => {
                 setActiveTab('briefing');
@@ -564,7 +648,7 @@ export default function AIAssistantModal() {
                   setBriefingText(generateExecutiveBriefingText(snapshot));
                 }
               }}
-              className={`flex items-center gap-1.5 pb-2 px-3 border-b-2 whitespace-nowrap transition-all ${
+              className={`flex items-center gap-1.5 pb-2 px-3 border-b-2 whitespace-nowrap transition-all cursor-pointer ${
                 activeTab === 'briefing'
                   ? 'border-amber-500 text-amber-600 font-bold bg-white rounded-t-lg'
                   : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -600,7 +684,7 @@ export default function AIAssistantModal() {
                     const el = document.getElementById('gemini-key-input') as HTMLInputElement;
                     saveApiKey(el ? el.value : '');
                   }}
-                  className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-lg transition-colors"
+                  className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-lg transition-colors cursor-pointer"
                 >
                   Kaydet
                 </button>
@@ -613,6 +697,22 @@ export default function AIAssistantModal() {
             {/* TAB 1: CHAT */}
             {activeTab === 'chat' && (
               <>
+                {/* Watchdog Emergency Banner if critical anomalies exist */}
+                {watchdogResult && watchdogResult.criticalCount > 0 && (
+                  <div
+                    onClick={() => setActiveTab('watchdog')}
+                    className="mx-3 mt-2 px-3 py-2 bg-gradient-to-r from-rose-600 to-red-700 hover:from-rose-500 hover:to-red-600 text-white rounded-xl shadow-md flex items-center justify-between cursor-pointer animate-pulse shrink-0 text-xs transition-all"
+                  >
+                    <div className="flex items-center gap-2 font-bold truncate">
+                      <ShieldAlert className="w-4 h-4 text-white shrink-0" />
+                      <span className="truncate">🚨 DİKKAT: Fabrikada {watchdogResult.criticalCount} kritik anomali tespit edildi!</span>
+                    </div>
+                    <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-md font-semibold flex items-center gap-1 shrink-0 ml-2">
+                      İncele <ArrowRight className="w-3 h-3" />
+                    </span>
+                  </div>
+                )}
+
                 {/* Quick Prompts Bar */}
                 <div className="overflow-x-auto py-2 px-3 border-b border-slate-100 bg-white flex gap-1.5 no-scrollbar shrink-0 items-center">
                   {QUICK_PROMPTS.map((qp, index) => (
@@ -839,7 +939,27 @@ export default function AIAssistantModal() {
               </>
             )}
 
-            {/* TAB 2: BRIEFING */}
+            {/* TAB 2: WATCHDOG ANOMALIES */}
+            {activeTab === 'watchdog' && (
+              <AIWatchdogPanel
+                scanResult={watchdogResult}
+                isLoading={isScanningWatchdog}
+                onRefreshScan={() => loadWatchdogScan()}
+                onSelectActionDraft={(draft) => {
+                  setActiveTab('chat');
+                  const draftMsg: ChatMessage = {
+                    id: `a-${Date.now()}`,
+                    role: 'assistant',
+                    text: `📋 **${draft.title}** için telafi eylemi hazırlandı. Lütfen kontrol edip onaylayınız:`,
+                    time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+                    actionDraft: draft,
+                  };
+                  setMessages((prev) => [...prev, draftMsg]);
+                }}
+              />
+            )}
+
+            {/* TAB 3: BRIEFING */}
             {activeTab === 'briefing' && (
               <div className="flex-1 flex flex-col overflow-hidden p-4">
                 {/* Actions Toolbar */}
