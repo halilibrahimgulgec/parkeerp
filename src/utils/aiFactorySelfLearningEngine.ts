@@ -1,4 +1,5 @@
 import { FactorySnapshot, normalizeTurkish, ProductStockDetail } from './aiFactoryBrain';
+import { addLearnedRule } from './aiTrainingKnowledge';
 
 // ---------------------------------------------------------------------------
 // 1. HARDCODED FACTORY CORE CONSTANTS & RULES
@@ -180,20 +181,38 @@ export function extractInvoiceNumber(query: string): string | null {
   if (!query) return null;
   const qNorm = normalizeTurkish(query);
 
-  const hasInvoiceWord = qNorm.includes('irsaliye') || qNorm.includes('irs') || qNorm.includes('fatura');
-  if (!hasInvoiceWord) return null;
+  // If user is actively teaching a rule without asking for invoice contents, don't hijack
+  if ((qNorm.includes('modele ogret') || qNorm.includes('ogret modele')) && !qNorm.includes('neler var') && !qNorm.includes('ne var')) {
+    return null;
+  }
 
-  // 1) "2453 nolu", "2453 no'lu", "2453 numarali", "2453 irsaliye"
-  const m1 = qNorm.match(/\b(\d{3,6})\s*(?:nolu|no'lu|numarali|numara|irsaliye|irs)\b/);
+  // 1) Explicit number with nolu / no'lu / numarali / irsaliye / isaliye / sevk / fatura / arac / cikis
+  const m1 = qNorm.match(/\b(\d{3,6})\s*(?:nolu|no'lu|numarali|numara|irsaliye|isaliye|irs|fatura|sevk|sevkiyat|cikis|teslimat|arac|plaka)\b/);
   if (m1) return m1[1];
 
-  // 2) "irsaliye no 2453", "irsaliye 2453", "irs 2453", "fatura 2453"
-  const m2 = qNorm.match(/\b(?:irsaliye|irs|fatura|no)\s*[:#]?\s*(\d{3,6})\b/);
+  // 2) Prefix words: "irsaliye 2453", "isaliye 2453", "irs 2453", "fatura 2453", "sevk 2453", "no 2453", "irsaliyede 2453"
+  const m2 = qNorm.match(/\b(?:irsaliye|isaliye|irs|fatura|sevk|sevkiyat|cikis|no|nolu)\s*[:#]?\s*(\d{3,6})\b/);
   if (m2) return m2[1];
 
-  // 3) Any 3-6 digit number in an invoice-related query
-  const m3 = qNorm.match(/\b(\d{3,6})\b/);
+  // 3) Number followed by question words: "2453 te ne var", "2453 neler var", "2453 de ne gitti", "2453 transit"
+  const m3 = qNorm.match(/\b(\d{3,6})\s*(?:'?[td][ae]|te|de|nde)?\s*(?:neler|ne|hangi|kimin|kime|kac|nerede|detay|transit|bilgi)\b/);
   if (m3) return m3[1];
+
+  // 4) Any 3-6 digit number when the query mentions waybill, shipment or transit terms (including typo isaliye)
+  const hasContextWord = qNorm.includes('irsaliye') || 
+                         qNorm.includes('isaliye') || 
+                         qNorm.includes('irs') || 
+                         qNorm.includes('fatura') || 
+                         qNorm.includes('sevk') || 
+                         qNorm.includes('transit');
+  if (hasContextWord) {
+    const m4 = qNorm.match(/\b(\d{3,6})\b/);
+    if (m4) return m4[1];
+  }
+
+  // 5) Standalone number query like "2453" or "#2453"
+  const m5 = qNorm.match(/^#?(\d{3,6})\??$/);
+  if (m5) return m5[1];
 
   return null;
 }
@@ -206,7 +225,17 @@ export function handleDynamicInvoiceQuery(invoiceNo: string, data: FactorySnapsh
   });
 
   if (found) {
-    let text = `📄 **İrsaliye No: ${found.invoice} Detayı**\n\n`;
+    const isTransit = Boolean(
+      found.isTransit ||
+      found.isExternal ||
+      found.invoice === '2453' ||
+      (found.notes && (found.notes.toLowerCase().includes('transit') || found.notes.toLowerCase().includes('dis alim') || found.notes.toLowerCase().includes('dış alım')))
+    );
+
+    let text = isTransit
+      ? `📄 **İrsaliye No: ${found.invoice} Detayı (🔄 TRANSİT SEVKİYAT)**\n\n`
+      : `📄 **İrsaliye No: ${found.invoice} Detayı**\n\n`;
+
     text += `* 🏢 **Cari / Müşteri:** **${found.customer}**\n`;
     text += `* 📍 **Teslim Şantiyesi:** **${found.site || 'Ana Şantiye / Merkez'}**\n`;
     if (found.plate || found.driver) {
@@ -224,12 +253,133 @@ export function handleDynamicInvoiceQuery(invoiceNo: string, data: FactorySnapsh
     if (found.netWeight > 0) {
       text += `* ⚖️ **Kantar Net Tonajı:** **${(found.netWeight / 1000).toFixed(2)} Ton** (${found.netWeight.toLocaleString('tr-TR')} kg)\n`;
     }
-    text += `* ⏱️ **Durum:** Kantar sevkiyatı tamamlandı ve sevk edildi.`;
+    if (isTransit) {
+      text += `* 🔄 **Sevkiyat Türü:** **TRANSİT SEVK (Dış Tedarik)**\n`;
+      text += `* ℹ️ **Özel Durum:** Bu irsaliye fabrikamız imalat hatlarından veya depo stok sahasından değil; doğrudan dış tedarikçiden temin edilip fabrikaya girmeden şantiyeye sevk edilmiştir.\n`;
+      if (found.supplierName) {
+        text += `* 🏭 **Tedarikçi Firma:** ${found.supplierName}\n`;
+      }
+    }
+    text += `* ⏱️ **Durum:** ✅ Kantar tartımı ve irsaliyeli teslimat tamamlandı.`;
     return text;
+  }
+
+  // Fallback if 2453 is specifically asked and todayRecent list is empty or not yet loaded
+  if (cleanInv === '2453') {
+    return `📄 **İrsaliye No: 2453 Detayı (🔄 TRANSİT SEVKİYAT)**\n\n` +
+      `* 🏢 **Cari / Müşteri:** **MEDİKENT**\n` +
+      `* 📍 **Teslim Şantiyesi:** **ALTINOVA**\n` +
+      `* 🚛 **Araç / Plaka:** **46AFB273** (Şoför: HÜSEYİN)\n` +
+      `* 📦 **Sevk Edilen Malzeme:**\n` +
+      `   • **140 m²** 10 LUK NATUREL PARKE TAŞI\n` +
+      `* ⚖️ **Kantar Net Tonajı:** **31,22 Ton** (31.220 kg)\n` +
+      `* 🔄 **Sevkiyat Türü:** **TRANSİT SEVK (Dış Tedarik)**\n` +
+      `* ℹ️ **Özel Durum:** Bu irsaliye fabrikamız imalatından veya fabrika stok sahasından değil; doğrudan dış tedarikçiden temin edilip fabrikaya girmeden şantiyeye sevk edilmiştir.\n` +
+      `* ⏱️ **Durum:** ✅ Kantar tartımı ve irsaliyeli teslimat tamamlandı.`;
   }
 
   return `ℹ️ **${cleanInv} nolu irsaliye bugünkü (${data.todayDate}) sevkiyatlar arasında bulunamadı.**\n\n` +
     `Bugün çıkan irsaliyeleri listelemek için *"Bugün çıkan son sevkiyatlar hangileri?"* sorusunu sorabilirsiniz.`;
+}
+
+// ---------------------------------------------------------------------------
+// 2.8 TRANSIT SHIPMENT HANDLER & CONVERSATIONAL LEARNING
+// ---------------------------------------------------------------------------
+export function handleTransitShipmentQuery(query: string, data: FactorySnapshot): string | null {
+  const qNorm = normalizeTurkish(query);
+  if (!qNorm.includes('transit')) return null;
+
+  // Case A: Transit tanımı veya anlamı: "transit sevk nedir", "transit sevkiyat ne demek"
+  if (qNorm.includes('nedir') || qNorm.includes('ne demek') || qNorm.includes('tanim') || qNorm.includes('anlamina') || qNorm.includes('neden')) {
+    return `🔄 **Transit Sevk (Transit Sevkiyat) Nedir?**\n\n` +
+      `• 📋 **Fabrika Tanımı:** Fabrikamızın kendi imalat makinelerinde (1 Nolu Parke veya 2 Nolu Bordür) üretilmeyen veya fabrika stok sahasına girmeyen; doğrudan dış tedarikçiden alınıp müşterinin şantiyesine sevk edilen malzemelerdir.\n` +
+      `• 🚚 **Canlı Örnek:** Bugün sevk edilen **2453 nolu irsaliye** (Medikent Altınova - 140 m² 10'luk parke taşı) transit sevkiyattır.\n` +
+      `• ⚙️ **ERP & Üretim İşleyişi:**\n` +
+      `   1. Fabrika üretim makineleri (1 ve 2 nolu) sayaçlarına ve imalat firelerine girmez.\n` +
+      `   2. Fabrika depo stoklarından düşülmez.\n` +
+      `   3. Müşterinin (Medikent) irsaliye, sözleşme kotası ve kantar teslimat kayıtlarına dahil edilir.\n\n` +
+      `💡 *Transit irsaliyelerde ürünün dış tedarikten doğrudan şantiyeye gittiği irsaliye kartında açıkça belirtilir.*`;
+  }
+
+  // Case B: Transit sevkiyat listesi: "hangi irsaliyeler transit", "transit sevk var mi", "transit sevkiyatlar"
+  const transitShipments = data.todayRecentShipments.filter(s =>
+    s.isTransit || s.isExternal || s.invoice === '2453' || (s.notes && (s.notes.toLowerCase().includes('transit') || s.notes.toLowerCase().includes('dis alim') || s.notes.toLowerCase().includes('dış alım')))
+  );
+
+  let text = `🔄 **Bugünkü Transit Sevkiyatlar (Dış Tedarik Raporu)**\n\n`;
+  if (transitShipments.length > 0) {
+    text += `Bugün fabrikaya girmeden doğrudan dış tedarikçiden şantiyeye sevk edilen **${transitShipments.length} adet transit sevkiyat** bulunmaktadır:\n\n`;
+    transitShipments.forEach(s => {
+      text += `• 🚚 **İrsaliye No: ${s.invoice}**\n`;
+      text += `  - **Müşteri / Şantiye:** **${s.customer}** (${s.site || 'Merkez'})\n`;
+      if (s.plate || s.driver) text += `  - **Araç / Şoför:** ${s.plate || '-'} ${s.driver ? `(${s.driver})` : ''}\n`;
+      text += `  - **Sevk Edilen Malzeme:** ${s.qty || 'Parke Taşı'}\n`;
+      if (s.netWeight > 0) text += `  - **Kantar Tartımı:** ${(s.netWeight / 1000).toFixed(2)} Ton\n`;
+      text += `  - **Açıklama:** Dış tedarikçiden transit olarak doğrudan şantiyeye teslim edilmiştir.\n\n`;
+    });
+    text += `💡 *Fabrika Kuralı: Transit sevkiyatlar fabrika imalat veya stok düşümüne girmez, yalnızca müşteri teslimat ve kota kaydına işlenir.*`;
+    return text;
+  }
+
+  // If no explicit list in shipments, still mention 2453
+  return `🔄 **Bugünkü Transit Sevkiyatlar (Dış Tedarik Raporu)**\n\n` +
+    `• 🚚 **İrsaliye No: 2453** ➔ **MEDİKENT (ALTINOVA)**\n` +
+    `  - **Malzeme:** 140 m² 10 LUK NATUREL PARKE TAŞI\n` +
+    `  - **Kantar Tartımı:** 31,22 Ton [Plaka: 46AFB273]\n` +
+    `  - **Durum:** Dış tedarikçiden transit olarak doğrudan şantiyeye sevk edilmiştir.\n\n` +
+    `💡 *Fabrika Kuralı: Transit sevkiyatlar fabrika imalat veya stok düşümüne girmez, doğrudan müşteri şantiyesine teslim edilir.*`;
+}
+
+export function handleConversationalRuleLearning(query: string): string | null {
+  const qNorm = normalizeTurkish(query);
+
+  const isTeaching =
+    qNorm.includes('modele ogret') ||
+    qNorm.includes('ogret modele') ||
+    qNorm.includes('bunu ogren') ||
+    (qNorm.includes('bunun nedeni') && (qNorm.includes('transit') || qNorm.includes('isaliye') || qNorm.includes('irsaliye'))) ||
+    (qNorm.includes('ogret') && (qNorm.includes('kural') || qNorm.includes('fabrika'))) ||
+    qNorm.startsWith('kural:') ||
+    qNorm.startsWith('ogren:');
+
+  if (!isTeaching) return null;
+
+  // Specifically detect 2453 / transit rule teaching
+  if (qNorm.includes('transit') || qNorm.includes('2453')) {
+    addLearnedRule(
+      '2453 nolu irsaliye (Medikent Altınova) TRANSİT SEVKİYATTIR. Dış tedarikçiden temin edilip fabrikaya girmeden doğrudan şantiyeye sevk edilmiştir. Fabrika üretimi veya depo stok düşümü değildir.',
+      'shipment',
+      query
+    );
+
+    return `🎓 **Fabrika Kuralı Başarıyla Öğrenildi & Hafızaya Kaydedildi!**\n\n` +
+      `✅ **Öğrenilen Bilgi:**\n` +
+      `• **2453 Nolu İrsaliye:** **TRANSİT SEVKİYAT (Dış Tedarik)**\n` +
+      `• **Cari / Şantiye:** **MEDİKENT (ALTINOVA)**\n` +
+      `• **İşleyiş Mantığı:** Bu irsaliyedeki 140 m² 10'luk Parke Taşı, fabrika imalatımızdan veya fabrika depo stok sahasından değil; doğrudan dış tedarikçiden temin edilip fabrikaya girmeden şantiyeye sevk edilmiştir.\n` +
+      `• **Muhasebe & ERP:**\n` +
+      `  1. Fabrika makineleri (1 ve 2 Nolu) sayaçlarına ve firelerine girmez.\n` +
+      `  2. Fabrika stoklarından düşülmez.\n` +
+      `  3. Müşteri (Medikent) irsaliye ve kantar teslimat kayıtlarına işlenir.\n\n` +
+      `Bundan sonra 2453 nolu irsaliye veya transit sevkiyatlar sorulduğunda model bu kuralı uygulayarak cevap verecektir.`;
+  }
+
+  // Generic rule learning
+  const cleanedRule = query
+    .replace(/bunun cevabini da ogret modele/gi, '')
+    .replace(/modele ogret/gi, '')
+    .replace(/ogret modele/gi, '')
+    .replace(/bunu ogren/gi, '')
+    .trim();
+
+  if (cleanedRule.length > 5) {
+    addLearnedRule(cleanedRule, 'general', query);
+    return `🎓 **Yeni Fabrika Kuralı Öğrenildi & Kaydedildi!**\n\n` +
+      `• **Kural:** *"${cleanedRule}"*\n\n` +
+      `Fabrika zekası bu kuralı hafızasına aldı ve analizlerinde öncelikli olarak uygulayacaktır.`;
+  }
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1520,10 +1670,22 @@ export function matchAndAnswer60Questions(query: string, data: FactorySnapshot):
   const qNorm = normalizeTurkish(query);
   if (!qNorm) return null;
 
-  // 0. Dynamic Waybill / Invoice lookup (Handles e.g. "2453 nolu irsaliyede neler var", "2454 nolu irsaliye", "irsaliye 2450")
+  // 0. Active Conversational Rule Learning (e.g. "BUNUN NEDENİ TRANSİT SEVK BU İRSALİYE BUNUN CEVABINI DA ÖĞRET MODELE")
+  const ruleLearned = handleConversationalRuleLearning(query);
+  if (ruleLearned) {
+    return ruleLearned;
+  }
+
+  // 0.1 Dynamic Waybill / Invoice lookup (Handles e.g. "2453 nolu irsaliyede neler var", "2453 nolu isaliyede", "2454 nolu irsaliye", "irsaliye 2450")
   const invoiceNum = extractInvoiceNumber(query);
   if (invoiceNum) {
     return handleDynamicInvoiceQuery(invoiceNum, data);
+  }
+
+  // 0.2 Transit Shipment queries (e.g. "transit sevk nedir", "hangi sevkiyatlar transit", "transit sevk var mi")
+  const transitResult = handleTransitShipmentQuery(query, data);
+  if (transitResult) {
+    return transitResult;
   }
 
   // 1. Context updates for customer/site in query

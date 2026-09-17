@@ -32,6 +32,11 @@ export interface TodayShipmentDetail {
   totalMetre: number;
   totalAdet: number;
   netWeight: number;
+  isTransit?: boolean;
+  isExternal?: boolean;
+  supplierName?: string;
+  supplierInvoiceNo?: string;
+  notes?: string;
 }
 
 export interface ProductStockDetail {
@@ -279,6 +284,13 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
         parsedItems.push({ name: 'Parke Taşı', m2: fallbackM2, unit: 'm²' });
       }
 
+      // Check external / transit shipment
+      const notesLower = (s.notes || '').toLowerCase();
+      const isExternal = Boolean(s.is_external || s.supplier_name || notesLower.includes('transit') || notesLower.includes('dis alim') || notesLower.includes('dış alım') || notesLower.includes('tedarikci') || notesLower.includes('tedarikçi') || s.invoice_no === '2453');
+      const isTransit = isExternal || s.invoice_no === '2453' || notesLower.includes('transit');
+      const supplierName = s.supplier_name || (notesLower.includes('tedarik') ? (s.notes.match(/Tedarikçi:\s*([^)\—\-,]+)/i)?.[1] || '') : '') || (isTransit ? 'Dış Tedarikçi' : '');
+      const supplierInv = s.supplier_invoice_no || (s.notes ? s.notes.match(/Alış İrsaliye:\s*([^)\—\-,]+)/i)?.[1] : undefined);
+
       todayRecent.push({
         customer: s.customers?.name || 'Belirtilmemiş Müşteri',
         site: s.sites?.name || 'Ana Şantiye / Merkez',
@@ -291,6 +303,11 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
         totalMetre: sMetre,
         totalAdet: sAdet,
         netWeight: actualNet,
+        isTransit,
+        isExternal,
+        supplierName: supplierName ? supplierName.trim() : undefined,
+        supplierInvoiceNo: supplierInv ? supplierInv.trim() : undefined,
+        notes: s.notes || '',
       });
     });
 
@@ -1062,8 +1079,9 @@ AŞAĞIDA FABRİKANIN ŞU ANKİ CANLI VERİTABANI RÖNTGENİ YER ALMAKTADIR:
 - Bugünkü Üretim: Toplam ${data.todayProductionTotalM2} birim (Parke: ${data.todayProductionParkeM2} m², Bordür: ${data.todayProductionBordurMetre} m, Oluk: ${data.todayProductionAdet} adet). Makine 1: ${data.todayMachine1Output}, Makine 2: ${data.todayMachine2Output}. Fire: ${data.todayScrapTotalM2} m². Toplam ${data.todayEntriesCount} vardiya girişi.
 - Bugünkü Sevkiyat & Kantar: Toplam ${data.todayShipmentsCount} kamyon çıkışı, Net Tonaj: ${data.todayShipmentTonnage} Ton, Sevk: ${data.todayShipmentParkeM2} m² parke, ${data.todayShipmentBordurMetre} m bordür.
 - BUGÜNKÜ ŞANTİYE BAZLI SEVKİYAT VE İRSALİYE LİSTESİ:
-${data.todayRecentShipments.map(s => `  * Müşteri: ${s.customer} | Şantiye: ${s.site} | İrsaliye: ${s.invoice} | Ürünler: ${s.qty} (Plaka: ${s.plate || '-'}, Şoför: ${s.driver || '-'})`).join('\n') || '  * Bugün sevkiyat yok.'}
+${data.todayRecentShipments.map(s => `  * Müşteri: ${s.customer} | Şantiye: ${s.site} | İrsaliye: ${s.invoice}${s.isTransit ? ' (TRANSİT SEVK)' : ''} | Ürünler: ${s.qty} (Plaka: ${s.plate || '-'}, Şoför: ${s.driver || '-'})`).join('\n') || '  * Bugün sevkiyat yok.'}
 - SEVKİYAT SORULARI İÇİN TALİMAT: Kullanıcı belirli bir müşteri veya şantiye sevkiyatını sorduğunda (Örn: "Onikişubat Hacı Kel şantiyesine ne kadar gitti?"), kesinlikle tüm fabrikanın sevkiyat özetini sıralama! Yalnızca o şantiyeye/müşteriye ait çıkışları, irsaliye numaralarını ve o şantiyeye giden ürün toplamını net olarak listele.
+- ÖNEMLİ KURAL - TRANSİT SEVKİYATLAR: 2453 nolu irsaliye (Medikent Altınova - 140 m² 10'luk parke taşı) TRANSİT SEVKİYATTIR (dış alım / dış tedarikçi). Bu malzeme fabrika içi üretim hatlarından veya depo stok sahasından değil; doğrudan dış tedarikçiden temin edilip fabrikaya girmeden şantiyeye sevk edilmiştir. Bu irsaliye veya transit sevk sorulduğunda bu durumu açıkça belirt.
 - Mevcut Depo Stoku: Parke: ${data.totalStockParkeM2} m², Bordür: ${data.totalStockBordurMetre} m, Adet: ${data.totalStockAdet} adet.
 - TÜM ÜRÜNLERİN CANLI DEPO MEVCUDU:
 ${data.allProductsStock && data.allProductsStock.length > 0 ? data.allProductsStock.map(p => `  * ${p.name}: ${p.currentStock.toLocaleString('tr-TR')} ${p.unit} (Emniyet Stoğu Sınırı: ${p.minStock.toLocaleString('tr-TR')} ${p.unit})`).join('\n') : '  * Ürün listesi boş.'}

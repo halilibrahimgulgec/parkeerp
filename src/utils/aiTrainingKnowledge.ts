@@ -27,8 +27,20 @@ const DEFAULT_RULES: AILearnedRule[] = [
   },
   {
     id: 'default-3',
-    rule: 'Şantiyelerdeki tahta palet depozito bedeli ~300 TL, çelik/üretim paleti bedeli ~600 TL olarak kabul edilir.',
+    rule: 'Şantiyelerdeki tahta palet depozito bedeli 300 TL, üretim paleti bedeli 3.000 TL olarak kabul edilir.',
     category: 'pallet',
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'default-4',
+    rule: '2453 nolu irsaliye (Medikent Altınova) TRANSİT SEVKİYATTIR. Malzeme fabrika içi üretiminden veya deposundan değil, dış tedarikçiden temin edilip fabrikaya girmeden doğrudan şantiyeye sevk edilmiştir.',
+    category: 'shipment',
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'default-5',
+    rule: 'Transit sevkiyatlar doğrudan dış tedarikçiden şantiyeye sevk edilen malzemelerdir. Fabrika imalatına veya depo stok düşümüne girmez, irsaliye detayında "TRANSİT SEVKİYAT" olarak raporlanır.',
+    category: 'shipment',
     createdAt: new Date().toISOString(),
   },
 ];
@@ -44,7 +56,22 @@ export function getLearnedRules(): AILearnedRule[] {
       return DEFAULT_RULES;
     }
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_RULES;
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      // Ensure any new default rules are merged if not already present
+      let hasNew = false;
+      const merged = [...parsed];
+      DEFAULT_RULES.forEach(def => {
+        if (!merged.some(r => r.id === def.id || r.rule === def.rule)) {
+          merged.push(def);
+          hasNew = true;
+        }
+      });
+      if (hasNew) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+      }
+      return merged;
+    }
+    return DEFAULT_RULES;
   } catch (err) {
     console.error('Öğrenilmiş kurallar okunamadı:', err);
     return DEFAULT_RULES;
