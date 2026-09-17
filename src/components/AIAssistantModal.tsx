@@ -17,6 +17,8 @@ import {
   Zap,
   Volume2,
   VolumeX,
+  Camera,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -30,6 +32,7 @@ import { AIActionApprovalCard } from './AIActionApprovalCard';
 import { ActionDraftPayload } from '../types/aiActionTypes';
 import { parseActionIntentFromQuery } from '../utils/aiActionEngine';
 import { speakTurkishText, stopSpeaking, isSpeaking } from '../utils/aiVoiceTTS';
+import { analyzeImageWithVision, compressImageFile } from '../utils/aiVisionOCREngine';
 
 interface ChatMessage {
   id: string;
@@ -38,12 +41,15 @@ interface ChatMessage {
   time: string;
   userQuery?: string;
   actionDraft?: ActionDraftPayload;
+  imagePreview?: string;
 }
 
 const QUICK_PROMPTS = [
   { label: '🚚 Kantar Fişi Hazırla', query: "Ahmet Yılmaz 46 K 1234 kamyonuna 15 palet 8'lik kilit parke yüklendi kantar fişi hazırla" },
   { label: '🏭 Üretim Girişi Yap', query: "1 nolu makinede 500 m2 8'lik parke basıldı 15 m2 fire var üretim kaydet" },
   { label: '🪵 Palet İadesi Al', query: "Medikent şantiyesinden 40 tahta palet iade geldi" },
+  { label: '📸 İrsaliye & Fiş Tara', query: 'Ocak ve çimento irsaliyelerini kamerayla nasıl okutup stoğa eklerim?' },
+  { label: '🔍 Hasarlı Taş Teşhisi', query: 'Kırık veya yüzeyi pürüzlü çıkan parke taşlarının fotoğraflarını nasıl analiz edersin?' },
   { label: '📊 Bugün Üretim & Sevk', query: 'Bugünkü üretim miktarları, fire durumu ve kantar sevkiyatları ne durumda?' },
   { label: '📈 Aylık Kümülatif Üretim', query: 'Bu ay kümülatif toplam kaç m² parke ve bordür ürettik?' },
   { label: '🪵 Paletlerin Değeri', query: 'Paletlerin toplam değeri ne kadar?' },
@@ -71,6 +77,42 @@ export default function AIAssistantModal() {
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
   const [autoSpeak, setAutoSpeak] = useState(false);
+
+  // Phase 2: Vision OCR & Image Upload States
+  const [selectedImage, setSelectedImage] = useState<{
+    base64: string;
+    mimeType: string;
+    previewUrl: string;
+    fileName: string;
+  } | null>(null);
+  const [isProcessingImage, setIsProcessingImage] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setIsProcessingImage(true);
+      const compressed = await compressImageFile(file, 1200, 0.82);
+      setSelectedImage({
+        base64: compressed.base64,
+        mimeType: compressed.mimeType,
+        previewUrl: `data:${compressed.mimeType};base64,${compressed.base64}`,
+        fileName: file.name,
+      });
+    } catch (err) {
+      console.error('Fotoğraf işlenemedi:', err);
+      alert('Fotoğraf yüklenirken bir hata oluştu.');
+    } finally {
+      setIsProcessingImage(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleClearSelectedImage = () => {
+    setSelectedImage(null);
+  };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -196,21 +238,50 @@ export default function AIAssistantModal() {
   // Send message
   const handleSendMessage = async (queryText?: string) => {
     const query = (queryText || inputText).trim();
-    if (!query || isLoading) return;
+    const currentImg = selectedImage;
+    if ((!query && !currentImg) || isLoading || isProcessingImage) return;
 
     setInputText('');
+    setSelectedImage(null);
 
     const userMsg: ChatMessage = {
       id: `u-${Date.now()}`,
       role: 'user',
-      text: query,
+      text: query || (currentImg ? '📸 Belge / Hasar fotoğrafı gönderildi, inceleniyor...' : ''),
       time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+      imagePreview: currentImg?.previewUrl,
     };
 
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
 
     try {
+      // Phase 2: If an image is provided, run Multimodal Vision OCR / Quality Inspection
+      if (currentImg) {
+        const visionResult = await analyzeImageWithVision(
+          currentImg.base64,
+          currentImg.mimeType,
+          query,
+          apiKey
+        );
+
+        const aiMsg: ChatMessage = {
+          id: `a-${Date.now()}`,
+          role: 'assistant',
+          text: visionResult.description,
+          time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+          userQuery: query,
+          actionDraft: visionResult.actionDraft,
+        };
+
+        setMessages((prev) => [...prev, aiMsg]);
+        if (autoSpeak) {
+          handleToggleSpeak(aiMsg.id, aiMsg.text);
+        }
+        setIsLoading(false);
+        return;
+      }
+
       let currentData = snapshot;
       if (!currentData) {
         currentData = await getLiveFactorySnapshot();
@@ -588,7 +659,18 @@ export default function AIAssistantModal() {
                             )}
                           </>
                         ) : (
-                          <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+                          <>
+                            {msg.imagePreview && (
+                              <div className="mb-2 overflow-hidden rounded-lg border border-white/20 max-w-[240px]">
+                                <img
+                                  src={msg.imagePreview}
+                                  alt="Yüklenen belge/fotoğraf"
+                                  className="w-full h-auto object-cover max-h-48 rounded"
+                                />
+                              </div>
+                            )}
+                            <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+                          </>
                         )}
 
                         {/* Action buttons for assistant responses */}
@@ -649,7 +731,9 @@ export default function AIAssistantModal() {
                         <div className="w-2 h-2 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '0ms' }} />
                         <div className="w-2 h-2 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '150ms' }} />
                         <div className="w-2 h-2 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '300ms' }} />
-                        <span className="text-xs text-slate-500 font-medium ml-1">Fabrika zekası analiz ediyor...</span>
+                        <span className="text-xs text-slate-500 font-medium ml-1">
+                          {selectedImage ? 'Görsel ve metin analiz ediliyor...' : 'Fabrika zekası analiz ediyor...'}
+                        </span>
                       </div>
                     </div>
                   )}
@@ -659,12 +743,60 @@ export default function AIAssistantModal() {
 
                 {/* Input Bar */}
                 <div className="p-3 bg-white border-t border-slate-200 shrink-0">
+                  {/* Phase 2: Selected Image Preview Chip */}
+                  {selectedImage && (
+                    <div className="flex items-center gap-2 mb-2 p-1.5 bg-slate-100 border border-slate-300 rounded-xl w-fit max-w-full">
+                      <img
+                        src={selectedImage.previewUrl}
+                        alt="Seçilen belge"
+                        className="w-10 h-10 object-cover rounded-lg border border-slate-200 shrink-0"
+                      />
+                      <div className="text-[11px] truncate max-w-[180px]">
+                        <span className="font-semibold text-slate-800 block truncate">{selectedImage.fileName}</span>
+                        <span className="text-slate-500 text-[10px]">İrsaliye / Fiş / Taş Fotoğrafı</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleClearSelectedImage}
+                        className="p-1 hover:bg-slate-200 rounded-full text-slate-500 hover:text-rose-600 transition-colors ml-1 cursor-pointer"
+                        title="Görseli kaldır"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+
                   <div className="flex items-center gap-2 bg-slate-50 border border-slate-300 rounded-2xl px-3 py-1.5 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 transition-all">
+                    {/* Hidden file input for camera / file upload */}
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      accept="image/*"
+                      capture="environment"
+                      className="hidden"
+                      onChange={handleImageFileChange}
+                    />
+
+                    {/* Camera / Photo Button */}
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isProcessingImage || isLoading}
+                      className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-slate-200/50 rounded-full transition-all cursor-pointer"
+                      title="Kamera / Fotoğraf Çek veya Yükle (İrsaliye / Hasarlı Taş)"
+                    >
+                      {isProcessingImage ? (
+                        <RefreshCw className="w-4 h-4 animate-spin text-amber-500" />
+                      ) : (
+                        <Camera className="w-4 h-4" />
+                      )}
+                    </button>
+
                     {/* Speech Recognition Mic */}
                     <button
                       type="button"
                       onClick={toggleSpeechRecognition}
-                      className={`p-1.5 rounded-full transition-all ${
+                      className={`p-1.5 rounded-full transition-all cursor-pointer ${
                         isListening
                           ? 'bg-rose-500 text-white animate-pulse'
                           : 'text-slate-400 hover:text-slate-700 hover:bg-slate-200/50'
@@ -684,15 +816,21 @@ export default function AIAssistantModal() {
                           handleSendMessage();
                         }
                       }}
-                      placeholder={isListening ? 'Konuşmanız dinleniyor...' : 'Fabrika hakkında bir şey sorun...'}
+                      placeholder={
+                        selectedImage
+                          ? 'Fotoğraf seçildi. İsteğe bağlı not ekleyip gönderebilirsiniz...'
+                          : isListening
+                          ? 'Konuşmanız dinleniyor...'
+                          : 'Fabrika hakkında sorun veya irsaliye yükleyin...'
+                      }
                       className="flex-1 bg-transparent text-sm text-slate-800 placeholder-slate-400 focus:outline-none"
                     />
 
                     <button
                       type="button"
                       onClick={() => handleSendMessage()}
-                      disabled={!inputText.trim() || isLoading}
-                      className="p-1.5 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 text-white disabled:text-slate-400 rounded-xl transition-all shadow-sm active:scale-95 disabled:active:scale-100"
+                      disabled={(!inputText.trim() && !selectedImage) || isLoading || isProcessingImage}
+                      className="p-1.5 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 text-white disabled:text-slate-400 rounded-xl transition-all shadow-sm active:scale-95 disabled:active:scale-100 cursor-pointer"
                     >
                       <Send className="w-4 h-4" />
                     </button>

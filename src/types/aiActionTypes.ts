@@ -1,4 +1,4 @@
-export type AIActionType = 'create_shipment' | 'create_production' | 'return_pallet';
+export type AIActionType = 'create_shipment' | 'create_production' | 'return_pallet' | 'create_purchase';
 
 export type AIActionStatus = 'draft' | 'confirming' | 'confirmed' | 'cancelled' | 'error';
 
@@ -67,6 +67,35 @@ export interface ActionDraftPayload {
     vehicle_plate?: string;
     driver_name?: string;
     notes?: string;
+  };
+
+  // 4. Raw Material / Purchase draft (from Photo OCR)
+  purchaseData?: {
+    supplier_name: string;
+    invoice_no?: string;
+    supplier_invoice_no?: string;
+    vehicle_plate?: string;
+    driver_name?: string;
+    material_name?: string;
+    product_name?: string;
+    product_id?: string;
+    material_type: 'cimento' | 'agrega' | 'katki' | 'parke_dis_alim' | 'diger';
+    quantity: number;
+    net_quantity?: number;
+    unit: string;
+    unit_price?: number;
+    total_amount?: number;
+    currency?: string;
+    notes?: string;
+  };
+
+  // 5. Quality inspection diagnosis (from Defect Photo)
+  qualityInspectionData?: {
+    defect_type: string;
+    severity: 'dusuk' | 'orta' | 'yuksek' | 'kritik';
+    detected_product?: string;
+    root_cause_analysis: string;
+    recommended_action: string;
   };
 
   resultMessage?: string;

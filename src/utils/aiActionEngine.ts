@@ -485,6 +485,64 @@ export async function executeApprovedAction(
       };
     }
 
+    // -----------------------------------------------------------------------
+    // 4. RAW MATERIAL & EXTERNAL PURCHASE EXECUTION (From Photo Vision OCR)
+    // -----------------------------------------------------------------------
+    if (draft.type === 'create_purchase' && draft.purchaseData) {
+      const pur = draft.purchaseData;
+      const today = new Date().toISOString().split('T')[0];
+      const month = new Date().getMonth() + 1;
+      const year = new Date().getFullYear();
+
+      // A. Insert into cost_entries (Hammadde gideri ve silolar)
+      const { data: newCost, error: costErr } = await supabase
+        .from('cost_entries')
+        .insert({
+          date: today,
+          period_month: month,
+          period_year: year,
+          cost_type: 'hammadde',
+          sub_type: pur.material_type || 'cimento',
+          description: `${pur.supplier_name} - ${pur.material_name || pur.product_name} [İrsaliye: ${pur.invoice_no || pur.supplier_invoice_no}] [Plaka: ${pur.vehicle_plate || '-'}]`,
+          quantity: pur.quantity,
+          unit: pur.unit,
+          unit_price: pur.unit_price || 0,
+          transport_cost: 0,
+          total_amount: pur.total_amount || (pur.unit_price ? pur.quantity * pur.unit_price : 0),
+          created_by: currentUser?.id,
+        })
+        .select()
+        .single();
+
+      // B. Also record into external_purchases if available
+      try {
+        await supabase.from('external_purchases').insert({
+          date: today,
+          supplier_name: pur.supplier_name,
+          supplier_invoice_no: pur.invoice_no || pur.supplier_invoice_no,
+          vehicle_plate: pur.vehicle_plate || '46 K 1234',
+          driver_name: pur.driver_name || 'Kayıtlı Sürücü',
+          quantity: pur.quantity,
+          unit: pur.unit === 'kg' ? 'adet' : (pur.unit as any),
+          notes: `${pur.notes || ''} [Optik Vision OCR ile okundu]`,
+          created_by: currentUser?.id,
+        });
+      } catch (epErr) {
+        console.warn('external_purchases log:', epErr);
+      }
+
+      if (costErr && !newCost) {
+        throw new Error(costErr?.message || 'Hammadde girişi kaydedilemedi.');
+      }
+
+      return {
+        success: true,
+        message: `${pur.supplier_name} firmasından ${pur.quantity.toLocaleString('tr-TR')} ${pur.unit} ${pur.material_name || pur.product_name} hammadde stoğuna başarıyla işlendi! [İrsaliye: ${pur.invoice_no || pur.supplier_invoice_no}]`,
+        recordId: newCost?.id,
+        invoiceNo: pur.invoice_no || pur.supplier_invoice_no,
+      };
+    }
+
     throw new Error('Tanımlanmamış aksiyon türü.');
   } catch (err: any) {
     console.error('executeApprovedAction hatası:', err);

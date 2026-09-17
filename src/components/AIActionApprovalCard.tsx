@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ActionDraftPayload } from '../types/aiActionTypes';
 import { executeApprovedAction } from '../utils/aiActionEngine';
-import { Truck, Factory, Boxes, CheckCircle2, XCircle, Loader2, FileText, AlertTriangle } from 'lucide-react';
+import { Truck, Factory, Boxes, CheckCircle2, XCircle, Loader2, FileText, AlertTriangle, Receipt } from 'lucide-react';
 
 interface Props {
   draft: ActionDraftPayload;
@@ -52,6 +52,7 @@ export const AIActionApprovalCard: React.FC<Props> = ({ draft, currentUser, onUp
   const s = currentDraft.shipmentData;
   const p = currentDraft.productionData;
   const pal = currentDraft.palletReturnData;
+  const pur = currentDraft.purchaseData;
 
   return (
     <div className="mt-3 bg-gradient-to-b from-slate-900 to-slate-950 text-white rounded-xl border border-slate-700 shadow-xl overflow-hidden select-none">
@@ -71,6 +72,11 @@ export const AIActionApprovalCard: React.FC<Props> = ({ draft, currentUser, onUp
           {currentDraft.type === 'return_pallet' && (
             <span className="p-1 bg-emerald-500/20 text-emerald-400 rounded-md">
               <Boxes size={16} />
+            </span>
+          )}
+          {currentDraft.type === 'create_purchase' && (
+            <span className="p-1 bg-purple-500/20 text-purple-400 rounded-md">
+              <Receipt size={16} />
             </span>
           )}
           <span className="text-xs font-bold tracking-wide uppercase text-slate-200">
@@ -185,6 +191,44 @@ export const AIActionApprovalCard: React.FC<Props> = ({ draft, currentUser, onUp
           </div>
         )}
 
+        {/* CASE D: PURCHASE & RAW MATERIAL DRAFT */}
+        {currentDraft.type === 'create_purchase' && pur && (
+          <div className="space-y-2 bg-slate-800/40 p-2.5 rounded-lg border border-slate-700/50">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <span className="text-slate-400 text-[10px] block">Tedarikçi / Ocak:</span>
+                <span className="font-bold text-white text-xs truncate block">{pur.supplier_name}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 text-[10px] block">İrsaliye / Fiş No:</span>
+                <span className="font-mono font-bold text-amber-400 text-xs truncate block">{pur.invoice_no || 'Girilmedi'}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 text-[10px] block">Malzeme Cinsi:</span>
+                <span className="font-bold text-purple-300 text-xs truncate block">{pur.material_name}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 text-[10px] block">Taşıyıcı Plaka:</span>
+                <span className="font-mono font-bold text-slate-200 text-xs">{pur.vehicle_plate || '-'}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between border-t border-slate-700 pt-1.5 text-emerald-400 font-bold">
+              <span>Kantar Net Miktarı:</span>
+              <span className="text-sm">
+                {pur.net_quantity.toLocaleString('tr-TR')} {pur.unit}
+              </span>
+            </div>
+
+            {pur.total_amount && pur.total_amount > 0 ? (
+              <div className="flex items-center justify-between text-[11px] bg-slate-800/30 px-2 py-1 rounded border border-slate-700/40 text-slate-300">
+                <span>Fatura / Fiş Tutarı:</span>
+                <span className="font-bold text-amber-300">{pur.total_amount.toLocaleString('tr-TR')} {pur.currency || 'TL'}</span>
+              </div>
+            ) : null}
+          </div>
+        )}
+
         {/* RESULT / ERROR BANNERS */}
         {currentDraft.status === 'confirmed' && (
           <div className="p-2.5 bg-emerald-950/60 border border-emerald-500/40 rounded-lg text-emerald-300 flex items-center gap-2">
@@ -224,7 +268,7 @@ export const AIActionApprovalCard: React.FC<Props> = ({ draft, currentUser, onUp
             ) : (
               <>
                 <CheckCircle2 size={14} />
-                <span>ONAYLA VE KAYDET</span>
+                <span>{currentDraft.type === 'create_purchase' ? 'ONAYLA VE STOĞA EKLE' : 'ONAYLA VE KAYDET'}</span>
               </>
             )}
           </button>
