@@ -17,6 +17,7 @@ export interface CustomerPalletDebtor {
   uretim: number;
   tahta: number;
   sevkiyat: number;
+  sites?: Record<string, { uretim: number; tahta: number; sevkiyat: number; total: number }>;
 }
 
 export interface TodayShipmentDetail {
@@ -41,6 +42,25 @@ export interface ProductStockDetail {
   minStock: number;
   thickness?: string;
   category?: string;
+}
+
+export interface QuotaItemDetail {
+  id: string;
+  customerName: string;
+  siteName?: string;
+  productName?: string;
+  target: number;
+  shipped: number;
+  remaining: number;
+  pct: number;
+  unit: string;
+  isExceeded: boolean;
+}
+
+export interface MonthlyTopProductDetail {
+  name: string;
+  quantity: number;
+  unit: string;
 }
 
 export interface FactorySnapshot {
@@ -73,16 +93,20 @@ export interface FactorySnapshot {
   pendingOrdersCount: number;
   criticalOrders: { orderNo: string; customer: string; product: string; qty: string; dueDate?: string }[];
   activeQuotasCount: number;
-  lowQuotaAlerts: { customer: string; product: string; remaining: number; unit: string }[];
+  quotaDetails: QuotaItemDetail[];
+  lowQuotaAlerts: QuotaItemDetail[];
+  exceededQuotas: QuotaItemDetail[];
   // Pallets (Detailed)
   palletBalances: CustomerPalletDetail[];
   palletDebtors: CustomerPalletDebtor[];
   totalUnreturnedPallets: number;
   totalUnreturnedUretim: number;
   totalUnreturnedTahta: number;
+  totalUnreturnedSevkiyat: number;
   // Financial
   monthlyRevenue: number;
   monthlyProductionM2: number;
+  monthlyTopProducts: MonthlyTopProductDetail[];
   monthlyCostsTotal: number;
   estimatedUnitCost: number;
 }
@@ -104,7 +128,7 @@ export function normalizeTurkish(str: string): string {
 // 1. Fetch Fresh Live Factory Snapshot
 // ---------------------------------------------------------------------------
 export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
-  const todayDate = new Date().toISOString().split('T')[0];
+  const todayDate = new Date().toLocaleDateString('sv-SE');
   const currentMonth = new Date().getMonth() + 1;
   const currentYear = new Date().getFullYear();
   const startOfMonth = `${currentYear}-${String(currentMonth).padStart(2, '0')}-01`;
@@ -119,17 +143,19 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
       palletRes,
       costsRes,
       prodMonthRes,
-      shipMonthRes
+      shipMonthRes,
+      allShipItemsRes,
     ] = await Promise.all([
       supabase.from('v_product_stock').select('*'),
       supabase.from('production_entries').select('*, products(name, unit, thickness, color)').eq('date', todayDate),
-      supabase.from('shipments').select('*, customers(name), sites(name), shipment_items(*, products(name, unit))').eq('shipment_date', todayDate).eq('status', 'completed'),
+      supabase.from('shipments').select('*, customers(name), sites(name), shipment_items(*, products(name, unit))').eq('shipment_date', todayDate).eq('status', 'completed').order('created_at', { ascending: false }),
       supabase.from('production_orders').select('*, customers(name), products(name, unit)').in('status', ['pending', 'planned']),
       supabase.from('customer_quotas').select('*, customers(name), sites(name), products(name, unit)').eq('is_active', true),
       supabase.from('v_pallet_balances').select('*'),
       supabase.from('cost_entries').select('cost_type, total_amount').eq('period_month', currentMonth).eq('period_year', currentYear),
-      supabase.from('production_entries').select('net_m2').gte('date', startOfMonth),
+      supabase.from('production_entries').select('net_m2, product_id, date, products(name, unit)').gte('date', startOfMonth),
       supabase.from('shipments').select('total_m2, sale_price_per_m2').gte('shipment_date', startOfMonth).eq('status', 'completed'),
+      supabase.from('shipment_items').select('product_id, m2, unit, products(unit), shipments!inner(id, customer_id, site_id, shipment_date, status)').eq('shipments.status', 'completed'),
     ]);
 
     const stocks = stockRes.data || [];
@@ -274,31 +300,78 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
         dueDate: o.due_date,
       }));
 
-    // Quotas
-    const lowQuotaAlerts = quotas
-      .filter((q: any) => Number(q.remaining_m2) < 500)
-      .map((q: any) => ({
-        customer: q.customers?.name || '-',
-        product: q.products?.name || '-',
-        remaining: Number(q.remaining_m2 || 0),
-        unit: q.products?.unit || 'm²',
-      }));
+    // Customer Quotas (Live Calculation from Shipment Items)
+    const quotaDetails: QuotaItemDetail[] = [];
+    const lowQuotaAlerts: QuotaItemDetail[] = [];
+    const exceededQuotas: QuotaItemDetail[] = [];
+    const allShipItems = allShipItemsRes.data || [];
 
-    // Pallets (Real data from v_pallet_balances)
+    quotas.forEach((q: any) => {
+      const matching = allShipItems.filter((item: any) => {
+        const s = item.shipments;
+        if (!s) return false;
+        if (s.customer_id !== q.customer_id) return false;
+        if (q.site_id && s.site_id !== q.site_id) return false;
+        if (q.product_id && item.product_id !== q.product_id) return false;
+        if (q.start_date && s.shipment_date < q.start_date) return false;
+        if (q.end_date && s.shipment_date > q.end_date) return false;
+
+        const itemProdUnit = item.products?.unit;
+        const itemUnit = (itemProdUnit === 'metre' || item.unit === 'metre')
+          ? 'metre'
+          : (itemProdUnit === 'adet' || item.unit === 'adet')
+          ? 'adet'
+          : (item.unit || 'm2');
+
+        if (!q.product_id && itemUnit !== q.unit) return false;
+        return true;
+      });
+
+      const shipped = matching.reduce((acc: number, cur: any) => acc + (Number(cur.m2) || 0), 0);
+      const target = Number(q.target_quantity) || 1;
+      const remaining = target - shipped;
+      const pct = Math.round((shipped / target) * 100);
+      const threshold = Number(q.alert_threshold_pct) || 85;
+
+      const qItem: QuotaItemDetail = {
+        id: q.id,
+        customerName: q.customers?.name || 'Müşteri',
+        siteName: q.sites?.name,
+        productName: q.products?.name,
+        target,
+        shipped,
+        remaining,
+        pct,
+        unit: q.unit || 'm²',
+        isExceeded: pct >= 100,
+      };
+
+      quotaDetails.push(qItem);
+      if (pct >= 100) {
+        exceededQuotas.push(qItem);
+      }
+      if (remaining <= 500 || pct >= threshold) {
+        lowQuotaAlerts.push(qItem);
+      }
+    });
+
+    // Pallets (Accurate Net Balances from v_pallet_balances)
     const palletBalances: CustomerPalletDetail[] = [];
-    const customerPalletMap: Record<string, { uretim: number; tahta: number; sevkiyat: number; total: number }> = {};
+    const customerPalletMap: Record<string, { uretim: number; tahta: number; sevkiyat: number; total: number; sites: Record<string, { uretim: number; tahta: number; sevkiyat: number; total: number }> }> = {};
     let totalUnreturnedPallets = 0;
     let totalUnreturnedUretim = 0;
     let totalUnreturnedTahta = 0;
+    let totalUnreturnedSevkiyat = 0;
 
     rawPallets.forEach((p: any) => {
       const cName = (p.customer_name || 'Müşteri').trim();
+      const sName = (p.site_name || 'Ana Şantiye / Merkez').trim();
       const bal = Number(p.balance) || 0;
       const pType = (p.pallet_type || 'tahta').toLowerCase();
 
       palletBalances.push({
         customer: cName,
-        site: p.site_name || '',
+        site: sName,
         palletType: pType,
         sent: Number(p.total_sent) || 0,
         returned: Number(p.total_returned) || 0,
@@ -306,22 +379,29 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
       });
 
       if (!customerPalletMap[cName]) {
-        customerPalletMap[cName] = { uretim: 0, tahta: 0, sevkiyat: 0, total: 0 };
+        customerPalletMap[cName] = { uretim: 0, tahta: 0, sevkiyat: 0, total: 0, sites: {} };
+      }
+      if (!customerPalletMap[cName].sites[sName]) {
+        customerPalletMap[cName].sites[sName] = { uretim: 0, tahta: 0, sevkiyat: 0, total: 0 };
       }
 
-      if (bal > 0) {
-        totalUnreturnedPallets += bal;
-        if (pType === 'uretim') {
-          totalUnreturnedUretim += bal;
-          customerPalletMap[cName].uretim += bal;
-        } else if (pType === 'tahta') {
-          totalUnreturnedTahta += bal;
-          customerPalletMap[cName].tahta += bal;
-        } else {
-          customerPalletMap[cName].sevkiyat += bal;
-        }
-        customerPalletMap[cName].total += bal;
+      if (pType === 'uretim') {
+        totalUnreturnedUretim += bal;
+        customerPalletMap[cName].uretim += bal;
+        customerPalletMap[cName].sites[sName].uretim += bal;
+      } else if (pType === 'tahta') {
+        totalUnreturnedTahta += bal;
+        customerPalletMap[cName].tahta += bal;
+        customerPalletMap[cName].sites[sName].tahta += bal;
+      } else {
+        totalUnreturnedSevkiyat += bal;
+        customerPalletMap[cName].sevkiyat += bal;
+        customerPalletMap[cName].sites[sName].sevkiyat += bal;
       }
+
+      totalUnreturnedPallets += bal;
+      customerPalletMap[cName].total += bal;
+      customerPalletMap[cName].sites[sName].total += bal;
     });
 
     const palletDebtors: CustomerPalletDebtor[] = Object.entries(customerPalletMap)
@@ -331,14 +411,30 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
         uretim: stats.uretim,
         tahta: stats.tahta,
         sevkiyat: stats.sevkiyat,
+        sites: stats.sites,
       }))
-      .filter((d) => d.balance > 0)
+      .filter((d) => d.balance !== 0)
       .sort((a, b) => b.balance - a.balance);
 
-    // Financial
+    // Financial & Monthly Production Breakdown
     const monthlyCostsTotal = costs.reduce((sum: number, c: any) => sum + Number(c.total_amount || 0), 0);
     const monthlyProdRows = prodMonthRes.data || [];
-    const monthlyProductionM2 = monthlyProdRows.reduce((sum: number, p: any) => sum + Number(p.net_m2 || 0), 0);
+    const monthlyProdMap: Record<string, { name: string; quantity: number; unit: string }> = {};
+    let monthlyProductionM2 = 0;
+
+    monthlyProdRows.forEach((p: any) => {
+      const net = Number(p.net_m2 || 0);
+      monthlyProductionM2 += net;
+      const pName = (p.products?.name || 'Bilinmeyen Taş').trim();
+      const u = p.products?.unit || 'm2';
+      if (!monthlyProdMap[pName]) {
+        monthlyProdMap[pName] = { name: pName, quantity: 0, unit: u };
+      }
+      monthlyProdMap[pName].quantity += net;
+    });
+
+    const monthlyTopProducts: MonthlyTopProductDetail[] = Object.values(monthlyProdMap).sort((a, b) => b.quantity - a.quantity);
+
     const monthlyShipRows = shipMonthRes.data || [];
     const monthlyRevenue = monthlyShipRows.reduce(
       (sum: number, s: any) => sum + (Number(s.total_m2 || 0) * Number(s.sale_price_per_m2 || 0)),
@@ -372,14 +468,18 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
       pendingOrdersCount: orders.length,
       criticalOrders,
       activeQuotasCount: quotas.length,
+      quotaDetails,
       lowQuotaAlerts,
+      exceededQuotas,
       palletBalances,
       palletDebtors,
       totalUnreturnedPallets,
       totalUnreturnedUretim,
       totalUnreturnedTahta,
+      totalUnreturnedSevkiyat,
       monthlyRevenue,
       monthlyProductionM2,
+      monthlyTopProducts,
       monthlyCostsTotal,
       estimatedUnitCost,
     };
@@ -411,14 +511,18 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
       pendingOrdersCount: 0,
       criticalOrders: [],
       activeQuotasCount: 0,
+      quotaDetails: [],
       lowQuotaAlerts: [],
+      exceededQuotas: [],
       palletBalances: [],
       palletDebtors: [],
       totalUnreturnedPallets: 0,
       totalUnreturnedUretim: 0,
       totalUnreturnedTahta: 0,
+      totalUnreturnedSevkiyat: 0,
       monthlyRevenue: 0,
       monthlyProductionM2: 0,
+      monthlyTopProducts: [],
       monthlyCostsTotal: 0,
       estimatedUnitCost: 0,
     };

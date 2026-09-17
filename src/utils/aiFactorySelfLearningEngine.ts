@@ -738,11 +738,19 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
 
     // Soru 10: Bu ay en çok hangi taş ve ebat üretildi?
     case 10: {
-      return `🏆 **Aylık Üretim Lideri Taşlar**\n\n` +
-        `1. **8'lik Kilit Parke Taşı (Gri/Kırmızı):** Şantiye ve belediye projelerinin en yüksek metrajlı ürünü.\n` +
-        `2. **20x10x6 Prizma Parke (Siyah/Beyaz/Kırmızı):** Çevre düzenleme ve kaldırım projeleri.\n` +
-        `3. **50x25x20 Ankara Bordürü:** Yol kenarı bordür dökümleri.\n` +
-        `📈 *Toplam Aylık Üretim: ${data.monthlyProductionM2.toLocaleString('tr-TR')} m²*`;
+      let text = `🏆 **Bu Ay En Çok Üretilen Taşlar ve Ebatlar**\n\n`;
+      if (data.monthlyTopProducts && data.monthlyTopProducts.length > 0) {
+        data.monthlyTopProducts.slice(0, 5).forEach((p, idx) => {
+          const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '•';
+          const unit = p.unit.toLowerCase() === 'm2' ? 'm²' : p.unit;
+          text += `${medal} **${idx + 1}. ${p.name.trim()}:** **${p.quantity.toLocaleString('tr-TR')} ${unit}**\n`;
+        });
+      } else {
+        text += `• Bu ay için henüz döküm veya üretim kaydı girilmemiştir.\n`;
+      }
+      text += `\n📈 **Toplam Aylık Üretim:** **${data.monthlyProductionM2.toLocaleString('tr-TR')} m²**\n`;
+      text += `💡 *Veriler bu ayki döküm ve vardiya kayıtlarından anlık hesaplanmıştır.*`;
+      return text;
     }
 
     // Soru 11: Bugün kantardan toplam kaç kamyon ve irsaliye çıktı?
@@ -775,7 +783,7 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
         });
         return text;
       }
-      return `🚚 **ONİKİŞUBAT BELEDİYESİ (HACI KEL ŞANTİYESİ)**\n\n• **İrsaliye No: 2400**\n• **Ürünler:** 96 m² 20X10 SİYAH PRİZMA, 12 m² 20X10 BEYAZ PRİZMA, 48 metre ENGELLİ TAŞI\n• **Durum:** Teslimat tamamlandı.`;
+      return `ℹ️ **ONİKİŞUBAT BELEDİYESİ (Hacı Kel Şantiyesi)** adına bugün (${data.todayDate}) sevk edilmiş herhangi bir sevkiyat veya araç bulunmamaktadır.`;
     }
 
     // Soru 14: Bugün Onikişubat Mustafa Kaya şantiyesine hangi ürünler gitti?
@@ -783,58 +791,77 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
       const siteShipments = data.todayRecentShipments.filter(s => normalizeTurkish(s.site).includes('mustafa kaya'));
       if (siteShipments.length > 0) {
         let text = `🚚 **ONİKİŞUBAT BELEDİYESİ - MUSTAFA KAYA ŞANTİYESİ**\n\n`;
-        siteShipments.forEach((s) => {
-          text += `• **İrsaliye ${s.invoice}:** ${s.qty}\n`;
+        siteShipments.forEach((s, idx) => {
+          text += `📄 **${idx + 1}. Sefer [İrsaliye: ${s.invoice}]**\n`;
+          text += `   🚛 Araç/Şoför: ${s.plate || '-'} ${s.driver ? `(${s.driver})` : ''}\n`;
+          text += `   📦 Ürünler: ${s.qty}\n\n`;
         });
         return text;
       }
-      return `🚚 **ONİKİŞUBAT BELEDİYESİ (MUSTAFA KAYA ŞANTİYESİ)**\n\n• **İrsaliye No: 2398**\n• **Ürünler:** 90 m² 20X10 SİYAH PRİZMA, 18 m² 20X10 BEYAZ PRİZMA, 48 metre ENGELLİ TAŞI\n• **Durum:** Sevk edildi.`;
+      return `ℹ️ **ONİKİŞUBAT BELEDİYESİ (Mustafa Kaya Şantiyesi)** adına bugün (${data.todayDate}) sevk edilmiş herhangi bir sevkiyat veya araç bulunmamaktadır.`;
     }
 
     // Soru 15: Bugün Onikişubat Mustafa Yılmaz şantiyesine kaç metre bordür gitti?
     case 15: {
-      return `🚚 **ONİKİŞUBAT BELEDİYESİ (MUSTAFA YILMAZ ŞANTİYESİ)**\n\n` +
-        `• **İrsaliye No: 2399:** 258 metre ANKARA BORDÜRÜ SİYAH (50*25*20), 30 metre ANKARA BORDÜRÜ SİYAH, 32 adet ANKARA DÖNÜŞ BORDÜRÜ\n` +
-        `• **İrsaliye No: 2402:** 84 m² 20X10 SİYAH PRİZMA, 18 m² 20X10 BEYAZ PRİZMA, 72 metre ENGELLİ TAŞI\n` +
-        `• **Toplam Bordür Çıkışı:** **288 Metre Bordür** ve 32 Adet Dönüş Bordürü teslim edilmiştir.`;
+      const siteShipments = data.todayRecentShipments.filter(s => normalizeTurkish(s.site).includes('mustafa yilmaz'));
+      if (siteShipments.length > 0) {
+        let text = `🚚 **ONİKİŞUBAT BELEDİYESİ - MUSTAFA YILMAZ ŞANTİYESİ**\n\n`;
+        siteShipments.forEach((s, idx) => {
+          text += `📄 **${idx + 1}. Sefer [İrsaliye: ${s.invoice}]**\n`;
+          text += `   🚛 Araç/Şoför: ${s.plate || '-'} ${s.driver ? `(${s.driver})` : ''}\n`;
+          text += `   📦 Ürünler: ${s.qty}\n\n`;
+        });
+        return text;
+      }
+      return `ℹ️ **ONİKİŞUBAT BELEDİYESİ (Mustafa Yılmaz Şantiyesi)** adına bugün (${data.todayDate}) sevk edilmiş herhangi bir sevkiyat veya bordür çıkışı bulunmamaktadır.`;
     }
 
     // Soru 16: Bugün Medikent Altınova şantiyesine ne kadar parke sevk edildi?
     case 16: {
-      return `🚚 **MEDİKENT (ALTINOVA ŞANTİYESİ) SEVKİYATI**\n\n` +
-        `• **İrsaliye No: 2401**\n` +
-        `• **Sevk Edilen:** **120 m² 10'luk Naturel Parke Taşı**\n` +
-        `• **Durum:** Şantiyeye teslim edilmiştir.`;
+      const siteShipments = data.todayRecentShipments.filter(s =>
+        normalizeTurkish(s.site).includes('altinova') ||
+        (normalizeTurkish(s.customer).includes('medikent') && normalizeTurkish(s.site).includes('altin'))
+      );
+      if (siteShipments.length > 0) {
+        let text = `🚚 **MEDİKENT - ALTINOVA ŞANTİYESİ SEVKİYATI**\n\n`;
+        siteShipments.forEach((s, idx) => {
+          text += `📄 **${idx + 1}. Sefer [İrsaliye: ${s.invoice}]**\n`;
+          text += `   🚛 Araç/Şoför: ${s.plate || '-'} ${s.driver ? `(${s.driver})` : ''}\n`;
+          text += `   📦 Ürünler: ${s.qty}\n\n`;
+        });
+        return text;
+      }
+      return `ℹ️ **MEDİKENT (Altınova Şantiyesi)** adına bugün (${data.todayDate}) sevk edilmiş herhangi bir parke veya malzeme çıkışı bulunmamaktadır.`;
     }
 
     // Soru 17: Bugün çıkan son sevkiyatlar ve irsaliyeler hangileri?
     case 17: {
-      let text = `📋 **Bugün Çıkan Son İrsaliyeler & Sevkiyatlar**\n\n`;
+      let text = `📋 **Bugün Çıkan Son İrsaliyeler & Sevkiyatlar (${data.todayDate})**\n\n`;
       if (data.todayRecentShipments.length > 0) {
-        data.todayRecentShipments.slice(0, 5).forEach((s, i) => {
-          text += `${i + 1}. **${s.customer}** (${s.site}) ➔ ${s.qty} [İrs: ${s.invoice}]\n`;
+        data.todayRecentShipments.slice(0, 8).forEach((s, i) => {
+          text += `${i + 1}. **${s.customer}** (${s.site}) ➔ ${s.qty} [İrs: ${s.invoice}] - Araç: ${s.plate || '-'}\n`;
         });
       } else {
-        text += `• İrs 2398: Onikişubat (Mustafa Kaya) - 90 m² Prizma, 48 m Engelli\n` +
-          `• İrs 2399: Onikişubat (Mustafa Yılmaz) - 288 m Bordür, 32 ad Dönüş\n` +
-          `• İrs 2400: Onikişubat (Hacı Kel) - 108 m² Prizma, 48 m Engelli\n` +
-          `• İrs 2401: Medikent (Altınova) - 120 m² 10'luk Parke\n`;
+        text += `ℹ️ Bugün henüz sisteme işlenen veya kantardan çıkan yeni bir sevkiyat / irsaliye bulunmamaktadır.\n`;
       }
       return text;
     }
 
     // Soru 18: Kantar fişi girilmemiş tartımsız araç var mı?
     case 18: {
+      if (data.todayRecentShipments.length === 0) {
+        return `ℹ️ Bugün (${data.todayDate}) henüz sevk edilen araç çıkışı bulunmadığı için bekleyen tartım kaydı yoktur.`;
+      }
       const unweighed = data.todayRecentShipments.filter(s => s.netWeight <= 0);
       if (unweighed.length > 0) {
         let text = `⚠️ **Kantar Tartımı Eksik / Bekleyen Araçlar**\n\n`;
         unweighed.forEach(s => {
           text += `• **İrsaliye ${s.invoice}:** ${s.customer} (${s.site}) - Araç: ${s.plate || 'Plaka girilmedi'}\n`;
         });
-        text += `\n💡 *Lütfen kantar görevlisine fiş girişlerini tamamlamasını iletiniz.*`;
+        text += `\n💡 *Lütfen kantar görevlisine fiş tartım girişlerini tamamlamasını iletiniz.*`;
         return text;
       }
-      return `✅ **Tüm araçların kantar fişi ve tartım kayıtları eksiksizdir.** Tartımsız araç bulunmamaktadır.`;
+      return `✅ **Tüm araçların kantar fişi ve tartım kayıtları eksiksizdir.** Bugün çıkan ${data.todayShipmentsCount} aracın tamamı tartılmıştır.`;
     }
 
     // Soru 19: Bugün toplam kaç m² parke ve kaç metre bordür sevk ettik?
@@ -848,29 +875,37 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
 
     // Soru 20: Sevkiyatta 2400 nolu irsaliyede ne var?
     case 20: {
-      return `📄 **İrsaliye No: 2400 Detayı**\n\n` +
-        `* **Cari / Müşteri:** ONİKİŞUBAT BELEDİYESİ\n` +
-        `* **Şantiye:** HACI KEL Şantiyesi\n` +
-        `* **İçerik:**\n` +
-        `  - 96 m² 20X10 SİYAH PRİZMA PARKE\n` +
-        `  - 12 m² 20X10 BEYAZ PRİZMA PARKE\n` +
-        `  - 48 metre ENGELLİ TAKİP TAŞI\n` +
-        `* **Durum:** İrsaliye teslim edildi.`;
+      const targetInv = data.todayRecentShipments.find(s => s.invoice.includes('2400'));
+      if (targetInv) {
+        return `📄 **İrsaliye No: ${targetInv.invoice} Detayı**\n\n` +
+          `* **Cari / Müşteri:** ${targetInv.customer}\n` +
+          `* **Şantiye:** ${targetInv.site}\n` +
+          `* **Araç / Şoför:** ${targetInv.plate || '-'} ${targetInv.driver ? `(${targetInv.driver})` : ''}\n` +
+          `* **İçerik:** ${targetInv.qty}\n` +
+          `* **Kantar Net Tonajı:** ${targetInv.netWeight > 0 ? `${(targetInv.netWeight / 1000).toFixed(2)} Ton` : 'Tartım girilmedi'}\n` +
+          `* **Durum:** Sistemde kayıtlı ve sevk edilmiştir.`;
+      }
+      return `ℹ️ **2400 nolu irsaliye bugünkü (${data.todayDate}) sevkiyatlar arasında bulunmamaktadır.**\n\n` +
+        `Bugün çıkan aktif irsaliyeleri listelemek için *"Bugün çıkan son sevkiyatlar hangileri?"* sorusunu sorabilirsiniz.`;
     }
 
     // Soru 21: Paletlerin toplam değeri ne kadar?
     case 21: {
-      const uretimVal = data.totalUnreturnedUretim * uretimPrice; // 1570 * 3000 = 4.710.000 TL
-      const tahtaVal = data.totalUnreturnedTahta * tahtaPrice;   // 2913 * 300 = 873.900 TL
-      const totalVal = uretimVal + tahtaVal;                    // 5.583.900 TL
+      const uretimVal = data.totalUnreturnedUretim * uretimPrice;
+      const tahtaVal = data.totalUnreturnedTahta * tahtaPrice;
+      const sevkiyatVal = (data.totalUnreturnedSevkiyat || 0) * (FACTORY_CORE_RULES.PALLET_PRICES.sevkiyat || 200);
+      const totalVal = uretimVal + tahtaVal + sevkiyatVal;
 
       let text = `💰 **Şantiyelerdeki Paletlerin Finansal Değer Raporu**\n\n`;
       text += `*Fabrika Kuralı: Üretim Paleti = ₺${uretimPrice.toLocaleString('tr-TR')} | Tahta Palet = ₺${tahtaPrice.toLocaleString('tr-TR')}*\n\n`;
       text += `• 🏭 **Üretim Paletleri:** **${data.totalUnreturnedUretim.toLocaleString('tr-TR')} Adet** x ₺${uretimPrice.toLocaleString('tr-TR')} = **₺${uretimVal.toLocaleString('tr-TR')}**\n`;
       text += `• 🪵 **Tahta Paletler:** **${data.totalUnreturnedTahta.toLocaleString('tr-TR')} Adet** x ₺${tahtaPrice.toLocaleString('tr-TR')} = **₺${tahtaVal.toLocaleString('tr-TR')}**\n`;
+      if (data.totalUnreturnedSevkiyat > 0) {
+        text += `• 📦 **Sevkiyat Paletleri:** **${data.totalUnreturnedSevkiyat.toLocaleString('tr-TR')} Adet** x ₺200 = **₺${sevkiyatVal.toLocaleString('tr-TR')}**\n`;
+      }
       text += `════════════════════════════════════════════════\n`;
       text += `💵 **TOPLAM ŞANTİYE PALET REHİN DEĞERİ:** **₺${totalVal.toLocaleString('tr-TR')}**\n\n`;
-      text += `📦 **Toplam Bekleyen Palet:** **${data.totalUnreturnedPallets.toLocaleString('tr-TR')} Adet**\n`;
+      text += `📦 **Toplam Bekleyen Palet:** **${data.totalUnreturnedPallets.toLocaleString('tr-TR')} Adet** şantiyelerdedir.\n`;
       return text;
     }
 
@@ -880,7 +915,7 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
       return `🏭 **Şantiyelerde Bekleyen Üretim Paletleri**\n\n` +
         `* **Miktar:** **${data.totalUnreturnedUretim.toLocaleString('tr-TR')} Adet Üretim Paleti**\n` +
         `* **Birim Değer:** ₺${uretimPrice.toLocaleString('tr-TR')} / Adet\n` +
-        `* **Toplam Maliyet/Rehin Bedeli:** **₺${uretimVal.toLocaleString('tr-TR')}**\n\n` +
+        `* **Toplam Rehin / Maliyet Değeri:** **₺${uretimVal.toLocaleString('tr-TR')}**\n\n` +
         `⚠️ *Üretim paletleri fabrika imalatında kullanıldığından acil toplatılması gereken en kritik palet grubudur.*`;
     }
 
@@ -890,65 +925,114 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
       return `🪵 **Şantiyelerde Bekleyen Tahta Paletler**\n\n` +
         `* **Miktar:** **${data.totalUnreturnedTahta.toLocaleString('tr-TR')} Adet Tahta Palet**\n` +
         `* **Birim Depozito Değeri:** ₺${tahtaPrice.toLocaleString('tr-TR')} / Adet\n` +
-        `* **Toplam Depozito Bedeli:** **₺${tahtaVal.toLocaleString('tr-TR')}**\n`;
+        `* **Toplam Depozito Bedeli:** **₺${tahtaVal.toLocaleString('tr-TR')}**\n\n` +
+        `💡 *Sevkiyat araçlarının boş dönmeyip tahta paletleri toplaması önerilir.*`;
     }
 
     // Soru 24: Medikent den ne kadar üretim paleti alacağımız var?
     case 24: {
-      return `🪵 **MEDİKENT - Üretim Paleti Alacağı**\n\n` +
-        `🎯 **ÜRETİM PALETİ ALACAĞIMIZ: 439 Adet**\n` +
-        `• **Birim Değeri:** ₺${uretimPrice.toLocaleString('tr-TR')} / Adet\n` +
-        `• **Üretim Paleti Tutarı:** **₺${(439 * uretimPrice).toLocaleString('tr-TR')}**\n\n` +
-        `ℹ️ *Ayrıca Medikent firmasında **1.650 Adet Tahta Palet** bulunmaktadır (Genel Toplam: **2.089 Adet Palet**).*\n` +
-        `💰 *Toplam Palet Rehin Değeri: ~₺${((439 * uretimPrice) + (1650 * tahtaPrice)).toLocaleString('tr-TR')}*`;
+      const med = data.palletDebtors.find(d => normalizeTurkish(d.customer).includes('medikent'));
+      const u = med ? med.uretim : 0;
+      const t = med ? med.tahta : 0;
+      const s = med ? (med.sevkiyat || 0) : 0;
+      const tot = med ? med.total : 0;
+      const uVal = u * uretimPrice;
+      const totVal = (u * uretimPrice) + (t * tahtaPrice) + (s * 200);
+
+      let text = `🪵 **MEDİKENT - Üretim Paleti Alacağı**\n\n`;
+      text += `🎯 **ÜRETİM PALETİ ALACAĞIMIZ: ${u.toLocaleString('tr-TR')} Adet**\n`;
+      text += `• **Birim Değeri:** ₺${uretimPrice.toLocaleString('tr-TR')} / Adet\n`;
+      text += `• **Üretim Paleti Tutarı:** **₺${uVal.toLocaleString('tr-TR')}**\n\n`;
+      text += `ℹ️ *Ayrıca Medikent firmasında **${t.toLocaleString('tr-TR')} Adet Tahta Palet**${s > 0 ? ` ve **${s} Adet Sevkiyat Paleti**` : ''} bulunmaktadır (Genel Toplam: **${tot.toLocaleString('tr-TR')} Adet**).*\n`;
+      text += `💰 *Toplam Palet Rehin Değeri: ~₺${totVal.toLocaleString('tr-TR')}*`;
+      return text;
     }
 
     // Soru 25: Medikent firmasının toplam tahta ve üretim palet borcu ne kadar?
     case 25: {
-      const totVal = (439 * uretimPrice) + (1650 * tahtaPrice);
-      return `🪵 **MEDİKENT - Toplam Palet Durumu**\n\n` +
-        `• 🏭 **Üretim Paleti:** **439 Adet** (Değer: ₺${(439 * uretimPrice).toLocaleString('tr-TR')})\n` +
-        `• 🪵 **Tahta Palet:** **1.650 Adet** (Değer: ₺${(1650 * tahtaPrice).toLocaleString('tr-TR')})\n` +
-        `════════════════════════════════════════════════\n` +
-        `📦 **Toplam Palet Borcu:** **2.089 Adet Palet**\n` +
-        `💵 **Toplam Finansal Değer:** **₺${totVal.toLocaleString('tr-TR')}**`;
+      const med = data.palletDebtors.find(d => normalizeTurkish(d.customer).includes('medikent'));
+      const u = med ? med.uretim : 0;
+      const t = med ? med.tahta : 0;
+      const s = med ? (med.sevkiyat || 0) : 0;
+      const tot = med ? med.total : 0;
+      const totVal = (u * uretimPrice) + (t * tahtaPrice) + (s * 200);
+
+      let text = `🪵 **MEDİKENT - Güncel Şantiye Palet Durumu**\n\n`;
+      text += `• 🏭 **Üretim Paleti:** **${u.toLocaleString('tr-TR')} Adet** (Değer: ₺${(u * uretimPrice).toLocaleString('tr-TR')})\n`;
+      text += `• 🪵 **Tahta Palet:** **${t.toLocaleString('tr-TR')} Adet** (Değer: ₺${(t * tahtaPrice).toLocaleString('tr-TR')})\n`;
+      if (s > 0) {
+        text += `• 📦 **Sevkiyat Paleti:** **${s.toLocaleString('tr-TR')} Adet** (Değer: ₺${(s * 200).toLocaleString('tr-TR')})\n`;
+      }
+      text += `════════════════════════════════════════════════\n`;
+      text += `📦 **Toplam Palet Borcu:** **${tot.toLocaleString('tr-TR')} Adet Palet**\n`;
+      text += `💵 **Toplam Finansal Değer:** **₺${totVal.toLocaleString('tr-TR')}**\n\n`;
+      if (med?.sites && Object.keys(med.sites).length > 0) {
+        text += `📍 **Şantiye Dağılımı:**\n`;
+        for (const [siteName, counts] of Object.entries(med.sites)) {
+          text += `  - ${siteName}: ${counts.total} Adet (Üretim: ${counts.uretim}, Tahta: ${counts.tahta})\n`;
+        }
+      }
+      return text;
     }
 
     // Soru 26: Onikişubat Belediyesi şantiyelerinde kaç paletimiz kalmış?
     case 26: {
-      const uCount = 661;
-      const tCount = 654;
-      const tot = uCount + tCount;
-      const val = (uCount * uretimPrice) + (tCount * tahtaPrice);
-      return `🪵 **ONİKİŞUBAT BELEDİYESİ - Şantiye Paletleri**\n\n` +
-        `• 🏭 **Üretim Paleti:** **${uCount} Adet** (₺${(uCount * uretimPrice).toLocaleString('tr-TR')})\n` +
-        `• 🪵 **Tahta Palet:** **${tCount} Adet** (₺${(tCount * tahtaPrice).toLocaleString('tr-TR')})\n` +
-        `════════════════════════════════════════════════\n` +
-        `📦 **Toplam Palet:** **${tot} Adet** (Değer: **₺${val.toLocaleString('tr-TR')}**)\n` +
-        `📍 *Şantiyeler: Hacı Kel, Mustafa Kaya, Mustafa Yılmaz*`;
+      const onik = data.palletDebtors.find(d => normalizeTurkish(d.customer).includes('onikisubat'));
+      const u = onik ? onik.uretim : 0;
+      const t = onik ? onik.tahta : 0;
+      const s = onik ? (onik.sevkiyat || 0) : 0;
+      const tot = onik ? onik.total : 0;
+      const val = (u * uretimPrice) + (t * tahtaPrice) + (s * 200);
+
+      let text = `🪵 **ONİKİŞUBAT BELEDİYESİ - Şantiye Paletleri**\n\n`;
+      text += `• 🏭 **Üretim Paleti:** **${u.toLocaleString('tr-TR')} Adet** (₺${(u * uretimPrice).toLocaleString('tr-TR')})\n`;
+      text += `• 🪵 **Tahta Palet:** **${t.toLocaleString('tr-TR')} Adet** (₺${(t * tahtaPrice).toLocaleString('tr-TR')})\n`;
+      if (s > 0) {
+        text += `• 📦 **Sevkiyat Paleti:** **${s.toLocaleString('tr-TR')} Adet** (₺${(s * 200).toLocaleString('tr-TR')})\n`;
+      }
+      text += `════════════════════════════════════════════════\n`;
+      text += `📦 **Toplam Palet:** **${tot.toLocaleString('tr-TR')} Adet** (Değer: **₺${val.toLocaleString('tr-TR')}**)\n\n`;
+      if (onik?.sites && Object.keys(onik.sites).length > 0) {
+        text += `📍 **Şantiye Dağılımı:**\n`;
+        for (const [siteName, counts] of Object.entries(onik.sites)) {
+          text += `  - ${siteName}: ${counts.total} Adet (Üretim: ${counts.uretim}, Tahta: ${counts.tahta})\n`;
+        }
+      }
+      return text;
     }
 
     // Soru 27: En çok palet borcu olan ilk 5 müşteri hangileri?
     case 27: {
-      return `⚠️ **En Çok Palet Borcu Olan İlk 5 Müşteri**\n\n` +
-        `1. **MEDİKENT:** 2.089 Adet (Üretim: 439 ad, Tahta: 1.650 ad) ➔ ~₺1.812.000\n` +
-        `2. **ONİKİŞUBAT BELEDİYESİ:** 1.315 Adet (Üretim: 661 ad, Tahta: 654 ad) ➔ ~₺2.179.200\n` +
-        `3. **AYKACH:** 707 Adet (Üretim: 298 ad, Tahta: 409 ad) ➔ ~₺1.016.700\n` +
-        `4. **ÖZOCAKLAR:** 171 Adet (Üretim: 43 ad, Tahta: 128 ad) ➔ ~₺167.400\n` +
-        `5. **K.MARAŞ BÜYÜKŞEHİR:** 65 Adet (Üretim: 55 ad, Tahta: 10 ad) ➔ ~₺168.000`;
+      let text = `⚠️ **En Çok Palet Borcu Olan İlk 5 Müşteri**\n\n`;
+      if (data.palletDebtors.length > 0) {
+        data.palletDebtors.slice(0, 5).forEach((d, idx) => {
+          const val = (d.uretim * uretimPrice) + (d.tahta * tahtaPrice) + ((d.sevkiyat || 0) * 200);
+          text += `${idx + 1}. **${d.customer}:** **${d.total.toLocaleString('tr-TR')} Adet** (Üretim: ${d.uretim} ad, Tahta: ${d.tahta} ad${d.sevkiyat ? `, Sevkiyat: ${d.sevkiyat} ad` : ''}) ➔ ~₺${val.toLocaleString('tr-TR')}\n`;
+        });
+      } else {
+        text += `Kayıtlı palet borcu bulunmamaktadır.\n`;
+      }
+      return text;
     }
 
     // Soru 28: Aykach firmasında kaç adet paletimiz var?
     case 28: {
-      const u = 298;
-      const t = 409;
-      const tot = u + t;
-      const val = (u * uretimPrice) + (t * tahtaPrice);
-      return `🪵 **AYKACH - Palet Durumu**\n\n` +
-        `• 🏭 **Üretim Paleti:** **${u} Adet** (₺${(u * uretimPrice).toLocaleString('tr-TR')})\n` +
-        `• 🪵 **Tahta Palet:** **${t} Adet** (₺${(t * tahtaPrice).toLocaleString('tr-TR')})\n` +
-        `════════════════════════════════════════════════\n` +
-        `📦 **Toplam:** **${tot} Adet Palet** (Toplam Değer: **₺${val.toLocaleString('tr-TR')}**)`;
+      const ayk = data.palletDebtors.find(d => normalizeTurkish(d.customer).includes('aykach'));
+      const u = ayk ? ayk.uretim : 0;
+      const t = ayk ? ayk.tahta : 0;
+      const s = ayk ? (ayk.sevkiyat || 0) : 0;
+      const tot = ayk ? ayk.total : 0;
+      const val = (u * uretimPrice) + (t * tahtaPrice) + (s * 200);
+
+      let text = `🪵 **AYKACH - Şantiye Palet Durumu**\n\n`;
+      text += `• 🏭 **Üretim Paleti:** **${u.toLocaleString('tr-TR')} Adet** (₺${(u * uretimPrice).toLocaleString('tr-TR')})\n`;
+      text += `• 🪵 **Tahta Palet:** **${t.toLocaleString('tr-TR')} Adet** (₺${(t * tahtaPrice).toLocaleString('tr-TR')})\n`;
+      if (s > 0) {
+        text += `• 📦 **Sevkiyat Paleti:** **${s.toLocaleString('tr-TR')} Adet** (₺${(s * 200).toLocaleString('tr-TR')})\n`;
+      }
+      text += `════════════════════════════════════════════════\n`;
+      text += `📦 **Toplam:** **${tot.toLocaleString('tr-TR')} Adet Palet** (Toplam Değer: **₺${val.toLocaleString('tr-TR')}**)`;
+      return text;
     }
 
     // Soru 29: Üretim paletleri ve tahta paletlerin birim bedelleri nedir?
@@ -962,11 +1046,15 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
 
     // Soru 30: Şantiyelerdeki paletlerin toplam finansal riski kaç TL?
     case 30: {
-      const totVal = (data.totalUnreturnedUretim * uretimPrice) + (data.totalUnreturnedTahta * tahtaPrice);
+      const uVal = data.totalUnreturnedUretim * uretimPrice;
+      const tVal = data.totalUnreturnedTahta * tahtaPrice;
+      const sVal = (data.totalUnreturnedSevkiyat || 0) * 200;
+      const totVal = uVal + tVal + sVal;
       return `🚨 **Şantiyelerdeki Paletlerin Toplam Finansal Riski**\n\n` +
-        `* **Toplam Palet Sayısı:** ${data.totalUnreturnedPallets.toLocaleString('tr-TR')} Adet\n` +
-        `* 🏭 Üretim Paleti Riski: ${data.totalUnreturnedUretim} Adet x ₺3.000 = **₺${(data.totalUnreturnedUretim * uretimPrice).toLocaleString('tr-TR')}**\n` +
-        `* 🪵 Tahta Palet Riski: ${data.totalUnreturnedTahta} Adet x ₺300 = **₺${(data.totalUnreturnedTahta * tahtaPrice).toLocaleString('tr-TR')}**\n` +
+        `* **Toplam Bekleyen Palet:** **${data.totalUnreturnedPallets.toLocaleString('tr-TR')} Adet**\n` +
+        `* 🏭 **Üretim Paleti Riski:** ${data.totalUnreturnedUretim.toLocaleString('tr-TR')} Adet x ₺3.000 = **₺${uVal.toLocaleString('tr-TR')}**\n` +
+        `* 🪵 **Tahta Palet Riski:** ${data.totalUnreturnedTahta.toLocaleString('tr-TR')} Adet x ₺300 = **₺${tVal.toLocaleString('tr-TR')}**\n` +
+        (sVal > 0 ? `* 📦 **Sevkiyat Paleti Riski:** ${data.totalUnreturnedSevkiyat} Adet x ₺200 = **₺${sVal.toLocaleString('tr-TR')}**\n` : '') +
         `════════════════════════════════════════════════\n` +
         `💵 **TOPLAM FİNANSAL REHİN RİSKİ: ₺${totVal.toLocaleString('tr-TR')}**\n\n` +
         `💡 *Tavsiye: Boş palet getirmeyen araçlara palet depozito faturası kesilmesi önerilir.*`;
@@ -1132,23 +1220,31 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
 
     // Soru 43: Medikent in taahhüt kotası doldu mu, ne kadar kaldı?
     case 43: {
-      return `📋 **MEDİKENT - Sözleşme & Kota Durumu**\n\n` +
-        `* **Cari Adı:** Medikent (Altınova Şantiyesi)\n` +
-        `* **Aktif Sevkiyatlar:** Günlük sevkiyatlar devam etmektedir (Bugün 120 m² parke teslim edildi).\n` +
-        `* **Kota Durumu:** Kalan taahhüt metrajı düzenli tükenmekte olup yeni protokol hazırlanması önerilir.`;
+      const medQuota = (data.quotaDetails || []).find(q => normalizeTurkish(q.customer).includes('medikent'));
+      if (medQuota) {
+        return `📋 **MEDİKENT - Taahhüt & Kota Takip Raporu**\n\n` +
+          `* **Cari / Şantiye:** ${medQuota.customer} ${medQuota.site ? `(${medQuota.site})` : ''}\n` +
+          `* **Ürün:** ${medQuota.product}\n` +
+          `* **Sözleşme / Hedef Kota:** **${medQuota.target.toLocaleString('tr-TR')} ${medQuota.unit}**\n` +
+          `* **Gerçekleşen Sevk:** **${medQuota.shipped.toLocaleString('tr-TR')} ${medQuota.unit}**\n` +
+          `* **Kalan Miktar:** **${medQuota.remaining.toLocaleString('tr-TR')} ${medQuota.unit}** (Doluluk: %${medQuota.pct})\n` +
+          `* **Durum:** ${medQuota.isExceeded ? '🚨 **Sözleşme kotası dolmuş/aşılmıştır!** Ek protokol hazırlanmalıdır.' : medQuota.remaining < 500 ? '⚠️ **Kritik eşikte** (500 birimin altında kaldı).' : '✅ Normal sevkiyat bandında devam ediyor.'}`;
+      }
+      return `ℹ️ **Medikent** adına tanımlı aktif bir sözleşme kotası bulunmamaktadır. Kotalar ekranından yeni sözleşme eklenebilir.`;
     }
 
     // Soru 44: Kotası 500 m² altına düşen veya aşan müşteriler hangileri?
     case 44: {
-      if (data.lowQuotaAlerts.length > 0) {
-        let text = `⚠️ **Kotası 500 m² Altına Düşen Sözleşmeler**\n\n`;
+      if (data.lowQuotaAlerts && data.lowQuotaAlerts.length > 0) {
+        let text = `⚠️ **Kotası 500 m² Altına Düşen veya Dolan Sözleşmeler**\n\n`;
         data.lowQuotaAlerts.forEach(q => {
-          text += `• **${q.customer}** (${q.product}): Kalan **${q.remaining} ${q.unit}**\n`;
+          text += `• **${q.customer}** ${q.site ? `(${q.site})` : ''} - ${q.product}:\n`;
+          text += `  Hedef: ${q.target.toLocaleString('tr-TR')} | Sevk: ${q.shipped.toLocaleString('tr-TR')} | **Kalan: ${q.remaining.toLocaleString('tr-TR')} ${q.unit}** (%${q.pct} doluluk)\n`;
         });
-        text += `\n💡 *Pazarlama ve satış ekibinin bu müşterilerle yeni sözleşme yenilemesi tavsiye edilir.*`;
+        text += `\n💡 *Pazarlama ve sözleşme ekibinin bu müşterilerle yeni protokol yapması önerilir.*`;
         return text;
       }
-      return `✅ **Tüm müşteri kotaları 500 m² güvenli sınırın üzerindedir.** Kritik azalan sözleşme yoktur.`;
+      return `✅ **Tüm müşteri kotaları 500 m² güvenli sınırın üzerindedir.** Kotası tükenmek üzere olan veya aşan cari bulunmamaktadır.`;
     }
 
     // Soru 45: Onikişubat Belediyesi nin aktif sipariş ve iş emirleri nelerdir?
@@ -1168,9 +1264,26 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
 
     // Soru 47: Hangi müşterinin taahhüt kotası %100 doldu?
     case 47: {
-      return `🎯 **Kota Doluluk & Aşım Kontrolü**\n\n` +
-        `* Taahhüt kotaları düzenli olarak sevkiyat bazlı güncellenmektedir.\n` +
-        `* Kotası dolan müşterilere sistem otomatik bildirim vererek ek sözleşme veya ek fiyat farkı onayı istemektedir.`;
+      if (data.exceededQuotas && data.exceededQuotas.length > 0) {
+        let text = `🚨 **Taahhüt Kotası %100 Dolan / Aşan Müşteriler**\n\n`;
+        data.exceededQuotas.forEach(q => {
+          text += `• **${q.customer}** ${q.site ? `(${q.site})` : ''} - ${q.product}:\n`;
+          text += `  Taahhüt: ${q.target.toLocaleString('tr-TR')} ${q.unit} | Toplam Sevk: **${q.shipped.toLocaleString('tr-TR')} ${q.unit}** (Doluluk: **%${q.pct}**)\n`;
+          if (q.remaining < 0) {
+            text += `  ⚠️ **Aşım Miktarı: ${Math.abs(q.remaining).toLocaleString('tr-TR')} ${q.unit} fazla sevk yapılmıştır!**\n`;
+          }
+        });
+        text += `\n💡 *Sistemin bu carilere sevkiyatı durdurması veya ek sözleşme onayı istemesi tavsiye edilir.*`;
+        return text;
+      }
+      if (data.quotaDetails && data.quotaDetails.length > 0) {
+        const sorted = [...data.quotaDetails].sort((a, b) => b.pct - a.pct);
+        const top = sorted[0];
+        return `✅ **Şu an kotası %100 dolan veya aşan müşteri bulunmamaktadır.**\n\n` +
+          `* **En Yüksek Doluluk Oranı:** **${top.customer}** (%${top.pct} - Kalan: ${top.remaining.toLocaleString('tr-TR')} ${top.unit})\n` +
+          `* Tüm açık taahhütler sözleşme limitleri dahilinde sevk edilmektedir.`;
+      }
+      return `ℹ️ Sistemde tanımlı aktif müşteri kotası bulunmamaktadır.`;
     }
 
     // Soru 48: Üretim planında ilk sırada hangi sipariş var?
@@ -1268,13 +1381,14 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
 
     // Soru 57: Bana kapsamlı bir Gün Sonu Yönetici Özeti çıkarır mısın?
     case 57: {
+      const palletVal = (data.totalUnreturnedUretim * uretimPrice) + (data.totalUnreturnedTahta * tahtaPrice) + ((data.totalUnreturnedSevkiyat || 0) * (FACTORY_CORE_RULES.PALLET_PRICES.sevkiyat || 200));
       return `🏭 **GÜN SONU YÖNETİCİ ÖZETİ**\n` +
         `Tarih: ${data.todayDate} | Hazırlayan: Parke AI\n` +
         `════════════════════════════════════════════════\n` +
         `• Net Üretim: ${data.todayProductionTotalM2.toLocaleString('tr-TR')} birim\n` +
         `• Aylık Kümülatif Üretim: ${data.monthlyProductionM2.toLocaleString('tr-TR')} m²\n` +
         `• Sevk Edilen Araç: ${data.todayShipmentsCount} Kamyon (${data.todayShipmentTonnage} Ton)\n` +
-        `• Şantiyedeki Paletler: ${data.totalUnreturnedPallets.toLocaleString('tr-TR')} Adet (₺${((data.totalUnreturnedUretim * 3000) + (data.totalUnreturnedTahta * 300)).toLocaleString('tr-TR')})\n` +
+        `• Şantiyedeki Paletler: ${data.totalUnreturnedPallets.toLocaleString('tr-TR')} Adet (₺${palletVal.toLocaleString('tr-TR')})\n` +
         `• Aylık Ciro: ₺${data.monthlyRevenue.toLocaleString('tr-TR')} | Gider: ₺${data.monthlyCostsTotal.toLocaleString('tr-TR')}\n` +
         `💡 *Detaylı döküm için üst menüdeki "Gün Sonu Özeti" sekmesini de kullanabilirsiniz.*`;
     }
@@ -1303,7 +1417,7 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
 
     // Soru 60: Şu an fabrika genelinde en kritik operasyonel risk nedir?
     case 60: {
-      const val = (data.totalUnreturnedUretim * uretimPrice) + (data.totalUnreturnedTahta * tahtaPrice);
+      const val = (data.totalUnreturnedUretim * uretimPrice) + (data.totalUnreturnedTahta * tahtaPrice) + ((data.totalUnreturnedSevkiyat || 0) * (FACTORY_CORE_RULES.PALLET_PRICES.sevkiyat || 200));
       return `🚨 **Fabrika Genelindeki En Kritik Operasyonel Risk**\n\n` +
         `1. 🪵 **Dönmeyen Palet Riski:** Şantiyelerde bekleyen ${data.totalUnreturnedPallets.toLocaleString('tr-TR')} adet paletin **₺${val.toLocaleString('tr-TR')}** rehin değeri dışarıdadır. Özellikle **Medikent** ve **Onikişubat** şantiyelerinden boş palet toplanması nakit akışı ve imalat sürekliliği için şarttır.\n` +
         `2. 📦 **Kritik Stoklar:** ${data.lowStockItems.length > 0 ? `${data.lowStockItems.length} ürün emniyet stoğunun altındadır.` : 'Stok riski düşüktür.'}\n` +
