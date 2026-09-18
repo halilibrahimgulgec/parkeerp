@@ -74,7 +74,7 @@ const QUICK_PROMPTS = [
   { label: '🚚 Kantar Fişi Hazırla', query: "Ahmet Yılmaz 46 K 1234 kamyonuna 15 palet 8'lik kilit parke yüklendi kantar fişi hazırla" },
   { label: '🏭 Üretim Girişi Yap', query: "1 nolu makinede 500 m2 8'lik parke basıldı 15 m2 fire var üretim kaydet" },
   { label: '🪵 Palet İadesi Al', query: "Medikent şantiyesinden 40 tahta palet iade geldi" },
-  { label: '📸 İrsaliye & Fiş Tara', query: 'Ocak ve çimento irsaliyelerini kamerayla nasıl okutup stoğa eklerim?' },
+  { label: '📸 İrsaliye & Fiş Tara', query: 'Ocak ve çimento irsaliyelerini kamerayla veya galeriden hafızadaki fotoğrafla nasıl okutup stoğa eklerim?' },
   { label: '🔍 Hasarlı Taş Teşhisi', query: 'Kırık veya yüzeyi pürüzlü çıkan parke taşlarının fotoğraflarını nasıl analiz edersin?' },
   { label: '📊 Bugün Üretim & Sevk', query: 'Bugünkü üretim miktarları, fire durumu ve kantar sevkiyatları ne durumda?' },
   { label: '📈 Aylık Kümülatif Üretim', query: 'Bu ay kümülatif toplam kaç m² parke ve bordür ürettik?' },
@@ -128,7 +128,8 @@ export default function AIAssistantModal() {
     fileName: string;
   } | null>(null);
   const [isProcessingImage, setIsProcessingImage] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -148,7 +149,8 @@ export default function AIAssistantModal() {
       alert('Fotoğraf yüklenirken bir hata oluştu.');
     } finally {
       setIsProcessingImage(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      if (cameraInputRef.current) cameraInputRef.current.value = '';
+      if (galleryInputRef.current) galleryInputRef.current.value = '';
     }
   };
 
@@ -1149,29 +1151,49 @@ export default function AIAssistantModal() {
                   )}
 
                   <div className="flex items-center gap-2 bg-slate-50 border border-slate-300 rounded-2xl px-3 py-1.5 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 transition-all">
-                    {/* Hidden file input for camera / file upload */}
+                    {/* Hidden file input for direct Camera capture */}
                     <input
                       type="file"
-                      ref={fileInputRef}
+                      ref={cameraInputRef}
                       accept="image/*"
                       capture="environment"
                       className="hidden"
                       onChange={handleImageFileChange}
                     />
 
-                    {/* Camera / Photo Button */}
+                    {/* Hidden file input for Gallery / Phone Memory */}
+                    <input
+                      type="file"
+                      ref={galleryInputRef}
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleImageFileChange}
+                    />
+
+                    {/* Camera / Live Photo Button */}
                     <button
                       type="button"
-                      onClick={() => fileInputRef.current?.click()}
+                      onClick={() => cameraInputRef.current?.click()}
                       disabled={isProcessingImage || isLoading}
                       className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-slate-200/50 rounded-full transition-all cursor-pointer"
-                      title="Kamera / Fotoğraf Çek veya Yükle (İrsaliye / Hasarlı Taş)"
+                      title="Kamera ile Canlı Çek (İrsaliye / Fiş / Taş)"
                     >
                       {isProcessingImage ? (
                         <RefreshCw className="w-4 h-4 animate-spin text-amber-500" />
                       ) : (
                         <Camera className="w-4 h-4" />
                       )}
+                    </button>
+
+                    {/* Gallery / Storage Upload Button */}
+                    <button
+                      type="button"
+                      onClick={() => galleryInputRef.current?.click()}
+                      disabled={isProcessingImage || isLoading}
+                      className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-200/50 rounded-full transition-all cursor-pointer"
+                      title="Telefon Hafızasından / Galeriden İrsaliye Görseli Seç"
+                    >
+                      <ImageIcon className="w-4 h-4" />
                     </button>
 
                     {/* Speech Recognition Mic */}
@@ -1213,7 +1235,7 @@ export default function AIAssistantModal() {
                           ? 'Fotoğraf seçildi. İsteğe bağlı not ekleyip gönderebilirsiniz...'
                           : isListening
                           ? 'Konuşmanız dinleniyor...'
-                          : 'Fabrika hakkında sorun veya irsaliye yükleyin...'
+                          : 'Fabrika hakkında sorun veya kamera/galeriden irsaliye yükleyin...'
                       }
                       className="flex-1 bg-transparent text-sm text-slate-800 placeholder-slate-400 focus:outline-none"
                     />
