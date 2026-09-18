@@ -309,18 +309,21 @@ export async function executeApprovedAction(
         customerId = anyCust?.[0]?.id || '';
       }
 
-      // Generate invoice number (Find latest invoice and increment)
-      const { data: lastShipment } = await supabase
-        .from('shipments')
-        .select('invoice_no')
-        .order('created_at', { ascending: false })
-        .limit(1);
+      // Generate invoice number (Use draft invoice_no if provided by OCR, else find latest and increment)
+      let nextInvNo = d.invoice_no || '';
+      if (!nextInvNo) {
+        const { data: lastShipment } = await supabase
+          .from('shipments')
+          .select('invoice_no')
+          .order('created_at', { ascending: false })
+          .limit(1);
 
-      let nextInvNo = '2458';
-      if (lastShipment && lastShipment[0]?.invoice_no) {
-        const parsed = parseInt(lastShipment[0].invoice_no, 10);
-        if (!isNaN(parsed) && parsed > 0) {
-          nextInvNo = String(parsed + 1);
+        nextInvNo = '2458';
+        if (lastShipment && lastShipment[0]?.invoice_no) {
+          const parsed = parseInt(lastShipment[0].invoice_no, 10);
+          if (!isNaN(parsed) && parsed > 0) {
+            nextInvNo = String(parsed + 1);
+          }
         }
       }
 

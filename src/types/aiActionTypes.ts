@@ -28,6 +28,7 @@ export interface ActionDraftPayload {
     vehicle_plate?: string;
     driver_name?: string;
     driver_phone?: string;
+    invoice_no?: string;
     items: ShipmentItemDraft[];
     total_m2: number;
     total_pallets: number;

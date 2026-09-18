@@ -55,7 +55,7 @@ export const AIActionApprovalCard: React.FC<Props> = ({ draft, currentUser, onUp
   const pur = currentDraft.purchaseData;
 
   return (
-    <div className="mt-3 bg-gradient-to-b from-slate-900 to-slate-950 text-white rounded-xl border border-slate-700 shadow-xl overflow-hidden select-none">
+    <div className="mt-3 w-full max-w-full bg-gradient-to-b from-slate-900 to-slate-950 text-white rounded-xl border border-slate-700 shadow-xl overflow-hidden select-none">
       {/* 1. Header with Badge */}
       <div className="px-3.5 py-2.5 bg-slate-800/80 border-b border-slate-700/80 flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -124,6 +124,12 @@ export const AIActionApprovalCard: React.FC<Props> = ({ draft, currentUser, onUp
                 <span className="text-slate-400 text-[10px] block">Şoför:</span>
                 <span className="text-slate-300 text-xs">{s.driver_name || '-'}</span>
               </div>
+              {s.invoice_no && (
+                <div className="col-span-2 pt-1 border-t border-slate-700/50 flex items-center justify-between">
+                  <span className="text-slate-400 text-[10px]">İrsaliye / Form No:</span>
+                  <span className="font-mono font-bold text-amber-300 text-xs">#{s.invoice_no}</span>
+                </div>
+              )}
             </div>
 
             <div className="space-y-1">
