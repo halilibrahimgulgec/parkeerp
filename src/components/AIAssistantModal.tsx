@@ -21,6 +21,8 @@ import {
   Image as ImageIcon,
   ShieldAlert,
   ArrowRight,
+  Radio,
+  Headphones,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -32,7 +34,7 @@ import {
 import { FACTORY_CORE_RULES } from '../utils/aiFactorySelfLearningEngine';
 import { AIActionApprovalCard } from './AIActionApprovalCard';
 import { ActionDraftPayload } from '../types/aiActionTypes';
-import { parseActionIntentFromQuery } from '../utils/aiActionEngine';
+import { parseActionIntentFromQuery, executeApprovedAction } from '../utils/aiActionEngine';
 import { speakTurkishText, stopSpeaking, isSpeaking } from '../utils/aiVoiceTTS';
 import { analyzeImageWithVision, compressImageFile } from '../utils/aiVisionOCREngine';
 import {
@@ -42,6 +44,13 @@ import {
 } from '../utils/aiWatchdogEngine';
 import { WatchdogScanResult } from '../types/aiWatchdogTypes';
 import { AIWatchdogPanel } from './AIWatchdogPanel';
+import { AIWalkieTalkieOverlay } from './AIWalkieTalkieOverlay';
+import {
+  isVoiceConfirmation,
+  isVoiceCancellation,
+  playSuccessChime,
+  playCancelChime,
+} from '../utils/aiWalkieTalkieEngine';
 
 interface ChatMessage {
   id: string;
@@ -91,6 +100,11 @@ export default function AIAssistantModal() {
   // Phase 3: Watchdog Anomaly Detector States
   const [watchdogResult, setWatchdogResult] = useState<WatchdogScanResult | null>(null);
   const [isScanningWatchdog, setIsScanningWatchdog] = useState(false);
+
+  // Phase 4: Walkie-Talkie & Voice Confirmation States
+  const [isWalkieTalkieOpen, setIsWalkieTalkieOpen] = useState(false);
+  const [isAutoHandsFree, setIsAutoHandsFree] = useState(false);
+  const [activePendingDraft, setActivePendingDraft] = useState<ActionDraftPayload | null>(null);
 
   // Phase 2: Vision OCR & Image Upload States
   const [selectedImage, setSelectedImage] = useState<{
@@ -303,12 +317,82 @@ export default function AIAssistantModal() {
           actionDraft: visionResult.actionDraft,
         };
 
+        if (visionResult.actionDraft) {
+          setActivePendingDraft(visionResult.actionDraft);
+        }
+
         setMessages((prev) => [...prev, aiMsg]);
-        if (autoSpeak) {
+        if (autoSpeak || isWalkieTalkieOpen) {
           handleToggleSpeak(aiMsg.id, aiMsg.text);
         }
         setIsLoading(false);
         return;
+      }
+
+      // Phase 4: Voice Confirmation & Cancellation Loop
+      if (activePendingDraft) {
+        if (isVoiceConfirmation(query)) {
+          playSuccessChime();
+          const targetDraft = activePendingDraft;
+          setActivePendingDraft(null);
+          try {
+            const execRes = await executeApprovedAction(targetDraft, user);
+            const confirmedDraft: ActionDraftPayload = {
+              ...targetDraft,
+              status: execRes.success ? 'confirmed' : 'error',
+              resultMessage: execRes.message,
+              errorMessage: execRes.success ? undefined : execRes.message,
+              createdRecordId: execRes.recordId,
+            };
+            const aiMsg: ChatMessage = {
+              id: `a-${Date.now()}`,
+              role: 'assistant',
+              text: `✅ **Sesli Onay Alındı:** ${execRes.message}`,
+              time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+              userQuery: query,
+              actionDraft: confirmedDraft,
+            };
+            setMessages((prev) => [...prev, aiMsg]);
+            if (autoSpeak || isWalkieTalkieOpen) {
+              handleToggleSpeak(aiMsg.id, 'İşlem sesli olarak onaylandı ve sisteme başarıyla kaydedildi.');
+            }
+          } catch (e: any) {
+            const errMsg: ChatMessage = {
+              id: `err-${Date.now()}`,
+              role: 'assistant',
+              text: `⚠️ Kayıt sırasında hata: ${e.message}`,
+              time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+            };
+            setMessages((prev) => [...prev, errMsg]);
+          }
+          setIsLoading(false);
+          return;
+        }
+
+        if (isVoiceCancellation(query)) {
+          playCancelChime();
+          const targetDraft = activePendingDraft;
+          setActivePendingDraft(null);
+          const cancelledDraft: ActionDraftPayload = {
+            ...targetDraft,
+            status: 'cancelled',
+            resultMessage: 'İşlem operatör tarafından sesli olarak iptal edildi.',
+          };
+          const aiMsg: ChatMessage = {
+            id: `a-${Date.now()}`,
+            role: 'assistant',
+            text: `❌ **Sesli İptal:** Taslak iptal edildi. Veritabanına kayıt yapılmadı.`,
+            time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+            userQuery: query,
+            actionDraft: cancelledDraft,
+          };
+          setMessages((prev) => [...prev, aiMsg]);
+          if (autoSpeak || isWalkieTalkieOpen) {
+            handleToggleSpeak(aiMsg.id, 'İşlem iptal edildi.');
+          }
+          setIsLoading(false);
+          return;
+        }
       }
 
       let currentData = snapshot;
@@ -320,17 +404,18 @@ export default function AIAssistantModal() {
       // 1. Action Intent Recognition (Kantar, Sevkiyat, Üretim, Palet İade Girişi)
       const actionDraft = await parseActionIntentFromQuery(query, currentData);
       if (actionDraft) {
+        setActivePendingDraft(actionDraft);
         const actionMsg: ChatMessage = {
           id: `a-${Date.now()}`,
           role: 'assistant',
-          text: `📋 **${actionDraft.title}** hazırlandı. Lütfen aşağıdaki bilgileri kontrol edip onaylayınız:`,
+          text: `📋 **${actionDraft.title}** hazırlandı. Onaylıyor musunuz? (Sesle *"Evet"* veya *"İptal"* diyebilirsiniz):\n\nLütfen aşağıdaki bilgileri kontrol ediniz:`,
           time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
           userQuery: query,
           actionDraft,
         };
         setMessages((prev) => [...prev, actionMsg]);
-        if (autoSpeak) {
-          handleToggleSpeak(actionMsg.id, actionMsg.text);
+        if (autoSpeak || isWalkieTalkieOpen) {
+          handleToggleSpeak(actionMsg.id, `${actionDraft.title} hazırlandı. Onaylıyor musunuz?`);
         }
         setIsLoading(false);
         return;
@@ -577,9 +662,19 @@ export default function AIAssistantModal() {
               >
                 <RefreshCw className={`w-4 h-4 ${isRefreshingSnapshot ? 'animate-spin text-amber-400' : ''}`} />
               </button>
+              {/* Phase 4: Walkie-Talkie Button in Header */}
+              <button
+                onClick={() => setIsWalkieTalkieOpen(true)}
+                className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Saha Telsizi / Bas-Konuş Modu (PTT)"
+              >
+                <Radio className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                <span className="hidden sm:inline text-[11px]">Telsiz</span>
+              </button>
+
               <button
                 onClick={() => setAutoSpeak(!autoSpeak)}
-                className={`p-1.5 rounded-lg transition-colors ${
+                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                   autoSpeak ? 'bg-amber-500 text-white' : 'hover:bg-slate-700/60 text-slate-300 hover:text-white'
                 }`}
                 title={autoSpeak ? 'Otomatik Sesli Okuma Açık (Her yanıt okunur)' : 'Otomatik Sesli Okuma Kapalı'}
@@ -906,6 +1001,16 @@ export default function AIAssistantModal() {
                       {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                     </button>
 
+                    {/* Phase 4: Walkie-Talkie PTT Mode Button */}
+                    <button
+                      type="button"
+                      onClick={() => setIsWalkieTalkieOpen(true)}
+                      className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-slate-200/50 rounded-full transition-all cursor-pointer"
+                      title="Saha Telsizi / Bas-Konuş (PTT) Modunu Aç"
+                    >
+                      <Radio className="w-4 h-4" />
+                    </button>
+
                     <input
                       type="text"
                       value={inputText}
@@ -1036,6 +1141,18 @@ export default function AIAssistantModal() {
               </div>
             )}
           </div>
+
+          {/* Phase 4: Walkie-Talkie HUD Overlay */}
+          <AIWalkieTalkieOverlay
+            isOpen={isWalkieTalkieOpen}
+            onClose={() => setIsWalkieTalkieOpen(false)}
+            onSendQuery={(trans) => handleSendMessage(trans)}
+            pendingDraft={activePendingDraft}
+            onConfirmDraft={() => handleSendMessage('evet onayla')}
+            onCancelDraft={() => handleSendMessage('iptal')}
+            isAutoHandsFree={isAutoHandsFree}
+            onToggleHandsFree={() => setIsAutoHandsFree(!isAutoHandsFree)}
+          />
         </div>
       )}
     </>
