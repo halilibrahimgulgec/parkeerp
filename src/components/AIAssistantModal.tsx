@@ -51,6 +51,11 @@ import {
   playSuccessChime,
   playCancelChime,
 } from '../utils/aiWalkieTalkieEngine';
+import {
+  formatExecutiveReportForMessaging,
+  sendBriefingViaWhatsApp,
+  sendBriefingViaTelegram,
+} from '../utils/aiExecutiveBriefingEngine';
 
 interface ChatMessage {
   id: string;
@@ -63,6 +68,8 @@ interface ChatMessage {
 }
 
 const QUICK_PROMPTS = [
+  { label: '📲 Patrona Rapor Gönder', query: 'Günün özetini WhatsApp üzerinden yöneticiye brifing olarak ilet' },
+  { label: '✈️ Telegrama Brifing At', query: 'Fabrika gün sonu raporunu Telegram kanalına gönder' },
   { label: '🚨 Fabrika Risklerini Tara', query: 'Fabrikadaki kantar dara sapmaları, makine fireleri ve kritik riskleri denetle' },
   { label: '🚚 Kantar Fişi Hazırla', query: "Ahmet Yılmaz 46 K 1234 kamyonuna 15 palet 8'lik kilit parke yüklendi kantar fişi hazırla" },
   { label: '🏭 Üretim Girişi Yap', query: "1 nolu makinede 500 m2 8'lik parke basıldı 15 m2 fire var üretim kaydet" },
@@ -96,6 +103,13 @@ export default function AIAssistantModal() {
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
   const [autoSpeak, setAutoSpeak] = useState(false);
+
+  // Phase 5: Automated Executive WhatsApp & Telegram Dispatcher States
+  const [managerPhone, setManagerPhone] = useState('');
+  const [telegramBotToken, setTelegramBotToken] = useState('');
+  const [telegramChatId, setTelegramChatId] = useState('');
+  const [isSendingTelegram, setIsSendingTelegram] = useState(false);
+  const [telegramStatusMsg, setTelegramStatusMsg] = useState<string | null>(null);
 
   // Phase 3: Watchdog Anomaly Detector States
   const [watchdogResult, setWatchdogResult] = useState<WatchdogScanResult | null>(null);
@@ -166,10 +180,16 @@ export default function AIAssistantModal() {
     };
   }, []);
 
-  // Load saved API key on mount
+  // Load saved API key and messaging settings on mount
   useEffect(() => {
     const savedKey = localStorage.getItem('parke_gemini_api_key') || '';
+    const savedPhone = localStorage.getItem('parke_manager_phone') || '';
+    const savedBotToken = localStorage.getItem('parke_telegram_bot_token') || '';
+    const savedChatId = localStorage.getItem('parke_telegram_chat_id') || '';
     setApiKey(savedKey);
+    setManagerPhone(savedPhone);
+    setTelegramBotToken(savedBotToken);
+    setTelegramChatId(savedChatId);
   }, []);
 
   // Initial welcome message
@@ -421,8 +441,75 @@ export default function AIAssistantModal() {
         return;
       }
 
-      // 2. Watchdog / Anomaly / Leakage Query Recognition
+      // Phase 5: Automated Executive Briefing Dispatch (WhatsApp & Telegram)
       const qLower = query.toLowerCase();
+      const isBriefingDispatchQuery =
+        (qLower.includes('patron') || qLower.includes('yönetici') || qLower.includes('müdür')) &&
+        (qLower.includes('rapor') || qLower.includes('özet') || qLower.includes('brifing') || qLower.includes('gönder') || qLower.includes('at') || qLower.includes('paylaş') || qLower.includes('ilet'));
+
+      const isDirectPlatformDispatch =
+        (qLower.includes('whatsapp') || qLower.includes('telegram')) &&
+        (qLower.includes('gönder') || qLower.includes('at') || qLower.includes('ilet') || qLower.includes('paylaş') || qLower.includes('rapor') || qLower.includes('özet') || qLower.includes('brifing'));
+
+      if (isBriefingDispatchQuery || isDirectPlatformDispatch) {
+        let wRes = watchdogResult;
+        if (!wRes) {
+          wRes = await runFactoryWatchdogScan(currentData);
+          setWatchdogResult(wRes);
+        }
+
+        const formattedBriefing = formatExecutiveReportForMessaging(currentData, wRes);
+        const wantsTelegram = qLower.includes('telegram');
+        const wantsWhatsApp = qLower.includes('whatsapp') || !wantsTelegram;
+
+        const statusLines: string[] = [];
+
+        if (wantsWhatsApp) {
+          sendBriefingViaWhatsApp(formattedBriefing, managerPhone);
+          statusLines.push(
+            managerPhone
+              ? `📲 **WhatsApp Gönderimi Başlatıldı:** Gün sonu brifingi yöneticinin (${managerPhone}) numarasına iletilmek üzere WhatsApp açıldı.`
+              : `📲 **WhatsApp Gönderimi Başlatıldı:** WhatsApp açıldı. (İpucu: Ayarlar simgesinden yönetici telefon numarasını kaydedebilirsiniz).`
+          );
+        }
+
+        if (wantsTelegram) {
+          if (telegramBotToken.trim() && telegramChatId.trim()) {
+            setIsSendingTelegram(true);
+            try {
+              const telRes = await sendBriefingViaTelegram(formattedBriefing, telegramBotToken, telegramChatId);
+              if (telRes.success) {
+                statusLines.push(`✈️ **Telegram İletildi:** Rapor Telegram kanalına başarıyla gönderildi.`);
+              } else {
+                statusLines.push(`⚠️ **Telegram Hatası:** ${telRes.message}`);
+              }
+            } catch (err: any) {
+              statusLines.push(`⚠️ **Telegram Hatası:** ${err.message}`);
+            } finally {
+              setIsSendingTelegram(false);
+            }
+          } else {
+            statusLines.push(`⚠️ **Telegram Yapılandırması Eksik:** Bot Token veya Chat ID girilmediği için doğrudan iletilemedi. Lütfen üstteki Ayarlar (⚙️) menüsünden Telegram bilgilerinizi tanımlayınız.`);
+          }
+        }
+
+        const aiMsg: ChatMessage = {
+          id: `a-${Date.now()}`,
+          role: 'assistant',
+          text: `${statusLines.join('\n\n')}\n\n📋 **Gönderilen Gün Sonu Yönetici Brifingi:**\n\n${formattedBriefing}`,
+          time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+          userQuery: query,
+        };
+
+        setMessages((prev) => [...prev, aiMsg]);
+        if (autoSpeak || isWalkieTalkieOpen) {
+          handleToggleSpeak(aiMsg.id, 'Gün sonu yönetici brifingi oluşturuldu ve iletildi.');
+        }
+        setIsLoading(false);
+        return;
+      }
+
+      // 2. Watchdog / Anomaly / Leakage Query Recognition
       const isWatchdogQuery =
         qLower.includes('anomali') ||
         qLower.includes('bekçi') ||
@@ -503,10 +590,34 @@ export default function AIAssistantModal() {
     setTimeout(() => setCopiedBriefing(false), 2000);
   };
 
-  const handleShareWhatsApp = () => {
-    if (!briefingText) return;
-    const encoded = encodeURIComponent(briefingText);
-    window.open(`https://api.whatsapp.com/send?text=${encoded}`, '_blank');
+  const handleShareWhatsApp = (customText?: string) => {
+    const textToSend = customText || (snapshot ? formatExecutiveReportForMessaging(snapshot, watchdogResult) : briefingText);
+    if (!textToSend) return;
+    sendBriefingViaWhatsApp(textToSend, managerPhone);
+  };
+
+  const handleShareTelegram = async (customText?: string) => {
+    const textToSend = customText || (snapshot ? formatExecutiveReportForMessaging(snapshot, watchdogResult) : briefingText);
+    if (!textToSend) return;
+
+    if (!telegramBotToken.trim() || !telegramChatId.trim()) {
+      setShowSettings(true);
+      setTelegramStatusMsg('⚠️ Lütfen önce Telegram Bot Token ve Chat ID bilgilerini Ayarlar panelinden kaydedin.');
+      setTimeout(() => setTelegramStatusMsg(null), 6000);
+      return;
+    }
+
+    setIsSendingTelegram(true);
+    setTelegramStatusMsg(null);
+    try {
+      const res = await sendBriefingViaTelegram(textToSend, telegramBotToken, telegramChatId);
+      setTelegramStatusMsg(res.success ? '✅ ' + res.message : '❌ ' + res.message);
+    } catch (e: any) {
+      setTelegramStatusMsg('❌ Gönderim hatası: ' + e.message);
+    } finally {
+      setIsSendingTelegram(false);
+      setTimeout(() => setTelegramStatusMsg(null), 6000);
+    }
   };
 
   const handlePrintBriefing = () => {
@@ -533,10 +644,20 @@ export default function AIAssistantModal() {
     }
   };
 
-  const saveApiKey = (newKey: string) => {
+  const saveSettings = (newKey: string, newPhone: string, newBotToken: string, newChatId: string) => {
     setApiKey(newKey);
+    setManagerPhone(newPhone);
+    setTelegramBotToken(newBotToken);
+    setTelegramChatId(newChatId);
     localStorage.setItem('parke_gemini_api_key', newKey.trim());
+    localStorage.setItem('parke_manager_phone', newPhone.trim());
+    localStorage.setItem('parke_telegram_bot_token', newBotToken.trim());
+    localStorage.setItem('parke_telegram_chat_id', newChatId.trim());
     setShowSettings(false);
+  };
+
+  const saveApiKey = (newKey: string) => {
+    saveSettings(newKey, managerPhone, telegramBotToken, telegramChatId);
   };
 
   // Helper to format markdown in chat cleanly
@@ -756,32 +877,98 @@ export default function AIAssistantModal() {
 
           {/* Settings Sub-panel (Collapsible) */}
           {showSettings && (
-            <div className="bg-slate-900 text-white p-3.5 border-b border-slate-700 text-xs animate-in slide-in-from-top-2 duration-200">
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-bold flex items-center gap-1.5 text-amber-400">
-                  <Zap className="w-3.5 h-3.5" /> Google Gemini API Yapılandırması
+            <div className="bg-slate-900 text-white p-4 border-b border-slate-700 text-xs animate-in slide-in-from-top-2 duration-200 space-y-3 max-h-[70vh] overflow-y-auto">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <span className="font-bold flex items-center gap-1.5 text-amber-400 text-sm">
+                  <Settings className="w-4 h-4" /> AI ve Yönetici İletişim Ayarları
                 </span>
-                <span className="text-[10px] text-slate-400">İsteğe Bağlı</span>
+                <button
+                  onClick={() => setShowSettings(false)}
+                  className="text-slate-400 hover:text-white p-1 rounded-md cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
-              <p className="text-slate-300 text-[11px] mb-2 leading-relaxed">
-                Google AI Studio üzerinden temin edebileceğiniz ücretsiz <strong>Gemini 2.0 Flash</strong> anahtarını buraya ekleyerek daha derin tahminleme gücüne erişebilirsiniz. Anahtar girilmezse sistem dahili Otonom Fabrika Motoru sıfır konfigürasyonla kesintisiz çalışır.
-              </p>
-              <div className="flex gap-2">
+
+              {/* 1. Gemini API Key */}
+              <div>
+                <label className="block text-slate-300 font-medium mb-1 flex items-center gap-1">
+                  <Zap className="w-3.5 h-3.5 text-amber-400" /> Google Gemini API Anahtarı (İsteğe Bağlı)
+                </label>
                 <input
                   type="password"
-                  placeholder="AIzaSy... (Gemini API Key)"
+                  placeholder="AIzaSy... (Gemini 2.0 Flash API Key)"
                   defaultValue={apiKey}
                   id="gemini-key-input"
-                  className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
                 />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Girilmezse sistem dahili Otonom Fabrika Zekası motoruyla sıfır konfigürasyonla çalışır.
+                </p>
+              </div>
+
+              {/* 2. WhatsApp Executive Phone */}
+              <div>
+                <label className="block text-emerald-400 font-medium mb-1 flex items-center gap-1">
+                  <span>📲</span> WhatsApp Yönetici Telefon Numarası
+                </label>
+                <input
+                  type="text"
+                  placeholder="Örn: 905321234567 veya 05321234567"
+                  defaultValue={managerPhone}
+                  id="manager-phone-input"
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  "Patrona rapor at" dendiğinde veya Gün Sonu WhatsApp butonunda otomatik bu numaraya yönlenir.
+                </p>
+              </div>
+
+              {/* 3. Telegram Bot Integration */}
+              <div className="space-y-1.5">
+                <label className="block text-sky-400 font-medium flex items-center gap-1">
+                  <span>✈️</span> Telegram Bot & Kanal Yapılandırması
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <input
+                    type="password"
+                    placeholder="Bot Token (örn: 123456:ABC-DEF...)"
+                    defaultValue={telegramBotToken}
+                    id="telegram-token-input"
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Chat ID veya Kanal (örn: -100123456)"
+                    defaultValue={telegramChatId}
+                    id="telegram-chat-id-input"
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400">
+                  Telegram BotFather'dan aldığınız bot token ve yönetici/grup chat ID'sini girerek tek tıkla doğrudan Telegram mesajı iletebilirsiniz.
+                </p>
+              </div>
+
+              {/* Save Button */}
+              <div className="pt-2 flex justify-end">
                 <button
                   onClick={() => {
-                    const el = document.getElementById('gemini-key-input') as HTMLInputElement;
-                    saveApiKey(el ? el.value : '');
+                    const keyEl = document.getElementById('gemini-key-input') as HTMLInputElement;
+                    const phoneEl = document.getElementById('manager-phone-input') as HTMLInputElement;
+                    const tokenEl = document.getElementById('telegram-token-input') as HTMLInputElement;
+                    const chatEl = document.getElementById('telegram-chat-id-input') as HTMLInputElement;
+                    saveSettings(
+                      keyEl ? keyEl.value : apiKey,
+                      phoneEl ? phoneEl.value : managerPhone,
+                      tokenEl ? tokenEl.value : telegramBotToken,
+                      chatEl ? chatEl.value : telegramChatId
+                    );
                   }}
-                  className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-lg transition-colors cursor-pointer"
+                  className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-bold rounded-lg transition-all shadow-sm active:scale-95 cursor-pointer flex items-center gap-1.5"
                 >
-                  Kaydet
+                  <Check className="w-3.5 h-3.5" />
+                  Ayarları Kaydet
                 </button>
               </div>
             </div>
@@ -1079,7 +1266,7 @@ export default function AIAssistantModal() {
                   <div className="flex items-center gap-1">
                     <button
                       onClick={handleCopyBriefing}
-                      className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors"
+                      className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer"
                       title="Panoya Kopyala"
                     >
                       {copiedBriefing ? (
@@ -1096,23 +1283,43 @@ export default function AIAssistantModal() {
                     </button>
 
                     <button
-                      onClick={handleShareWhatsApp}
-                      className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors"
-                      title="WhatsApp ile Paylaş"
+                      onClick={() => handleShareWhatsApp()}
+                      className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer"
+                      title="WhatsApp ile Yöneticiye İlet"
                     >
                       <Share2 className="w-3.5 h-3.5" />
                       <span>WhatsApp</span>
                     </button>
 
                     <button
+                      onClick={() => handleShareTelegram()}
+                      disabled={isSendingTelegram}
+                      className="px-2.5 py-1 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
+                      title="Telegram Bot ile Kanala Gönder"
+                    >
+                      {isSendingTelegram ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-sky-600" />
+                      ) : (
+                        <Send className="w-3.5 h-3.5 text-sky-600" />
+                      )}
+                      <span>Telegram</span>
+                    </button>
+
+                    <button
                       onClick={handlePrintBriefing}
-                      className="p-1.5 hover:bg-slate-200 text-slate-600 rounded-lg transition-colors"
+                      className="p-1.5 hover:bg-slate-200 text-slate-600 rounded-lg transition-colors cursor-pointer"
                       title="Yazdır / PDF"
                     >
                       <Printer className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
+
+                {telegramStatusMsg && (
+                  <div className={`mt-2 p-2 rounded-lg text-xs font-medium flex items-center gap-1.5 ${telegramStatusMsg.startsWith('✅') ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'}`}>
+                    <span>{telegramStatusMsg}</span>
+                  </div>
+                )}
 
                 {/* Briefing Text Area */}
                 <div className="flex-1 overflow-y-auto mt-3 bg-white p-4 rounded-xl border border-slate-200 text-sm shadow-inner">
