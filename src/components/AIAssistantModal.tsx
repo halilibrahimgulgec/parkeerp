@@ -55,6 +55,8 @@ import {
   formatExecutiveReportForMessaging,
   sendBriefingViaWhatsApp,
   sendBriefingViaTelegram,
+  normalizeWhatsAppPhone,
+  getWhatsAppUrl,
 } from '../utils/aiExecutiveBriefingEngine';
 
 interface ChatMessage {
@@ -65,6 +67,9 @@ interface ChatMessage {
   userQuery?: string;
   actionDraft?: ActionDraftPayload;
   imagePreview?: string;
+  whatsAppAction?: { url: string; phone?: string; reportText: string };
+  needsPhonePrompt?: boolean;
+  pendingReportText?: string;
 }
 
 const QUICK_PROMPTS = [
@@ -465,14 +470,22 @@ export default function AIAssistantModal() {
         const wantsWhatsApp = qLower.includes('whatsapp') || !wantsTelegram;
 
         const statusLines: string[] = [];
+        let whatsAppActionData: { url: string; phone?: string; reportText: string } | undefined;
+        let needsPhonePrompt = false;
 
         if (wantsWhatsApp) {
-          sendBriefingViaWhatsApp(formattedBriefing, managerPhone);
-          statusLines.push(
-            managerPhone
-              ? `📲 **WhatsApp Gönderimi Başlatıldı:** Gün sonu brifingi yöneticinin (${managerPhone}) numarasına iletilmek üzere WhatsApp açıldı.`
-              : `📲 **WhatsApp Gönderimi Başlatıldı:** WhatsApp açıldı. (İpucu: Ayarlar simgesinden yönetici telefon numarasını kaydedebilirsiniz).`
-          );
+          if (!managerPhone.trim()) {
+            needsPhonePrompt = true;
+            statusLines.push(
+              `📲 **Patron / Yönetici Telefon Numarasını Tanımlayınız**\n\nGün sonu brifinginin doğrudan yöneticinizin WhatsApp sohbetine iletilmesi için lütfen telefon numarasını giriniz:`
+            );
+          } else {
+            const url = sendBriefingViaWhatsApp(formattedBriefing, managerPhone);
+            whatsAppActionData = { url, phone: managerPhone, reportText: formattedBriefing };
+            statusLines.push(
+              `📲 **WhatsApp Gönderimi Başlatıldı:** Gün sonu brifingi yöneticinin (${managerPhone}) numarasına iletilmek üzere WhatsApp açıldı.`
+            );
+          }
         }
 
         if (wantsTelegram) {
@@ -498,14 +511,17 @@ export default function AIAssistantModal() {
         const aiMsg: ChatMessage = {
           id: `a-${Date.now()}`,
           role: 'assistant',
-          text: `${statusLines.join('\n\n')}\n\n📋 **Gönderilen Gün Sonu Yönetici Brifingi:**\n\n${formattedBriefing}`,
+          text: `${statusLines.join('\n\n')}\n\n📋 **${needsPhonePrompt ? 'Gönderilecek' : 'Gönderilen'} Gün Sonu Yönetici Brifingi:**\n\n${formattedBriefing}`,
           time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
           userQuery: query,
+          needsPhonePrompt,
+          pendingReportText: needsPhonePrompt ? formattedBriefing : undefined,
+          whatsAppAction: whatsAppActionData,
         };
 
         setMessages((prev) => [...prev, aiMsg]);
         if (autoSpeak || isWalkieTalkieOpen) {
-          handleToggleSpeak(aiMsg.id, 'Gün sonu yönetici brifingi oluşturuldu ve iletildi.');
+          handleToggleSpeak(aiMsg.id, needsPhonePrompt ? 'Lütfen patronun telefon numarasını tanımlayınız.' : 'Gün sonu yönetici brifingi oluşturuldu ve iletildi.');
         }
         setIsLoading(false);
         return;
@@ -595,7 +611,40 @@ export default function AIAssistantModal() {
   const handleShareWhatsApp = (customText?: string) => {
     const textToSend = customText || (snapshot ? formatExecutiveReportForMessaging(snapshot, watchdogResult) : briefingText);
     if (!textToSend) return;
+
+    if (!managerPhone.trim()) {
+      setShowSettings(true);
+      setTelegramStatusMsg('⚠️ Lütfen önce WhatsApp Yönetici Telefon Numarasını kaydediniz.');
+      setTimeout(() => setTelegramStatusMsg(null), 6000);
+      return;
+    }
+
     sendBriefingViaWhatsApp(textToSend, managerPhone);
+  };
+
+  const handleSaveManagerPhoneAndSend = (rawPhone: string, reportText: string, messageId: string) => {
+    const normalized = normalizeWhatsAppPhone(rawPhone);
+    if (!normalized || normalized.length < 10) {
+      alert('Lütfen geçerli bir telefon numarası giriniz (örn: 0532 123 45 67)');
+      return;
+    }
+    setManagerPhone(normalized);
+    localStorage.setItem('parke_manager_phone', normalized);
+
+    const url = sendBriefingViaWhatsApp(reportText, normalized);
+
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === messageId
+          ? {
+              ...m,
+              text: `✅ **Patron Numarası Kaydedildi (${normalized})**\n\nWhatsApp sohbet penceresi açıldı. İlerleyen günlerde doğrudan bu numaraya gönderilecektir.\n\n📋 **Gönderilen Gün Sonu Yönetici Brifingi:**\n\n${reportText}`,
+              needsPhonePrompt: false,
+              whatsAppAction: { url, phone: normalized, reportText },
+            }
+          : m
+      )
+    );
   };
 
   const handleShareTelegram = async (customText?: string) => {
@@ -1040,6 +1089,84 @@ export default function AIAssistantModal() {
                                   );
                                 }}
                               />
+                            )}
+
+                            {/* Phone Number Setup Card if managerPhone was missing */}
+                            {msg.needsPhonePrompt && msg.pendingReportText && (
+                              <div className="mt-3 p-3 bg-amber-50 border border-amber-300 rounded-xl space-y-2.5">
+                                <div className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                                  <span>📲</span> Patron / Yönetici WhatsApp Numarasını Giriniz
+                                </div>
+                                <p className="text-[11px] text-amber-800 leading-normal">
+                                  Raporun doğrudan patronun WhatsApp sohbetine gitmesi için telefon numarasını giriniz:
+                                </p>
+                                <div className="flex gap-2">
+                                  <input
+                                    type="tel"
+                                    placeholder="Örn: 0532 123 45 67"
+                                    id={`phone-input-${msg.id}`}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        const inputEl = document.getElementById(`phone-input-${msg.id}`) as HTMLInputElement;
+                                        handleSaveManagerPhoneAndSend(inputEl?.value || '', msg.pendingReportText!, msg.id);
+                                      }
+                                    }}
+                                    className="flex-1 bg-white border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-500 font-mono"
+                                  />
+                                  <button
+                                    onClick={() => {
+                                      const inputEl = document.getElementById(`phone-input-${msg.id}`) as HTMLInputElement;
+                                      handleSaveManagerPhoneAndSend(inputEl?.value || '', msg.pendingReportText!, msg.id);
+                                    }}
+                                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs flex items-center gap-1 cursor-pointer shadow-xs active:scale-95"
+                                  >
+                                    <Check className="w-3.5 h-3.5" /> Kaydet ve Aç
+                                  </button>
+                                </div>
+                                <div className="flex justify-between items-center text-[10px] text-amber-700 pt-0.5">
+                                  <span>Numara kalıcı olarak kaydedilecektir.</span>
+                                  <button
+                                    onClick={() => {
+                                      sendBriefingViaWhatsApp(msg.pendingReportText!, '');
+                                    }}
+                                    className="underline hover:text-amber-900 cursor-pointer"
+                                  >
+                                    Numarasız WhatsApp Aç ➔
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* WhatsApp Direct Action Button if already sent */}
+                            {msg.whatsAppAction && (
+                              <div className="mt-3 p-2.5 bg-emerald-50/70 border border-emerald-200 rounded-xl flex items-center justify-between gap-2">
+                                <div className="text-xs text-emerald-900 font-medium truncate">
+                                  <span>📲 </span>
+                                  {msg.whatsAppAction.phone ? (
+                                    <span>Alıcı: <strong>{msg.whatsAppAction.phone}</strong></span>
+                                  ) : (
+                                    <span>WhatsApp hazırlandı</span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <button
+                                    onClick={() => {
+                                      window.open(msg.whatsAppAction!.url, '_blank');
+                                    }}
+                                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg flex items-center gap-1 transition-all active:scale-95 cursor-pointer shadow-xs"
+                                  >
+                                    <Share2 className="w-3 h-3" />
+                                    <span>Sohbeti Aç</span>
+                                  </button>
+                                  <button
+                                    onClick={() => setShowSettings(true)}
+                                    className="p-1 hover:bg-emerald-100 text-emerald-700 rounded text-xs transition-colors cursor-pointer"
+                                    title="Numarayı Değiştir"
+                                  >
+                                    <Settings className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
                             )}
                           </>
                         ) : (

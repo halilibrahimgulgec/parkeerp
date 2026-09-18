@@ -107,20 +107,49 @@ export function formatExecutiveReportForMessaging(
 }
 
 /**
- * Dispatches the executive report directly to WhatsApp
+ * Normalizes phone numbers for Turkish and international WhatsApp format
+ * e.g., 0532 123 45 67 -> 905321234567
  */
-export function sendBriefingViaWhatsApp(reportText: string, phoneNumber?: string): void {
-  const cleanPhone = (phoneNumber || '').replace(/[^0-9]/g, '');
+export function normalizeWhatsAppPhone(rawPhone?: string): string {
+  let cleaned = (rawPhone || '').replace(/[^0-9]/g, '');
+  if (!cleaned) return '';
+  if (cleaned.startsWith('00')) {
+    cleaned = cleaned.substring(2);
+  }
+  if (cleaned.startsWith('0')) {
+    cleaned = '90' + cleaned.substring(1);
+  } else if (cleaned.length === 10 && cleaned.startsWith('5')) {
+    cleaned = '90' + cleaned;
+  }
+  return cleaned;
+}
+
+/**
+ * Returns the optimized WhatsApp URL based on platform and recipient
+ */
+export function getWhatsAppUrl(reportText: string, phoneNumber?: string): string {
+  const cleanPhone = normalizeWhatsAppPhone(phoneNumber);
   const encodedText = encodeURIComponent(reportText);
 
-  let url = '';
-  if (cleanPhone) {
-    url = `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodedText}`;
-  } else {
-    url = `https://api.whatsapp.com/send?text=${encodedText}`;
+  // On desktop browsers, web.whatsapp.com opens the chat directly without the intermediate landing page
+  const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  if (!isMobile && cleanPhone) {
+    return `https://web.whatsapp.com/send?phone=${cleanPhone}&text=${encodedText}`;
   }
 
+  if (cleanPhone) {
+    return `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodedText}`;
+  }
+  return `https://api.whatsapp.com/send?text=${encodedText}`;
+}
+
+/**
+ * Dispatches the executive report directly to WhatsApp
+ */
+export function sendBriefingViaWhatsApp(reportText: string, phoneNumber?: string): string {
+  const url = getWhatsAppUrl(reportText, phoneNumber);
   window.open(url, '_blank');
+  return url;
 }
 
 /**
