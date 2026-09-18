@@ -732,7 +732,7 @@ export default function AIAssistantModal() {
   return (
     <>
       {/* 1. Floating Action Trigger Button */}
-      <div className="no-print fixed bottom-6 right-6 z-40">
+      <div className="no-print fixed bottom-16 sm:bottom-6 right-6 z-40">
         <button
           onClick={() => setIsOpen(!isOpen)}
           className="relative group flex items-center gap-2.5 px-4 py-3 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-600 hover:to-orange-600 text-white rounded-full shadow-xl shadow-amber-500/25 transition-all duration-300 transform hover:scale-105 active:scale-95 focus:outline-none"
@@ -1126,7 +1126,7 @@ export default function AIAssistantModal() {
                 </div>
 
                 {/* Input Bar */}
-                <div className="p-3 bg-white border-t border-slate-200 shrink-0">
+                <div className="p-3 pb-16 sm:pb-3 bg-white border-t border-slate-200 shrink-0">
                   {/* Phase 2: Selected Image Preview Chip */}
                   {selectedImage && (
                     <div className="flex items-center gap-2 mb-2 p-1.5 bg-slate-100 border border-slate-300 rounded-xl w-fit max-w-full">
@@ -1344,7 +1344,7 @@ export default function AIAssistantModal() {
                 )}
 
                 {/* Briefing Text Area */}
-                <div className="flex-1 overflow-y-auto mt-3 bg-white p-4 rounded-xl border border-slate-200 text-sm shadow-inner">
+                <div className="flex-1 overflow-y-auto mt-3 mb-14 sm:mb-0 bg-white p-4 rounded-xl border border-slate-200 text-sm shadow-inner">
                   {isRefreshingSnapshot ? (
                     <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-2">
                       <RefreshCw className="w-6 h-6 animate-spin text-amber-500" />

@@ -177,7 +177,7 @@ export const AIWatchdogPanel: React.FC<Props> = ({
       </div>
 
       {/* 4. Anomalies Stream */}
-      <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 mt-1">
+      <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 mt-1 pb-16 sm:pb-2">
         {isLoading ? (
           <div className="flex flex-col items-center justify-center h-48 text-slate-400 gap-2">
             <RefreshCw className="w-7 h-7 animate-spin text-amber-500" />

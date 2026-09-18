@@ -175,7 +175,7 @@ export const AIWalkieTalkieOverlay: React.FC<Props> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="absolute inset-0 z-50 bg-slate-950 text-white flex flex-col justify-between p-4 select-none animate-in fade-in duration-200">
+    <div className="absolute inset-0 z-50 bg-slate-950 text-white flex flex-col justify-between p-4 pb-16 sm:pb-4 select-none animate-in fade-in duration-200">
       {/* 1. Radio Top Bezel & Channel Display */}
       <div className="bg-slate-900 border border-slate-700 rounded-2xl p-3.5 shadow-2xl">
         <div className="flex items-center justify-between border-b border-slate-800 pb-2.5 mb-2.5">
