@@ -79,6 +79,24 @@ export default function CustomerQuotas() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'normal' | 'approaching' | 'exceeded'>('all');
   const [unitFilter, setUnitFilter] = useState<'all' | 'm2' | 'metre' | 'adet'>('all');
 
+  // ── PRINT STATES & HANDLERS ──
+  const [singlePrintQuota, setSinglePrintQuota] = useState<CustomerQuota | null>(null);
+
+  const handlePrintAll = () => {
+    setSinglePrintQuota(null);
+    setTimeout(() => {
+      window.print();
+    }, 100);
+  };
+
+  const handlePrintSingle = (q: CustomerQuota) => {
+    setSinglePrintQuota(q);
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => setSinglePrintQuota(null), 1000);
+    }, 120);
+  };
+
   // ── ANALYSIS TAB PRE-SELECTION ──
   const [queryCustomerId, setQueryCustomerId] = useState<string>('');
   const [queryStartDate, setQueryStartDate] = useState<string>('');
@@ -389,21 +407,85 @@ export default function CustomerQuotas() {
     });
   }, [selectedQuotaForHistory, shipmentItems]);
 
+  // Shipment history for single print quota
+  const singleQuotaShipments = useMemo(() => {
+    if (!singlePrintQuota) return [];
+    return shipmentItems.filter(item => {
+      const s = item.shipments;
+      if (!s) return false;
+      if (s.customer_id !== singlePrintQuota.customer_id) return false;
+      if (singlePrintQuota.site_id && s.site_id !== singlePrintQuota.site_id) return false;
+      if (singlePrintQuota.product_id && item.product_id !== singlePrintQuota.product_id) return false;
+      if (singlePrintQuota.start_date && s.shipment_date < singlePrintQuota.start_date) return false;
+      if (singlePrintQuota.end_date && s.shipment_date > singlePrintQuota.end_date) return false;
+      const itemUnit = item.unit || 'm2';
+      if (!singlePrintQuota.product_id && itemUnit !== singlePrintQuota.unit) return false;
+      return true;
+    });
+  }, [singlePrintQuota, shipmentItems]);
+
   return (
     <div className="p-4 sm:p-8 max-w-7xl mx-auto space-y-6">
       {/* ── PRINT STYLES ── */}
       <style>{`
         @media print {
-          aside, header, nav, .no-print, button {
+          @page {
+            size: A4 landscape;
+            margin: 0.8cm 1cm !important;
+          }
+          aside, header, nav, .no-print, button, input, select {
             display: none !important;
           }
-          body {
+          body, html, #root, main, main > div {
+            display: block !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
             background: white !important;
             color: black !important;
           }
           .print-clean {
             border: 1px solid #cbd5e1 !important;
             box-shadow: none !important;
+            page-break-inside: avoid;
+          }
+          .print-only {
+            display: block !important;
+          }
+          .print-hidden {
+            display: none !important;
+          }
+          .overflow-x-auto {
+            overflow: visible !important;
+            width: 100% !important;
+          }
+          table {
+            width: 100% !important;
+            border-collapse: collapse !important;
+            font-size: 9.5px !important;
+          }
+          th {
+            background-color: #f1f5f9 !important;
+            color: #0f172a !important;
+            border: 1px solid #cbd5e1 !important;
+            padding: 6px 8px !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          td {
+            border: 1px solid #e2e8f0 !important;
+            padding: 5px 8px !important;
+            vertical-align: middle !important;
+          }
+          .print-exact {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+        }
+        @media screen {
+          .print-only {
+            display: none !important;
           }
         }
       `}</style>
@@ -422,23 +504,33 @@ export default function CustomerQuotas() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={loadData}
             disabled={loading}
-            className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl border border-slate-200 transition-colors"
+            className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl border border-slate-200 transition-colors cursor-pointer"
             title="Yenile"
           >
             <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
           </button>
           {activeTab === 'quotas' && (
-            <button
-              onClick={handleOpenAdd}
-              className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-semibold text-sm shadow-sm transition-all hover:shadow"
-            >
-              <Plus size={18} />
-              Yeni Kota Tanımla
-            </button>
+            <>
+              <button
+                onClick={handlePrintAll}
+                className="flex items-center gap-2 px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-xl font-semibold text-sm shadow-xs transition-all hover:border-slate-400 cursor-pointer"
+                title="Kota ve Taahhüt Listesini Yazdır / PDF Al"
+              >
+                <Printer size={18} className="text-slate-600" />
+                <span>Yazdır / PDF</span>
+              </button>
+              <button
+                onClick={handleOpenAdd}
+                className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-semibold text-sm shadow-sm transition-all hover:shadow cursor-pointer"
+              >
+                <Plus size={18} />
+                Yeni Kota Tanımla
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -482,7 +574,7 @@ export default function CustomerQuotas() {
       {activeTab === 'quotas' && (
         <div className="space-y-6">
           {/* Top KPI Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 no-print">
             <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-slate-400 font-medium">Toplam Aktif Kota</span>
@@ -533,7 +625,7 @@ export default function CustomerQuotas() {
           </div>
 
           {/* Filters & Search */}
-          <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 flex flex-col md:flex-row items-center justify-between gap-4 no-print">
             <div className="relative w-full md:w-80">
               <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
@@ -624,8 +716,158 @@ export default function CustomerQuotas() {
             </div>
           </div>
 
+          {/* ── PRINT-ONLY OFFICIAL HEADER (GENERAL QUOTA REPORT) ── */}
+          {!singlePrintQuota && (
+            <div className="print-only border-b-2 border-slate-800 pb-3 mb-4">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h1 className="text-xl font-black text-slate-900 tracking-tight">PARKE ERP • FABRİKA YÖNETİM SİSTEMİ</h1>
+                  <h2 className="text-sm font-bold text-amber-700 uppercase mt-0.5">
+                    📋 MÜŞTERİ KOTALARI & TAAHHÜT TAKİP RAPORU
+                  </h2>
+                </div>
+                <div className="text-right text-[10px] text-slate-600 font-mono">
+                  <div><strong>Rapor Tarihi:</strong> {new Date().toLocaleString('tr-TR')}</div>
+                  <div><strong>Durum Kapsamı:</strong> {activeFilter === 'active' ? '🟢 Aktif Kotalar' : activeFilter === 'closed' ? '🔒 Kapatılan / Tamamlanan Kotalar' : 'Tümü'}</div>
+                  {unitFilter !== 'all' && <div><strong>Birim:</strong> {unitFilter}</div>}
+                  {search && <div><strong>Arama:</strong> "{search}"</div>}
+                </div>
+              </div>
+
+              {/* Print summary KPI bar */}
+              <div className="mt-3 grid grid-cols-4 gap-2 text-xs bg-slate-50 p-2.5 rounded border border-slate-300">
+                <div>
+                  <span className="text-slate-600 font-medium">Aktif Kota: </span>
+                  <strong className="text-slate-900">{quotaKpis.activeCount} Adet</strong>
+                  <span className="text-[10px] text-slate-500 block">({quotaKpis.closedCount} kapalı / arşiv)</span>
+                </div>
+                <div>
+                  <span className="text-amber-800 font-medium">Kotaya Yaklaşan (%85+): </span>
+                  <strong className="text-amber-900">{quotaKpis.approachingCount} Adet</strong>
+                </div>
+                <div>
+                  <span className="text-red-800 font-medium">Kota Dolan / Aşan (%100+): </span>
+                  <strong className="text-red-900">{quotaKpis.exceededCount} Adet</strong>
+                </div>
+                <div className="text-right">
+                  <span className="text-emerald-900 font-medium">Toplam Sevk: </span>
+                  <strong className="text-emerald-950 font-bold block">{quotaKpis.totalShippedM2.toLocaleString('tr-TR')} m²</strong>
+                  <span className="text-[10px] text-slate-500">Hedef: {quotaKpis.totalTargetM2.toLocaleString('tr-TR')} m²</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── PRINT-ONLY OFFICIAL HEADER (SINGLE CUSTOMER QUOTA EKSTRESİ) ── */}
+          {singlePrintQuota && (
+            <div className="print-only border-b-2 border-slate-800 pb-3 mb-4">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h1 className="text-xl font-black text-slate-900 tracking-tight">PARKE ERP • FABRİKA YÖNETİM SİSTEMİ</h1>
+                  <h2 className="text-sm font-bold text-amber-700 uppercase mt-0.5">
+                    📜 MÜŞTERİ TAAHHÜT & SEVKİYAT İRSALİYE EKSTRESİ
+                  </h2>
+                </div>
+                <div className="text-right text-[10px] text-slate-600 font-mono">
+                  <div><strong>Rapor Tarihi:</strong> {new Date().toLocaleString('tr-TR')}</div>
+                  <div><strong>Kota Başlangıç:</strong> {new Date(singlePrintQuota.start_date).toLocaleDateString('tr-TR')}</div>
+                  {singlePrintQuota.end_date && <div><strong>Bitiş:</strong> {new Date(singlePrintQuota.end_date).toLocaleDateString('tr-TR')}</div>}
+                </div>
+              </div>
+
+              {/* Single Quota Card */}
+              <div className="mt-3 p-3 bg-slate-50 rounded border border-slate-300 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div>
+                  <span className="text-slate-500 block">Müşteri / Cari:</span>
+                  <strong className="text-slate-900 text-sm">{singlePrintQuota.customers?.name || '-'}</strong>
+                  {singlePrintQuota.customers?.phone && <span className="text-[10px] text-slate-500 block">Tel: {singlePrintQuota.customers.phone}</span>}
+                </div>
+                <div>
+                  <span className="text-slate-500 block">Teslim Şantiyesi:</span>
+                  <strong className="text-slate-900">{singlePrintQuota.sites?.name || 'Tüm Şantiyeler (Genel)'}</strong>
+                  <span className="text-[10px] text-slate-500 block mt-0.5">
+                    Kapsam: {singlePrintQuota.products?.name ? `${singlePrintQuota.products.name} (${singlePrintQuota.products.thickness || ''})` : `Tüm Ürünler (${singlePrintQuota.unit})`}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-500 block">Taahhüt / Hedef:</span>
+                  <strong className="text-slate-900 font-mono text-sm">{Number(singlePrintQuota.target_quantity).toLocaleString('tr-TR')} {singlePrintQuota.unit}</strong>
+                  <span className="text-blue-700 font-mono font-bold block mt-0.5">
+                    Sevk: {(singlePrintQuota.shipped_quantity || 0).toLocaleString('tr-TR')} {singlePrintQuota.unit}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-slate-500 block">Kalan Bakiye:</span>
+                  <strong className={`font-mono text-sm ${((singlePrintQuota.remaining_quantity ?? 0) < 0) ? 'text-red-700' : 'text-slate-900'}`}>
+                    {((singlePrintQuota.remaining_quantity ?? 0) < 0)
+                      ? `+${Math.abs(singlePrintQuota.remaining_quantity ?? 0).toLocaleString('tr-TR')} ${singlePrintQuota.unit} Aşıldı`
+                      : `${(singlePrintQuota.remaining_quantity ?? 0).toLocaleString('tr-TR')} ${singlePrintQuota.unit}`}
+                  </strong>
+                  <span className="text-[11px] font-bold block mt-0.5 text-amber-800">
+                    Doluluk: %{singlePrintQuota.completion_pct || 0} {singlePrintQuota.is_active === false ? '(Kapalı)' : ''}
+                  </span>
+                </div>
+              </div>
+
+              {singlePrintQuota.notes && (
+                <div className="mt-2 text-xs bg-amber-50/60 p-2 rounded border border-amber-200 text-amber-900">
+                  <strong>Sözleşme / Açıklama Notu:</strong> {singlePrintQuota.notes}
+                </div>
+              )}
+
+              {/* Single Quota Waybill History Table */}
+              <div className="mt-4">
+                <h3 className="text-xs font-bold text-slate-800 mb-2 uppercase">Bu Kotaya Ait Sevkiyat İrsaliyeleri Dökümü:</h3>
+                <table className="w-full text-xs text-left border border-slate-300">
+                  <thead>
+                    <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-300">
+                      <th className="p-2">Tarih</th>
+                      <th className="p-2">İrsaliye No</th>
+                      <th className="p-2">Araç Plaka</th>
+                      <th className="p-2">Şantiye</th>
+                      <th className="p-2">Ürün</th>
+                      <th className="p-2 text-right">Sevk Miktarı</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {singleQuotaShipments.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-4 text-center text-slate-400">
+                          Bu kotanın başlangıç tarihinden sonra yapılmış sevkiyat bulunmuyor.
+                        </td>
+                      </tr>
+                    ) : (
+                      singleQuotaShipments.map((item, idx) => {
+                        const s = item.shipments;
+                        const prod = products.find(p => p.id === item.product_id);
+                        const siteObj = sites.find(st => st.id === s?.site_id);
+                        const sup = getSupplierInfo(s);
+
+                        return (
+                          <tr key={idx}>
+                            <td className="p-2 font-mono">{new Date(s?.shipment_date).toLocaleDateString('tr-TR')}</td>
+                            <td className="p-2 font-mono font-bold">
+                              {s?.invoice_no || '-'}
+                              {sup.isExternal && <span className="ml-1 text-[9px] text-amber-800 font-semibold">({sup.supplierName})</span>}
+                            </td>
+                            <td className="p-2 font-mono">{s?.vehicle_plate || '-'}</td>
+                            <td className="p-2">{siteObj?.name || '-'}</td>
+                            <td className="p-2">{prod?.name || 'Parke Taşı'}</td>
+                            <td className="p-2 text-right font-bold text-blue-900 font-mono">
+                              {Number(item.m2).toLocaleString('tr-TR')} {item.unit || 'm2'}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {/* Quotas Table */}
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+          <div className={`bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden ${singlePrintQuota ? 'hidden print:hidden' : ''}`}>
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left">
                 <thead>
@@ -638,7 +880,7 @@ export default function CustomerQuotas() {
                     <th className="px-3 py-3.5 text-right">Kalan Miktar</th>
                     <th className="px-4 py-3.5 min-w-[170px]">Tamamlanma Oranı</th>
                     <th className="px-3 py-3.5 text-center">Durum</th>
-                    <th className="px-3 py-3.5 text-center">İşlemler</th>
+                    <th className="px-3 py-3.5 text-center no-print">İşlemler</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -770,28 +1012,35 @@ export default function CustomerQuotas() {
                             )}
                           </td>
 
-                          <td className="px-3 py-3.5 text-center">
+                          <td className="px-3 py-3.5 text-center no-print">
                             <div className="flex items-center justify-center gap-1">
                               <button
+                                onClick={() => handlePrintSingle(q)}
+                                className="p-1.5 text-slate-400 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+                                title="Bu Kotanın Ekstresini Yazdır / PDF Al"
+                              >
+                                <Printer size={15} />
+                              </button>
+                              <button
                                 onClick={() => setSelectedQuotaForHistory(q)}
-                                className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
                                 title="Sevkiyat İrsaliyelerini İncele"
                               >
                                 <Eye size={15} />
                               </button>
                               <button
                                 onClick={() => handleJumpToAnalysis(q.customer_id, q.start_date)}
-                                className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                                className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
                                 title="Tarih Aralıklı Sevk Raporuna Git"
                               >
                                 <BarChart2 size={15} />
                               </button>
                               <button
                                 onClick={() => handleToggleActive(q)}
-                                className={`p-1.5 rounded-lg transition-colors ${
-                                  q.is_active !== false
-                                    ? 'text-slate-400 hover:text-emerald-700 hover:bg-emerald-50'
-                                    : 'text-slate-400 hover:text-blue-600 hover:bg-blue-50'
+                                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                                   q.is_active !== false
+                                     ? 'text-slate-400 hover:text-emerald-700 hover:bg-emerald-50'
+                                     : 'text-slate-400 hover:text-blue-600 hover:bg-blue-50'
                                 }`}
                                 title={q.is_active !== false ? 'Kotayı Tamamlandı Olarak Kapat' : 'Kotayı Yeniden Aktif Et'}
                               >
@@ -799,14 +1048,14 @@ export default function CustomerQuotas() {
                               </button>
                               <button
                                 onClick={() => handleOpenEdit(q)}
-                                className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                                className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
                                 title="Düzenle"
                               >
                                 <Edit2 size={15} />
                               </button>
                               <button
                                 onClick={() => handleDelete(q.id, q.customers?.name || '')}
-                                className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                                 title="Sil"
                               >
                                 <Trash2 size={15} />
@@ -819,6 +1068,33 @@ export default function CustomerQuotas() {
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+
+          {/* ── PRINT-ONLY SIGNATURE FOOTER ── */}
+          <div className="print-only mt-8 pt-4 border-t border-slate-300">
+            <div className="grid grid-cols-3 gap-8 text-center text-xs">
+              <div>
+                <div className="font-bold text-slate-800">Raporu Hazırlayan</div>
+                <div className="text-slate-500 text-[10px] mt-0.5">Saha / Sevkiyat Sorumlusu</div>
+                <div className="mt-12 border-b border-dashed border-slate-400 mx-8"></div>
+                <div className="text-[10px] text-slate-400 mt-1">İmza</div>
+              </div>
+              <div>
+                <div className="font-bold text-slate-800">Sevkiyat & Kantar Yetkilisi</div>
+                <div className="text-slate-500 text-[10px] mt-0.5">Kantar & Lojistik Kontrol</div>
+                <div className="mt-12 border-b border-dashed border-slate-400 mx-8"></div>
+                <div className="text-[10px] text-slate-400 mt-1">İmza</div>
+              </div>
+              <div>
+                <div className="font-bold text-slate-800">Fabrika / Satış Müdürü</div>
+                <div className="text-slate-500 text-[10px] mt-0.5">Onay & Tasdik</div>
+                <div className="mt-12 border-b border-dashed border-slate-400 mx-8"></div>
+                <div className="text-[10px] text-slate-400 mt-1">İmza / Kaşe</div>
+              </div>
+            </div>
+            <div className="text-center text-[9px] text-slate-400 mt-6">
+              Bu resmi belge Parke ERP Fabrika Otomasyon Sistemi tarafından üretilmiştir.
             </div>
           </div>
         </div>
@@ -1121,7 +1397,7 @@ export default function CustomerQuotas() {
               </table>
             </div>
 
-            <div className="flex justify-between items-center pt-2">
+            <div className="flex justify-between items-center pt-2 flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => {
@@ -1129,18 +1405,34 @@ export default function CustomerQuotas() {
                   setSelectedQuotaForHistory(null);
                   handleJumpToAnalysis(q.customer_id, q.start_date);
                 }}
-                className="flex items-center gap-1.5 px-3 py-2 text-blue-600 hover:text-blue-800 text-xs font-semibold hover:bg-blue-50 rounded-xl transition-colors"
+                className="flex items-center gap-1.5 px-3 py-2 text-blue-600 hover:text-blue-800 text-xs font-semibold hover:bg-blue-50 rounded-xl transition-colors cursor-pointer"
               >
                 <BarChart2 size={15} />
                 Tarih Aralıklı Tam Analiz Sayfasına Git
               </button>
-              <button
-                type="button"
-                onClick={() => setSelectedQuotaForHistory(null)}
-                className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors"
-              >
-                Kapat
-              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedQuotaForHistory) {
+                      handlePrintSingle(selectedQuotaForHistory);
+                    }
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+                  title="Bu kotanın irsaliye dökümünü resmi çıktı olarak yazdır"
+                >
+                  <Printer size={15} />
+                  <span>Yazdır / PDF</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedQuotaForHistory(null)}
+                  className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  Kapat
+                </button>
+              </div>
             </div>
           </div>
         </Modal>
