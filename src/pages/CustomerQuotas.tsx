@@ -7,7 +7,7 @@ import {
   Edit2, Trash2, TrendingUp, Truck,
   Printer, Eye, RefreshCw, Clock,
   Building2, Package, Layers, BarChart2, Scale,
-  Boxes, Phone, MapPin, X, ShoppingBag
+  Boxes, Phone, MapPin, X, ShoppingBag, RotateCcw, Lock, CheckCircle
 } from 'lucide-react';
 import { getSupplierInfo } from './Shipment';
 
@@ -45,7 +45,7 @@ const EMPTY_FORM: QuotaFormData = {
   target_quantity: 1000,
   unit: 'm2',
   alert_threshold_pct: 85,
-  start_date: '2026-01-01',
+  start_date: getLocalDateStr(new Date()),
   end_date: '',
   notes: '',
   is_active: true,
@@ -74,6 +74,7 @@ export default function CustomerQuotas() {
 
   // Quota list Filter & Search states
   const [search, setSearch] = useState('');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'closed'>('active');
   const [statusFilter, setStatusFilter] = useState<'all' | 'normal' | 'approaching' | 'exceeded'>('all');
   const [unitFilter, setUnitFilter] = useState<'all' | 'm2' | 'metre' | 'adet'>('all');
 
@@ -247,6 +248,10 @@ export default function CustomerQuotas() {
   // Filtered Quotas list
   const filteredQuotas = useMemo(() => {
     return calculatedQuotas.filter(q => {
+      // Active / Closed filter
+      if (activeFilter === 'active' && q.is_active === false) return false;
+      if (activeFilter === 'closed' && q.is_active !== false) return false;
+
       const custName = q.customers?.name?.toLowerCase() || '';
       const siteName = q.sites?.name?.toLowerCase() || '';
       const prodName = q.products?.name?.toLowerCase() || '';
@@ -265,29 +270,38 @@ export default function CustomerQuotas() {
 
       return true;
     });
-  }, [calculatedQuotas, search, statusFilter, unitFilter]);
+  }, [calculatedQuotas, activeFilter, search, statusFilter, unitFilter]);
 
   // Overall KPIs for Quotas tab
   const quotaKpis = useMemo(() => {
     let approachingCount = 0;
     let exceededCount = 0;
+    let activeCount = 0;
+    let closedCount = 0;
     let totalTargetM2 = 0;
     let totalShippedM2 = 0;
 
     calculatedQuotas.forEach(q => {
-      const pct = q.completion_pct || 0;
-      const threshold = q.alert_threshold_pct || 85;
-      if (pct >= 100) exceededCount++;
-      else if (pct >= threshold) approachingCount++;
+      if (q.is_active === false) {
+        closedCount++;
+      } else {
+        activeCount++;
+        const pct = q.completion_pct || 0;
+        const threshold = q.alert_threshold_pct || 85;
+        if (pct >= 100) exceededCount++;
+        else if (pct >= threshold) approachingCount++;
 
-      if (q.unit === 'm2') {
-        totalTargetM2 += Number(q.target_quantity) || 0;
-        totalShippedM2 += Number(q.shipped_quantity) || 0;
+        if (q.unit === 'm2') {
+          totalTargetM2 += Number(q.target_quantity) || 0;
+          totalShippedM2 += Number(q.shipped_quantity) || 0;
+        }
       }
     });
 
     return {
       totalCount: calculatedQuotas.length,
+      activeCount,
+      closedCount,
       approachingCount,
       exceededCount,
       totalTargetM2,
@@ -521,7 +535,7 @@ export default function CustomerQuotas() {
     setForm({
       ...EMPTY_FORM,
       customer_id: customers[0]?.id || '',
-      start_date: '2026-01-01',
+      start_date: getLocalDateStr(new Date()),
     });
     setShowModal(true);
   };
@@ -604,6 +618,37 @@ export default function CustomerQuotas() {
     } catch (err: any) {
       console.error('Silme hatası:', err);
       alert('Kota silinirken hata oluştu: ' + err.message);
+    }
+  };
+
+  const handleToggleActive = async (q: CustomerQuota) => {
+    const isCurrentlyActive = q.is_active !== false;
+    const newActive = !isCurrentlyActive;
+    const pName = q.products?.name ? `${q.products.name} (${q.products.thickness || ''})` : 'bu genel kotayı';
+    const custName = q.customers?.name || 'Müşteri';
+
+    const confirmMsg = newActive
+      ? `"${custName}" firmasına ait "${pName}" kotasını/bağlantısını YENİDEN AKTİF ETMEK istiyor musunuz?`
+      : `"${custName}" firmasına ait "${pName}" (${Number(q.target_quantity).toLocaleString('tr-TR')} ${q.unit}) kotasını/bağlantısını TAMAMLANDI OLARAK KAPATMAK istiyor musunuz?\n\nKapatıldığında sevkiyat kantar fişlerinde yeni sevkiyatları meşgul etmeyecek ve arşivde saklanacaktır.`;
+
+    if (!confirm(confirmMsg)) return;
+
+    try {
+      const todayStr = getLocalDateStr(new Date());
+      const { error } = await supabase
+        .from('customer_quotas')
+        .update({
+          is_active: newActive,
+          end_date: newActive ? (q.end_date || null) : (q.end_date || todayStr),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', q.id);
+
+      if (error) throw error;
+      await loadData();
+    } catch (err: any) {
+      console.error('Kota durum değiştirme hatası:', err);
+      alert('Kota durumu güncellenirken hata oluştu: ' + (err.message || 'Bilinmeyen hata'));
     }
   };
 
@@ -725,8 +770,8 @@ export default function CustomerQuotas() {
                   <Target size={16} />
                 </div>
               </div>
-              <p className="text-2xl font-bold text-slate-900 mt-2">{quotaKpis.totalCount}</p>
-              <span className="text-[11px] text-slate-400">Tanımlı müşteri taahhüdü</span>
+              <p className="text-2xl font-bold text-slate-900 mt-2">{quotaKpis.activeCount}</p>
+              <span className="text-[11px] text-slate-400">{quotaKpis.closedCount} tamamlanan / kapatılan bağlantı</span>
             </div>
 
             <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
@@ -781,6 +826,34 @@ export default function CustomerQuotas() {
             </div>
 
             <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+              <div className="flex items-center bg-slate-100 p-0.5 rounded-xl text-xs font-semibold">
+                <button
+                  onClick={() => setActiveFilter('active')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
+                    activeFilter === 'active' ? 'bg-white text-emerald-700 shadow-sm font-bold' : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  🟢 Aktif ({quotaKpis.activeCount})
+                </button>
+                <button
+                  onClick={() => setActiveFilter('closed')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
+                    activeFilter === 'closed' ? 'bg-white text-slate-800 shadow-sm font-bold' : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <Lock size={12} />
+                  Kapatılanlar ({quotaKpis.closedCount})
+                </button>
+                <button
+                  onClick={() => setActiveFilter('all')}
+                  className={`px-3 py-1.5 rounded-lg transition-all ${
+                    activeFilter === 'all' ? 'bg-white text-slate-900 shadow-sm font-bold' : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Tümü ({quotaKpis.totalCount})
+                </button>
+              </div>
+
               <div className="flex items-center bg-slate-100 p-0.5 rounded-xl text-xs font-semibold">
                 <button
                   onClick={() => setStatusFilter('all')}
@@ -865,7 +938,7 @@ export default function CustomerQuotas() {
                       const remaining = q.remaining_quantity ?? 0;
 
                       return (
-                        <tr key={q.id} className="hover:bg-slate-50/60 transition-colors">
+                        <tr key={q.id} className={`transition-colors ${q.is_active === false ? 'bg-slate-50/50 opacity-75 hover:opacity-100 hover:bg-slate-50' : 'hover:bg-slate-50/60'}`}>
                           <td className="px-4 py-3.5">
                             <div className="font-bold text-slate-900 text-sm">{q.customers?.name || '-'}</div>
                             <div className="flex items-center gap-1.5 text-slate-400 text-[11px] mt-0.5">
@@ -954,7 +1027,12 @@ export default function CustomerQuotas() {
                           </td>
 
                           <td className="px-3 py-3.5 text-center">
-                            {isExceeded ? (
+                            {q.is_active === false ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200 shadow-sm">
+                                <Lock size={10} />
+                                Kapatıldı
+                              </span>
+                            ) : isExceeded ? (
                               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-red-100 text-red-800 border border-red-200 shadow-sm animate-pulse">
                                 <AlertTriangle size={11} />
                                 Kota Doldu
@@ -987,6 +1065,17 @@ export default function CustomerQuotas() {
                                 title="Tarih Aralıklı Sevk Raporuna Git"
                               >
                                 <BarChart2 size={15} />
+                              </button>
+                              <button
+                                onClick={() => handleToggleActive(q)}
+                                className={`p-1.5 rounded-lg transition-colors ${
+                                  q.is_active !== false
+                                    ? 'text-slate-400 hover:text-emerald-700 hover:bg-emerald-50'
+                                    : 'text-slate-400 hover:text-blue-600 hover:bg-blue-50'
+                                }`}
+                                title={q.is_active !== false ? 'Kotayı Tamamlandı Olarak Kapat' : 'Kotayı Yeniden Aktif Et'}
+                              >
+                                {q.is_active !== false ? <Lock size={15} /> : <RotateCcw size={15} />}
                               </button>
                               <button
                                 onClick={() => handleOpenEdit(q)}
@@ -1726,6 +1815,26 @@ export default function CustomerQuotas() {
                 onChange={e => setForm({ ...form, end_date: e.target.value })}
                 className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"
               />
+            </div>
+
+            <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200">
+              <div>
+                <span className="text-xs font-bold text-slate-800 block">Kota / Bağlantı Durumu</span>
+                <span className="text-[11px] text-slate-500">
+                  {form.is_active 
+                    ? '🟢 Aktif: Sevkiyat kantar fişlerinde kontrol edilir.' 
+                    : '🔒 Kapatıldı / Tamamlandı: Sevkiyatlardan kaldırılır, arşivde saklanır.'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, is_active: !form.is_active })}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                  form.is_active ? 'bg-emerald-600 text-white' : 'bg-slate-300 text-slate-700'
+                }`}
+              >
+                {form.is_active ? '🟢 Aktif' : '🔒 Kapatıldı'}
+              </button>
             </div>
 
             <div>

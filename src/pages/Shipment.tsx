@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Shipment, Customer, Site, Product } from '../types';
 import Modal from '../components/Modal';
-import { Plus, Truck, Search, Filter, AlertCircle, Trash2, Eye, Pencil, PackageX, Target, ShoppingBag } from 'lucide-react';
+import { Plus, Truck, Search, Filter, AlertCircle, Trash2, Eye, Pencil, PackageX, Target, ShoppingBag, Lock } from 'lucide-react';
 
 const getLocalDateString = () => {
   const now = new Date();
@@ -516,15 +516,43 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
                       {q.products?.name ? `${q.products.name} (${q.products.thickness})` : 'Tüm Ürünler (Genel)'}
                       {q.sites?.name && <span className="text-slate-500 font-normal ml-1">• {q.sites.name}</span>}
                     </span>
-                    <span className={`font-bold text-[11px] px-2 py-0.5 rounded-full ${
-                      isExceeded
-                        ? 'bg-red-100 text-red-800 font-black'
-                        : isApproaching
-                        ? 'bg-amber-100 text-amber-800'
-                        : 'bg-emerald-50 text-emerald-700'
-                    }`}>
-                      %{q.pct} {isExceeded ? 'Doldu / Aşıldı' : isApproaching ? 'Yaklaştı' : 'Normal'}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`font-bold text-[11px] px-2 py-0.5 rounded-full ${
+                        isExceeded
+                          ? 'bg-red-100 text-red-800 font-black'
+                          : isApproaching
+                          ? 'bg-amber-100 text-amber-800'
+                          : 'bg-emerald-50 text-emerald-700'
+                      }`}>
+                        %{q.pct} {isExceeded ? 'Doldu / Aşıldı' : isApproaching ? 'Yaklaştı' : 'Normal'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const pName = q.products?.name ? `${q.products.name} (${q.products.thickness || ''})` : 'bu kotayı';
+                          if (window.confirm(`"${pName}" (${Number(q.target_quantity).toLocaleString('tr-TR')} ${q.unit}) kotasını/bağlantısını TAMAMLANDI olarak kapatmak istiyor musunuz?\n\nKapatıldığında bu kantar ekranından kaldırılacak ve yeni sevkiyatlar sadece yeni açılan aktif kotaya sayılacaktır.`)) {
+                            try {
+                              const todayStr = getLocalDateString();
+                              const { error } = await supabase.from('customer_quotas').update({
+                                is_active: false,
+                                end_date: q.end_date || todayStr,
+                                updated_at: new Date().toISOString()
+                              }).eq('id', q.id);
+                              if (error) throw error;
+                              setCustomerQuotas(prev => prev.filter(item => item.id !== q.id));
+                            } catch (err: any) {
+                              alert('Kota kapatılırken hata oluştu: ' + (err.message || 'Bilinmeyen hata'));
+                            }
+                          }
+                        }}
+                        className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 rounded text-[10px] font-semibold border border-slate-200 transition-colors flex items-center gap-1 shadow-xs cursor-pointer"
+                        title="Bu bağlantıyı tamamlandı olarak kapat ve ekrandan kaldır"
+                      >
+                        <Lock size={10} className="text-slate-500" />
+                        Kotayı Kapat
+                      </button>
+                    </div>
                   </div>
 
                   <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono">
