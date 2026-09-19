@@ -70,6 +70,8 @@ interface ChatMessage {
   whatsAppAction?: { url: string; phone?: string; reportText: string };
   needsPhonePrompt?: boolean;
   pendingReportText?: string;
+  needsApiKeyPrompt?: boolean;
+  pendingImageForOcr?: { base64: string; mimeType: string; previewUrl?: string; query?: string };
 }
 
 const QUICK_PROMPTS = [
@@ -342,6 +344,10 @@ export default function AIAssistantModal() {
           time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
           userQuery: query,
           actionDraft: visionResult.actionDraft,
+          needsApiKeyPrompt: visionResult.needsApiKey,
+          pendingImageForOcr: visionResult.needsApiKey
+            ? { base64: currentImg.base64, mimeType: currentImg.mimeType, previewUrl: currentImg.previewUrl, query }
+            : undefined,
         };
 
         if (visionResult.actionDraft) {
@@ -645,6 +651,49 @@ export default function AIAssistantModal() {
           : m
       )
     );
+  };
+
+  const handleQuickSaveApiKeyAndScan = async (newKey: string, msg: ChatMessage) => {
+    const cleanKey = newKey.trim();
+    if (!cleanKey) {
+      alert('Lütfen geçerli bir Gemini API anahtarı giriniz.');
+      return;
+    }
+
+    setApiKey(cleanKey);
+    localStorage.setItem('parke_gemini_api_key', cleanKey);
+
+    if (!msg.pendingImageForOcr) return;
+
+    setIsLoading(true);
+    try {
+      const visionResult = await analyzeImageWithVision(
+        msg.pendingImageForOcr.base64,
+        msg.pendingImageForOcr.mimeType,
+        msg.pendingImageForOcr.query,
+        cleanKey
+      );
+
+      setMessages(prev => prev.map(m => {
+        if (m.id === msg.id) {
+          return {
+            ...m,
+            text: visionResult.description,
+            needsApiKeyPrompt: false,
+            actionDraft: visionResult.actionDraft,
+          };
+        }
+        return m;
+      }));
+
+      if (visionResult.actionDraft) {
+        setActivePendingDraft(visionResult.actionDraft);
+      }
+    } catch (err: any) {
+      console.error('Quick scan error:', err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleShareTelegram = async (customText?: string) => {
@@ -953,8 +1002,8 @@ export default function AIAssistantModal() {
                   id="gemini-key-input"
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
                 />
-                <p className="text-[10px] text-slate-400 mt-1">
-                  Girilmezse sistem dahili Otonom Fabrika Zekası motoruyla sıfır konfigürasyonla çalışır.
+                <p className="text-[10px] text-amber-300/80 mt-1">
+                  Fotoğraflardan irsaliye, sevk fişi, el yazısı ve kantar verilerini %100 doğrulukla okumak için gereklidir. (aistudio.google.com'dan ücretsiz ve süresiz alınabilir).
                 </p>
               </div>
 
@@ -1133,6 +1182,50 @@ export default function AIAssistantModal() {
                                   >
                                     Numarasız WhatsApp Aç ➔
                                   </button>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* ── API KEY QUICK SETUP & ACTIVATION CARD ── */}
+                            {msg.needsApiKeyPrompt && (
+                              <div className="mt-3 p-3.5 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-300 rounded-2xl space-y-2.5 shadow-xs">
+                                <div className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                                  <Zap className="w-4 h-4 text-amber-600" />
+                                  <span>Google Gemini Vision AI Anahtarı Girişi</span>
+                                </div>
+                                <p className="text-[11px] text-amber-900 leading-normal">
+                                  Fotoğraftan irsaliye, el yazısı ve kantar fişlerini okumak için <strong>Google Gemini Vision</strong> gereklidir.
+                                  Aşağıya API anahtarınızı yapıştırıp anında okumayı başlatabilirsiniz:
+                                </p>
+                                <div className="flex gap-2">
+                                  <input
+                                    type="password"
+                                    placeholder="AIzaSy... (Gemini 2.0 Flash Anahtarı)"
+                                    id={`gemini-quick-key-${msg.id}`}
+                                    defaultValue={apiKey}
+                                    className="flex-1 bg-white border border-amber-300 rounded-xl px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 font-mono"
+                                  />
+                                  <button
+                                    onClick={() => {
+                                      const inputEl = document.getElementById(`gemini-quick-key-${msg.id}`) as HTMLInputElement;
+                                      handleQuickSaveApiKeyAndScan(inputEl?.value || '', msg);
+                                    }}
+                                    className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all active:scale-95 shadow-xs cursor-pointer shrink-0"
+                                  >
+                                    <Sparkles className="w-3.5 h-3.5" />
+                                    <span>Kaydet ve Oku</span>
+                                  </button>
+                                </div>
+                                <div className="flex justify-between items-center text-[10px] text-amber-800 pt-0.5">
+                                  <span>Anahtar cihazınızda güvenle saklanır.</span>
+                                  <a
+                                    href="https://aistudio.google.com/app/apikey"
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="underline font-bold text-amber-900 hover:text-amber-700 flex items-center gap-1"
+                                  >
+                                    <span>Ücretsiz Anahtar Al ➔</span>
+                                  </a>
                                 </div>
                               </div>
                             )}

@@ -3,7 +3,8 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Shipment, Customer, Site, Product } from '../types';
 import Modal from '../components/Modal';
-import { Plus, Truck, Search, Filter, AlertCircle, Trash2, Eye, Pencil, PackageX, Target, ShoppingBag, Lock } from 'lucide-react';
+import { Plus, Truck, Search, Filter, AlertCircle, Trash2, Eye, Pencil, PackageX, Target, ShoppingBag, Lock, Camera, Image, Loader2, Sparkles, X, Check } from 'lucide-react';
+import { scanWaybillImageForShipment, ParsedShipmentOCRData } from '../utils/aiVisionOCREngine';
 
 const getLocalDateString = () => {
   const now = new Date();
@@ -108,10 +109,11 @@ const getEmptyForm = (): ShipmentFormData => ({
   items: [{ product_id: '', pallets: 0, pallet_type: 'sevkiyat', m2: 0, unit: 'm2' }],
 });
 
-function ShipmentForm({ customers, products, initial, onSave, onClose }: {
+function ShipmentForm({ customers, products, initial, prefilledData, onSave, onClose }: {
   customers: Customer[];
   products: Product[];
   initial?: Shipment;
+  prefilledData?: Partial<ShipmentFormData>;
   onSave: () => void;
   onClose: () => void;
 }) {
@@ -137,6 +139,12 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
         items: [],
       };
     }
+    if (prefilledData) {
+      return {
+        ...getEmptyForm(),
+        ...prefilledData,
+      };
+    }
     return getEmptyForm();
   });
   const [sites, setSites] = useState<Site[]>([]);
@@ -144,6 +152,103 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
+
+  // OCR Scanning states
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanStepMessage, setScanStepMessage] = useState('');
+  const [scanNotice, setScanNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const handleScanImageFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsScanning(true);
+    setScanStepMessage('📷 [1/3] Görüntü netleştiriliyor ve kontrast ayarlanıyor...');
+    setScanNotice(null);
+
+    try {
+      setScanStepMessage('🧠 [2/3] Gemini Vision AI ile irsaliye ve el yazıları okunuyor...');
+      const res = await scanWaybillImageForShipment(file);
+
+      if (!res.success) {
+        if (res.needsApiKey) {
+          setScanNotice({
+            type: 'error',
+            text: '⚠️ Google Gemini Vision API anahtarı ayarlanmamış. Lütfen Asistan Ayarları (⚙️) menüsünden anahtarınızı giriniz.',
+          });
+        } else {
+          setScanNotice({
+            type: 'error',
+            text: res.message || 'İrsaliye okunamadı. Lütfen fotoğrafın netliğini kontrol edin.',
+          });
+        }
+        setIsScanning(false);
+        return;
+      }
+
+      setScanStepMessage('📋 [3/3] Veritabanı müşterisi ve ürünler eşleştiriliyor...');
+      const ocr = res.data;
+      if (!ocr) {
+        setIsScanning(false);
+        return;
+      }
+
+      // Populate Form
+      setForm(prev => {
+        const next = { ...prev };
+        if (ocr.invoice_no) next.invoice_no = ocr.invoice_no;
+        if (ocr.date) next.shipment_date = ocr.date;
+        if (ocr.matched_customer_id) next.customer_id = ocr.matched_customer_id;
+        if (ocr.matched_site_id) next.site_id = ocr.matched_site_id;
+        if (ocr.vehicle_plate) next.vehicle_plate = ocr.vehicle_plate;
+        if (ocr.driver_name) next.driver_name = ocr.driver_name;
+        if (ocr.driver_phone) next.driver_phone = ocr.driver_phone;
+        if (ocr.gross_weight) next.gross_weight = ocr.gross_weight;
+        if (ocr.tare_weight) next.tare_weight = ocr.tare_weight;
+        if (ocr.is_external) {
+          next.is_external = true;
+          if (ocr.supplier_name) next.supplier_name = ocr.supplier_name;
+        }
+        if (ocr.notes) {
+          next.notes = ocr.notes;
+        }
+
+        // Populate items
+        if (ocr.items && ocr.items.length > 0) {
+          next.items = ocr.items.map(it => {
+            let prodId = it.product_id;
+            if (!prodId) {
+              const matched = products.find(p => p.name.toLowerCase().includes(it.product_name.toLowerCase()));
+              prodId = matched?.id || products[0]?.id || '';
+            }
+            return {
+              product_id: prodId,
+              pallets: it.pallets,
+              pallet_type: it.pallet_type || 'uretim',
+              m2: it.m2,
+              unit: it.unit || 'm2',
+            };
+          });
+        }
+
+        return next;
+      });
+
+      setScanNotice({
+        type: 'success',
+        text: `✅ İrsaliye (#${ocr.invoice_no || '-'} / ${ocr.customer_name || 'Müşteri'}) başarıyla okundu ve form dolduruldu!`,
+      });
+    } catch (err: any) {
+      console.error('OCR Error:', err);
+      setScanNotice({
+        type: 'error',
+        text: `Okuma hatası: ${err?.message || 'Bilinmeyen hata'}`,
+      });
+    } finally {
+      setIsScanning(false);
+      e.target.value = '';
+    }
+  };
 
   useEffect(() => {
     if (form.customer_id) {
@@ -417,6 +522,78 @@ function ShipmentForm({ customers, products, initial, onSave, onClose }: {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
+      {/* ── OPTICAL OCR SCANNER BANNER ── */}
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200/80 rounded-2xl p-3.5 shadow-sm">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-sm shrink-0">
+              <Camera size={20} />
+            </div>
+            <div>
+              <div className="font-bold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
+                <span>Fotoğraftan / Fişten Otomatik Doldur</span>
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">Vision AI</span>
+              </div>
+              <p className="text-slate-500 text-[11px] leading-tight">İrsaliye veya kantar fişinin fotoğrafını yükleyin; müşteri, şantiye, plaka ve ürünler anında dolsun.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              id="shipment-camera-input"
+              className="hidden"
+              onChange={handleScanImageFile}
+            />
+            <input
+              type="file"
+              accept="image/*"
+              id="shipment-gallery-input"
+              className="hidden"
+              onChange={handleScanImageFile}
+            />
+            <button
+              type="button"
+              onClick={() => document.getElementById('shipment-camera-input')?.click()}
+              disabled={isScanning}
+              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm active:scale-95 cursor-pointer disabled:opacity-50"
+            >
+              <Camera size={14} />
+              <span>Fotoğraf Çek</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => document.getElementById('shipment-gallery-input')?.click()}
+              disabled={isScanning}
+              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition-all shadow-xs active:scale-95 cursor-pointer disabled:opacity-50"
+            >
+              <Image size={14} />
+              <span>Galeriden Seç</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Live Scanning Progress HUD */}
+        {isScanning && (
+          <div className="mt-3 pt-3 border-t border-blue-200/60 flex items-center gap-2 text-xs font-semibold text-blue-900 animate-pulse">
+            <Loader2 size={16} className="animate-spin text-blue-600" />
+            <span>{scanStepMessage || 'İrsaliye analiz ediliyor (Gemini Vision AI)...'}</span>
+          </div>
+        )}
+
+        {/* OCR Result Success / Info Notice */}
+        {scanNotice && (
+          <div className={`mt-3 pt-2 border-t text-xs font-medium flex items-center justify-between gap-2 ${
+            scanNotice.type === 'success' ? 'text-emerald-800 border-emerald-200' : 'text-amber-800 border-amber-200'
+          }`}>
+            <span>{scanNotice.text}</span>
+            <button type="button" onClick={() => setScanNotice(null)} className="text-slate-400 hover:text-slate-600">
+              <X size={14} />
+            </button>
+          </div>
+        )}
+      </div>
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">İrsaliye No *</label>
