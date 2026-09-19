@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { BarChart3, TrendingUp, Package, DollarSign, Truck, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
+import CustomerShipmentAnalysis from '../components/CustomerShipmentAnalysis';
 
 const MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 
@@ -225,6 +226,7 @@ function DonutChart({ slices }: { slices: { value: number; color: string; label:
 }
 
 export default function Reports() {
+  const [activeReportTab, setActiveReportTab] = useState<'factory' | 'customer_shipments'>('factory');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [stocks, setStocks] = useState<StockItem[]>([]);
@@ -382,26 +384,60 @@ export default function Reports() {
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2 no-print">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
             <BarChart3 size={24} className="text-slate-700" /> Raporlar & Analizler
           </h1>
-          <p className="text-slate-500 text-sm mt-1">Üretim, stok, maliyet ve karlılık analizleri</p>
+          <p className="text-slate-500 text-sm mt-1">Üretim, stok, maliyet ve müşteri sevkiyat analizleri</p>
         </div>
-        <div className="flex items-center gap-2">
-          <select value={selectedMonth} onChange={e => setSelectedMonth(Number(e.target.value))}
-            className="border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300 bg-white font-medium">
-            {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
-          </select>
-          <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))}
-            className="border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300 bg-white font-medium">
-            {[2023, 2024, 2025, 2026].map(y => <option key={y} value={y}>{y}</option>)}
-          </select>
-        </div>
+        {activeReportTab === 'factory' && (
+          <div className="flex items-center gap-2">
+            <select value={selectedMonth} onChange={e => setSelectedMonth(Number(e.target.value))}
+              className="border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300 bg-white font-medium">
+              {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+            </select>
+            <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))}
+              className="border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300 bg-white font-medium">
+              {[2023, 2024, 2025, 2026].map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+        )}
       </div>
 
-      {loading ? (
+      {/* ── TOP REPORT TABS ── */}
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-2 no-print">
+        <button
+          type="button"
+          onClick={() => setActiveReportTab('factory')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all cursor-pointer ${
+            activeReportTab === 'factory'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <BarChart3 size={18} />
+          <span>Fabrika Genel & Karlılık Raporu</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveReportTab('customer_shipments')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all cursor-pointer ${
+            activeReportTab === 'customer_shipments'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <Truck size={18} />
+          <span>Müşteri Sevk Analizi & İrsaliye Raporu</span>
+          <span className="text-[11px] font-normal opacity-80 hidden sm:inline">(Tarih Aralıklı)</span>
+        </button>
+      </div>
+
+      {activeReportTab === 'customer_shipments' ? (
+        <CustomerShipmentAnalysis />
+      ) : loading ? (
         <div className="flex items-center justify-center py-24">
           <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
         </div>
