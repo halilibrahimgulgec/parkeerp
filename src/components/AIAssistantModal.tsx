@@ -345,7 +345,7 @@ export default function AIAssistantModal() {
           userQuery: query,
           actionDraft: visionResult.actionDraft,
           needsApiKeyPrompt: visionResult.needsApiKey,
-          pendingImageForOcr: visionResult.needsApiKey
+          pendingImageForOcr: (visionResult.needsApiKey || !!visionResult.error || visionResult.description.includes('Görüntü okunamadı') || visionResult.description.includes('Başarısız'))
             ? { base64: currentImg.base64, mimeType: currentImg.mimeType, previewUrl: currentImg.previewUrl, query }
             : undefined,
         };
@@ -654,7 +654,7 @@ export default function AIAssistantModal() {
   };
 
   const handleQuickSaveApiKeyAndScan = async (newKey: string, msg: ChatMessage) => {
-    const cleanKey = newKey.trim();
+    const cleanKey = (newKey || apiKey || '').replace(/['"`\s]/g, '').trim();
     if (!cleanKey) {
       alert('Lütfen geçerli bir Gemini API anahtarı giriniz.');
       return;
@@ -679,8 +679,11 @@ export default function AIAssistantModal() {
           return {
             ...m,
             text: visionResult.description,
-            needsApiKeyPrompt: false,
+            needsApiKeyPrompt: visionResult.needsApiKey,
             actionDraft: visionResult.actionDraft,
+            pendingImageForOcr: (visionResult.needsApiKey || !!visionResult.error || visionResult.description.includes('Görüntü okunamadı') || visionResult.description.includes('Başarısız'))
+              ? m.pendingImageForOcr
+              : undefined,
           };
         }
         return m;
@@ -1186,35 +1189,55 @@ export default function AIAssistantModal() {
                               </div>
                             )}
 
-                            {/* ── API KEY QUICK SETUP & ACTIVATION CARD ── */}
-                            {msg.needsApiKeyPrompt && (
+                            {/* ── API KEY QUICK SETUP & RETRY CARD ── */}
+                            {(msg.needsApiKeyPrompt || (!!msg.pendingImageForOcr && (msg.text.includes('Görüntü okunamadı') || msg.text.includes('Başarısız')))) && (
                               <div className="mt-3 p-3.5 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-300 rounded-2xl space-y-2.5 shadow-xs">
-                                <div className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
-                                  <Zap className="w-4 h-4 text-amber-600" />
-                                  <span>Google Gemini Vision AI Anahtarı Girişi</span>
+                                <div className="text-xs font-bold text-amber-950 flex items-center justify-between">
+                                  <div className="flex items-center gap-1.5">
+                                    <Zap className="w-4 h-4 text-amber-600" />
+                                    <span>Google Gemini Vision AI {apiKey ? 'İşlemi' : 'Kurulumu'}</span>
+                                  </div>
+                                  {msg.pendingImageForOcr && (
+                                    <span className="text-[10px] bg-amber-200/80 text-amber-900 font-semibold px-2 py-0.5 rounded-full">
+                                      Görsel Hazır
+                                    </span>
+                                  )}
                                 </div>
                                 <p className="text-[11px] text-amber-900 leading-normal">
-                                  Fotoğraftan irsaliye, el yazısı ve kantar fişlerini okumak için <strong>Google Gemini Vision</strong> gereklidir.
-                                  Aşağıya API anahtarınızı yapıştırıp anında okumayı başlatabilirsiniz:
+                                  {apiKey
+                                    ? 'Fotoğraf hafızada tutuluyor. İster doğrudan tekrar deneyebilir, isterseniz API anahtarınızı güncelleyebilirsiniz:'
+                                    : 'Fotoğraftan irsaliye ve fişleri otomatik okumak için Google Gemini Vision gereklidir. API anahtarınızı aşağıya giriniz:'}
                                 </p>
-                                <div className="flex gap-2">
+                                <div className="flex flex-col sm:flex-row gap-2">
                                   <input
                                     type="password"
                                     placeholder="AIzaSy... (Gemini 2.0 Flash Anahtarı)"
                                     id={`gemini-quick-key-${msg.id}`}
                                     defaultValue={apiKey}
-                                    className="flex-1 bg-white border border-amber-300 rounded-xl px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 font-mono"
+                                    className="flex-1 bg-white border border-amber-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 font-mono"
                                   />
-                                  <button
-                                    onClick={() => {
-                                      const inputEl = document.getElementById(`gemini-quick-key-${msg.id}`) as HTMLInputElement;
-                                      handleQuickSaveApiKeyAndScan(inputEl?.value || '', msg);
-                                    }}
-                                    className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all active:scale-95 shadow-xs cursor-pointer shrink-0"
-                                  >
-                                    <Sparkles className="w-3.5 h-3.5" />
-                                    <span>Kaydet ve Oku</span>
-                                  </button>
+                                  <div className="flex gap-1.5 shrink-0">
+                                    <button
+                                      onClick={() => {
+                                        const inputEl = document.getElementById(`gemini-quick-key-${msg.id}`) as HTMLInputElement;
+                                        handleQuickSaveApiKeyAndScan(inputEl?.value || apiKey, msg);
+                                      }}
+                                      className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all active:scale-95 shadow-xs cursor-pointer"
+                                    >
+                                      <Sparkles className="w-3.5 h-3.5" />
+                                      <span>{apiKey ? 'Kaydet & Oku' : 'Başlat'}</span>
+                                    </button>
+                                    {apiKey && msg.pendingImageForOcr && (
+                                      <button
+                                        onClick={() => handleQuickSaveApiKeyAndScan(apiKey, msg)}
+                                        className="px-3 py-2 bg-white hover:bg-amber-100 text-amber-800 border border-amber-300 font-semibold rounded-xl text-xs flex items-center gap-1 transition-all active:scale-95 cursor-pointer"
+                                        title="Mevcut anahtarla tekrar dene"
+                                      >
+                                        <RefreshCw className="w-3.5 h-3.5" />
+                                        <span>Tekrar Dene</span>
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
                                 <div className="flex justify-between items-center text-[10px] text-amber-800 pt-0.5">
                                   <span>Anahtar cihazınızda güvenle saklanır.</span>

@@ -239,7 +239,55 @@ ${userNote ? `Kullanıcının ilettiği ek not: "${userNote}"` : ''}`;
 }
 
 /**
- * Multi-Model Vision API Caller with Automated Failover Cascade
+ * Dynamically queries Google Generative AI to discover models available to this API key
+ */
+async function discoverAvailableModels(apiKey: string): Promise<string[]> {
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+    if (!res.ok) {
+      const errText = await res.text();
+      let msg = '';
+      try { msg = JSON.parse(errText)?.error?.message; } catch {}
+      if (res.status === 400 && (msg?.includes('API_KEY_INVALID') || msg?.includes('API key not valid'))) {
+        throw new Error('API_KEY_INVALID: Girdiğiniz Google Gemini API anahtarı geçersiz. Lütfen aistudio.google.com adresinden geçerli bir anahtar alınız.');
+      }
+      if (res.status === 403) {
+        throw new Error('API_KEY_FORBIDDEN: Bu API anahtarının Generative Language API erişim izni bulunmuyor veya bölge kısıtlaması var.');
+      }
+      return [];
+    }
+
+    const data = await res.json();
+    if (Array.isArray(data.models)) {
+      const generateModels = data.models
+        .filter((m: any) => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
+        .map((m: any) => m.name.replace(/^models\//, ''));
+
+      // Sort models: prioritize flash models, then 2.5, then 2.0, then 1.5, then pro
+      generateModels.sort((a: string, b: string) => {
+        const score = (m: string) => {
+          let s = 0;
+          if (m.includes('flash')) s += 10;
+          if (m.includes('2.5')) s += 5;
+          if (m.includes('2.0')) s += 4;
+          if (m.includes('1.5')) s += 3;
+          if (m.includes('pro')) s += 2;
+          return s;
+        };
+        return score(b) - score(a);
+      });
+
+      return generateModels;
+    }
+  } catch (err: any) {
+    if (err?.message?.startsWith('API_KEY_')) throw err;
+    console.warn('Model listesi dinamik alınamadı, statik kaskada geçiliyor:', err?.message);
+  }
+  return [];
+}
+
+/**
+ * Multi-Model Vision API Caller with Dynamic Discovery & Automated Failover Cascade
  */
 export async function callVisionCascade(
   base64Image: string,
@@ -249,63 +297,102 @@ export async function callVisionCascade(
 ): Promise<{ candidateText: string; usedModel: string }> {
   const savedKey = typeof window !== 'undefined' && window.localStorage ? window.localStorage.getItem('parke_gemini_api_key') : null;
   const envKey = typeof import.meta !== 'undefined' && (import.meta as any).env ? (import.meta as any).env?.VITE_GEMINI_API_KEY : null;
-  const geminiKey = (apiKey || savedKey || envKey || '').trim();
+  const rawKey = (apiKey || savedKey || envKey || '');
+  // Sanitize key: strip any quotes, spaces, newlines that user might have pasted
+  const cleanKey = rawKey.replace(/['"`\s]/g, '').trim();
 
-  if (!geminiKey) {
+  if (!cleanKey) {
     throw new Error('API_KEY_MISSING');
   }
 
+  // 1. Try dynamic discovery of models active for this key
+  const discovered = await discoverAvailableModels(cleanKey);
+
+  // 2. Build candidate list: discovered models first, followed by resilient defaults
+  const candidateModels = Array.from(new Set([
+    ...discovered,
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-exp',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-flash-8b',
+    'gemini-1.5-pro',
+    'gemini-1.5-pro-latest',
+  ]));
+
   const prompt = buildVisionPrompt(userNote);
-  let lastError: any = null;
+  const detailedErrors: string[] = [];
 
-  for (const model of VISION_MODELS) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                { text: prompt },
-                {
-                  inlineData: {
-                    mimeType: mimeType,
-                    data: base64Image,
+  // 3. Try each model with v1beta, then v1
+  for (const model of candidateModels) {
+    for (const apiVersion of ['v1beta', 'v1']) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent?key=${cleanKey}`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  { text: prompt },
+                  {
+                    inlineData: {
+                      mimeType: mimeType,
+                      data: base64Image,
+                    },
                   },
-                },
-              ],
+                ],
+              },
+            ],
+            generationConfig: {
+              temperature: 0.1,
+              maxOutputTokens: 2048,
             },
-          ],
-          generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 2048,
-          },
-        }),
-      });
+          }),
+        });
 
-      if (!response.ok) {
-        const errText = await response.text();
-        console.warn(`Vision AI [${model}] HTTP ${response.status}:`, errText);
-        lastError = new Error(`Model ${model} hatası: HTTP ${response.status}`);
-        // If it's a 404 (model not available) or 429 (rate limit), continue to next model in cascade
-        continue;
-      }
+        if (!response.ok) {
+          const errText = await response.text();
+          let parsedMsg = '';
+          try {
+            const errObj = JSON.parse(errText);
+            parsedMsg = errObj?.error?.message || '';
+          } catch {}
 
-      const resJson = await response.json();
-      const text = resJson.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (text && text.trim().length > 0) {
-        return { candidateText: text, usedModel: model };
+          const logMsg = `[${apiVersion}/${model}] HTTP ${response.status}: ${parsedMsg || errText.substring(0, 100)}`;
+          detailedErrors.push(logMsg);
+
+          // If API key is explicitly invalid, do not waste time looping through all models
+          if (response.status === 400 && (parsedMsg.includes('API_KEY_INVALID') || parsedMsg.includes('API key not valid'))) {
+            throw new Error('Girdiğiniz Google Gemini API anahtarı geçersiz. Lütfen Google AI Studio (aistudio.google.com) üzerinden geçerli bir anahtar kopyalayınız.');
+          }
+          if (response.status === 403 && parsedMsg.includes('PERMISSION_DENIED')) {
+            throw new Error('Bu API anahtarının Generative Language API erişim izni bulunmuyor veya bölge kısıtlaması var.');
+          }
+
+          continue;
+        }
+
+        const resJson = await response.json();
+        const text = resJson.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text && text.trim().length > 0) {
+          return { candidateText: text, usedModel: `${model} (${apiVersion})` };
+        }
+      } catch (err: any) {
+        if (err?.message?.includes('Google Gemini API anahtarı') || err?.message?.includes('Generative Language API')) {
+          throw err;
+        }
+        detailedErrors.push(`[${apiVersion}/${model}] Hata: ${err?.message}`);
       }
-    } catch (err: any) {
-      console.warn(`Vision AI [${model}] çağrısı başarısız oldu:`, err?.message);
-      lastError = err;
     }
   }
 
-  throw lastError || new Error('Tüm Vision AI modelleri başarısız oldu.');
+  // If all attempts failed
+  const summaryError = detailedErrors.slice(-3).join(' | ');
+  throw new Error(`Vision AI modelleri çağrılamadı: ${summaryError}`);
 }
 
 /**
@@ -655,10 +742,20 @@ export async function analyzeImageWithVision(
     };
   } catch (err: any) {
     console.error('analyzeImageWithVision hatası:', err);
+    const msg = err?.message || 'Görsel işlenirken bir hata oluştu.';
+    const isKeyIssue =
+      msg.includes('API_KEY') ||
+      msg.includes('API anahtarı') ||
+      msg.includes('403') ||
+      msg.includes('400') ||
+      msg.includes('PERMISSION_DENIED') ||
+      msg.includes('Vision AI modelleri');
+
     return {
-      textResponse: `⚠️ **Görüntü Okuma Başarısız Oldu**\n\n${err?.message || 'Görsel işlenirken bir hata oluştu.'}\n\nLütfen fotoğrafın net, aydınlık ve yazılarının okunabilir olduğundan emin olup tekrar deneyiniz.`,
-      description: `Görüntü okunamadı: ${err?.message}`,
-      error: err?.message,
+      textResponse: `⚠️ **Görüntü Okuma Başarısız Oldu**\n\n${msg}\n\nLütfen Google Gemini API anahtarınızı kontrol edip aşağıdaki alandan güncelleyebilir veya tekrar deneyebilirsiniz.`,
+      description: `Görüntü okunamadı: ${msg}`,
+      error: msg,
+      needsApiKey: isKeyIssue,
     };
   }
 }
