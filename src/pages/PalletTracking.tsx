@@ -5,7 +5,7 @@ import { Customer, Site, SupplierPalletBalance, SupplierPalletTransaction } from
 import Modal from '../components/Modal';
 import { 
   Boxes, Plus, Printer, RefreshCw, Save, Trash2, Calendar, ClipboardList, FileText,
-  Factory, Search, ArrowDownLeft, ArrowUpRight
+  Factory, Search, ArrowDownLeft, ArrowUpRight, Building2, MapPin, X
 } from 'lucide-react';
 
 interface PalletBalance {
@@ -59,9 +59,11 @@ export default function PalletTracking() {
   const [sites, setSites] = useState<Site[]>([]);
   const [transactions, setTransactions] = useState<PalletTransaction[]>([]);
   
-  // Date range filter for the Report
+  // Date range & Customer/Site filter for the Report
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
+  const [reportCustomer, setReportCustomer] = useState('');
+  const [reportSite, setReportSite] = useState('');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
@@ -407,18 +409,70 @@ export default function PalletTracking() {
     window.print();
   };
 
-  const totalSummary = transactions.reduce((acc, t) => {
-    const qty = t.quantity || 0;
-    if (!acc[t.pallet_type]) {
-      acc[t.pallet_type] = { sent: 0, returned: 0 };
+  const availableReportSites = useMemo(() => {
+    if (reportCustomer) {
+      return sites.filter(s => s.customer_id === reportCustomer);
     }
-    if (t.transaction_type === 'sent') {
-      acc[t.pallet_type].sent += qty;
-    } else {
-      acc[t.pallet_type].returned += qty;
-    }
-    return acc;
-  }, {} as Record<string, { sent: number; returned: number }>);
+    return sites;
+  }, [sites, reportCustomer]);
+
+  const selectedReportCustomer = useMemo(() => {
+    return customers.find(c => c.id === reportCustomer);
+  }, [customers, reportCustomer]);
+
+  const selectedReportSite = useMemo(() => {
+    return sites.find(s => s.id === reportSite);
+  }, [sites, reportSite]);
+
+  const filteredTransactions = useMemo(() => {
+    return transactions.filter(t => {
+      // Customer filter
+      if (reportCustomer && t.customer_id !== reportCustomer) {
+        return false;
+      }
+      // Site filter
+      if (reportSite) {
+        if (reportSite === 'direct') {
+          if (t.site_id) return false;
+        } else if (t.site_id !== reportSite) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [transactions, reportCustomer, reportSite]);
+
+  const totalSummary = useMemo(() => {
+    return filteredTransactions.reduce((acc, t) => {
+      const qty = t.quantity || 0;
+      if (!acc[t.pallet_type]) {
+        acc[t.pallet_type] = { sent: 0, returned: 0 };
+      }
+      if (t.transaction_type === 'sent') {
+        acc[t.pallet_type].sent += qty;
+      } else {
+        acc[t.pallet_type].returned += qty;
+      }
+      return acc;
+    }, {} as Record<string, { sent: number; returned: number }>);
+  }, [filteredTransactions]);
+
+  const customerCurrentBalance = useMemo(() => {
+    if (!reportCustomer) return null;
+    const matching = balances.filter(b => {
+      if (b.customer_id !== reportCustomer) return false;
+      if (reportSite && reportSite !== 'direct' && b.site_id !== reportSite) return false;
+      if (reportSite === 'direct' && b.site_id) return false;
+      return true;
+    });
+    const res: Record<string, number> = { uretim: 0, sevkiyat: 0, tahta: 0 };
+    matching.forEach(b => {
+      if (res[b.pallet_type] !== undefined) {
+        res[b.pallet_type] += Number(b.balance) || 0;
+      }
+    });
+    return res;
+  }, [balances, reportCustomer, reportSite]);
   return (
     <div className="p-4 md:p-8 space-y-6">
       <style>{`
@@ -699,35 +753,94 @@ export default function PalletTracking() {
             <div className="bg-white rounded-2xl border border-slate-200 p-6 print-container">
               
               {/* Filter Controls */}
-              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-slate-100 pb-4 mb-6 no-print">
+              <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4 border-b border-slate-100 pb-4 mb-6 no-print">
                 <div>
                   <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
                     <Calendar size={18} className="text-blue-500" /> Palet Sevkiyat & İade Raporu
                   </h2>
-                  <p className="text-slate-400 text-xs mt-1">Seçilen tarih aralığına ait tüm palet hareketleri ve sevk edilen malzemeler</p>
+                  <p className="text-slate-400 text-xs mt-1">
+                    {selectedReportCustomer
+                      ? `${selectedReportCustomer.name} ${selectedReportSite ? `— ${selectedReportSite.name}` : (reportSite === 'direct' ? '— Direkt Sevkiyat' : '')} palet hareketleri`
+                      : 'Seçilen tarih aralığına ait tüm palet hareketleri ve sevk edilen malzemeler'}
+                  </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+                <div className="flex flex-wrap items-center gap-2.5 w-full xl:w-auto">
+                  {/* Müşteri / Cari Seçimi */}
+                  <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1">
+                    <Building2 size={15} className="text-slate-500 shrink-0" />
+                    <span className="text-xs font-semibold text-slate-600">Cari:</span>
+                    <select
+                      value={reportCustomer}
+                      onChange={e => {
+                        setReportCustomer(e.target.value);
+                        setReportSite('');
+                      }}
+                      className="bg-transparent text-xs sm:text-sm font-medium text-slate-800 focus:outline-none max-w-[180px] sm:max-w-[210px] truncate cursor-pointer"
+                    >
+                      <option value="">Tüm Müşteriler (Cariler)</option>
+                      {customers.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Şantiye / Saha Seçimi */}
+                  <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1">
+                    <MapPin size={15} className="text-slate-500 shrink-0" />
+                    <span className="text-xs font-semibold text-slate-600">Şantiye:</span>
+                    <select
+                      value={reportSite}
+                      onChange={e => setReportSite(e.target.value)}
+                      className="bg-transparent text-xs sm:text-sm font-medium text-slate-800 focus:outline-none max-w-[160px] sm:max-w-[190px] truncate cursor-pointer"
+                      disabled={!reportCustomer && availableReportSites.length === 0}
+                    >
+                      <option value="">Tüm Şantiyeler</option>
+                      <option value="direct">Direkt Sevkiyat (Şantiyesiz)</option>
+                      {availableReportSites.map(s => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Başlangıç Tarihi */}
                   <div className="flex items-center gap-1">
-                    <span className="text-xs text-slate-500">Başlangıç:</span>
+                    <span className="text-xs text-slate-500 font-medium">Başlangıç:</span>
                     <input
                       type="date"
                       value={startDate}
                       onChange={e => setStartDate(e.target.value)}
-                      className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="border border-slate-200 rounded-lg px-2.5 py-1 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                     />
                   </div>
+
+                  {/* Bitiş Tarihi */}
                   <div className="flex items-center gap-1">
-                    <span className="text-xs text-slate-500">Bitiş:</span>
+                    <span className="text-xs text-slate-500 font-medium">Bitiş:</span>
                     <input
                       type="date"
                       value={endDate}
                       onChange={e => setEndDate(e.target.value)}
-                      className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="border border-slate-200 rounded-lg px-2.5 py-1 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                     />
                   </div>
+
+                  {/* Sıfırla Butonu */}
+                  {(reportCustomer || reportSite) && (
+                    <button
+                      type="button"
+                      onClick={() => { setReportCustomer(''); setReportSite(''); }}
+                      className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                      title="Filtreleri Sıfırla"
+                    >
+                      <X size={16} />
+                    </button>
+                  )}
+
+                  {/* Yazdır / PDF Butonu */}
                   <button
                     onClick={handlePrint}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold transition-colors shadow-md ml-auto md:ml-0"
+                    className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white rounded-xl text-sm font-semibold transition-all shadow-md ml-auto xl:ml-0 cursor-pointer"
+                    title="Seçili Müşteri ve Şantiye Raporunu Yazdır / PDF Al"
                   >
                     <Printer size={16} /> Yazdır / PDF
                   </button>
@@ -735,11 +848,53 @@ export default function PalletTracking() {
               </div>
 
               {/* PRINT ONLY HEADER */}
-              <div className="hidden print-only mb-6 text-center border-b-2 border-slate-800 pb-4">
-                <h1 className="text-2xl font-bold text-slate-900">PARKE ERP — PALET VE SEVKİYAT RAPORU</h1>
-                <p className="text-sm text-slate-500 mt-1">
-                  Rapor Tarih Aralığı: {new Date(startDate).toLocaleDateString('tr-TR')} - {new Date(endDate).toLocaleDateString('tr-TR')}
-                </p>
+              <div className="hidden print-only mb-6 border-b-2 border-slate-800 pb-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h1 className="text-2xl font-black text-slate-900 tracking-tight">PARKE ERP — PALET VE SEVKİYAT RAPORU</h1>
+                    <p className="text-xs text-slate-600 mt-0.5">Fabrika İçi ve Dışı Palet Sevkiyat & İade Çizelgesi</p>
+                  </div>
+                  <div className="text-right text-[11px] text-slate-500">
+                    <p className="font-semibold text-slate-700">Yazdırma Tarihi:</p>
+                    <p>{new Date().toLocaleDateString('tr-TR')} {new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</p>
+                  </div>
+                </div>
+
+                <div className="mt-3.5 grid grid-cols-3 gap-3 bg-slate-50 p-3 rounded-lg border border-slate-300 text-xs">
+                  <div>
+                    <span className="font-bold text-slate-500 block text-[10px] uppercase tracking-wider">Müşteri / Cari:</span>
+                    <span className="font-black text-slate-900 text-sm block truncate">
+                      {selectedReportCustomer ? selectedReportCustomer.name : 'Tüm Müşteriler (Genel Liste)'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="font-bold text-slate-500 block text-[10px] uppercase tracking-wider">Şantiye / Saha:</span>
+                    <span className="font-black text-slate-900 text-sm block truncate">
+                      {reportSite === 'direct'
+                        ? 'Direkt Sevkiyat (Şantiyesiz)'
+                        : selectedReportSite
+                        ? selectedReportSite.name
+                        : 'Tüm Şantiyeler'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="font-bold text-slate-500 block text-[10px] uppercase tracking-wider">Rapor Tarih Aralığı:</span>
+                    <span className="font-black text-slate-900 text-sm block">
+                      {new Date(startDate).toLocaleDateString('tr-TR')} — {new Date(endDate).toLocaleDateString('tr-TR')}
+                    </span>
+                  </div>
+                </div>
+
+                {customerCurrentBalance && (
+                  <div className="mt-3 p-2.5 bg-amber-50/70 border border-amber-200 rounded-lg flex items-center justify-between text-xs">
+                    <span className="font-bold text-amber-900">Müşterinin Güncel Kalan Palet Borcu (Genel Bakiye):</span>
+                    <div className="flex items-center gap-4 font-semibold text-slate-800">
+                      <span>Üretim: <strong className={customerCurrentBalance.uretim > 0 ? 'text-red-700 font-bold' : 'text-slate-900'}>{customerCurrentBalance.uretim} adet</strong></span>
+                      <span>Sevkiyat: <strong className={customerCurrentBalance.sevkiyat > 0 ? 'text-red-700 font-bold' : 'text-slate-900'}>{customerCurrentBalance.sevkiyat} adet</strong></span>
+                      <span>Tahta: <strong className={customerCurrentBalance.tahta > 0 ? 'text-red-700 font-bold' : 'text-slate-900'}>{customerCurrentBalance.tahta} adet</strong></span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Daily Report Data Table */}
@@ -759,12 +914,16 @@ export default function PalletTracking() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {transactions.length === 0 ? (
+                    {filteredTransactions.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="px-4 py-8 text-center text-slate-400">Seçilen tarih aralığında herhangi bir palet hareketi bulunmamaktadır.</td>
+                        <td colSpan={9} className="px-4 py-8 text-center text-slate-400">
+                          {reportCustomer || reportSite
+                            ? 'Seçilen müşteri, şantiye ve tarih aralığına uygun herhangi bir palet hareketi bulunmamaktadır.'
+                            : 'Seçilen tarih aralığında herhangi bir palet hareketi bulunmamaktadır.'}
+                        </td>
                       </tr>
                     ) : (
-                      transactions.map((t) => (
+                      filteredTransactions.map((t) => (
                         <tr key={t.id} className="hover:bg-slate-50/30">
                           <td className="px-4 py-3.5 text-slate-600 whitespace-nowrap">{new Date(t.date).toLocaleDateString('tr-TR')}</td>
                           <td className="px-4 py-3.5 font-semibold text-slate-800">{t.customers?.name || '-'}</td>
