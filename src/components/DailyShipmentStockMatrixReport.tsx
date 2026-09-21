@@ -40,6 +40,9 @@ export default function DailyShipmentStockMatrixReport() {
   const [startDate, setStartDate] = useState<string>(getLocalDateStr(new Date()));
   const [endDate, setEndDate] = useState<string>(getLocalDateStr(new Date()));
 
+  // Matrix Cell Value Mode: 'cumulative' (default: sevk edilen toplam ürün miktarı) | 'daily' (günlük sevk) | 'both' (her ikisi)
+  const [matrixCellMode, setMatrixCellMode] = useState<'cumulative' | 'daily' | 'both'>('cumulative');
+
   // Filters
   const [productTypeFilter, setProductTypeFilter] = useState<'all' | 'parke' | 'bordur' | 'diger'>('all');
   const [customerFilterMode, setCustomerFilterMode] = useState<'all' | 'with_quota' | 'shipped_only' | 'custom'>('all');
@@ -257,6 +260,48 @@ export default function DailyShipmentStockMatrixReport() {
       activeCustomerIds: activeSet,
     };
   }, [shipmentItems, dateMode, selectedDate, startDate, endDate]);
+
+  // Cumulative Product Matrix: cumulativeProductMatrix[customerId][productId] = total cumulative m2
+  const {
+    cumulativeProductMatrix,
+    cumulativeProductTotals,
+    cumulativeCustomerTotals,
+    grandTotalCumulativeShipped,
+  } = useMemo(() => {
+    const cumMat: { [cust: string]: { [prod: string]: number } } = {};
+    const pTotals: { [prod: string]: number } = {};
+    const cTotals: { [cust: string]: number } = {};
+    let grandTot = 0;
+
+    const targetDate = dateMode === 'single' ? selectedDate : endDate;
+
+    (cumulativeShipmentItems || []).forEach((item) => {
+      const s = item.shipments;
+      if (!s) return;
+      // Filter up to targetDate (report date)
+      if (targetDate && s.shipment_date > targetDate) return;
+
+      const custId = s.customer_id;
+      const prodId = item.product_id;
+      const qty = Number(item.m2 || 0);
+
+      if (!custId || !prodId || qty <= 0) return;
+
+      if (!cumMat[custId]) cumMat[custId] = {};
+      cumMat[custId][prodId] = (cumMat[custId][prodId] || 0) + qty;
+
+      pTotals[prodId] = (pTotals[prodId] || 0) + qty;
+      cTotals[custId] = (cTotals[custId] || 0) + qty;
+      grandTot += qty;
+    });
+
+    return {
+      cumulativeProductMatrix: cumMat,
+      cumulativeProductTotals: pTotals,
+      cumulativeCustomerTotals: cTotals,
+      grandTotalCumulativeShipped: grandTot,
+    };
+  }, [cumulativeShipmentItems, dateMode, selectedDate, endDate]);
 
   // Customer Quota & Cumulative Shipment Calculations
   const customerQuotaMap = useMemo(() => {
@@ -539,12 +584,15 @@ export default function DailyShipmentStockMatrixReport() {
         <thead>
           <tr style="background-color: #1e3a8a; color: #ffffff; font-weight: bold; text-align: center;">
             <th colspan="${filteredProducts.length + 5}" style="font-size: 14px; padding: 10px;">
-              PARKE ERP • ${reportTitle}
+              PARKE ERP • ${reportTitle} • ${matrixCellMode === 'daily' ? 'GÜNLÜK SEVKİYAT MATRİSİ' : 'KÜMÜLATİF (TOPLAM) SEVKİYAT MATRİSİ'}
             </th>
           </tr>
           <tr style="background-color: #f1f5f9; font-weight: bold;">
             <th style="padding: 8px; text-align: left; min-width: 180px;">MÜŞTERİ / CARİ</th>
-            ${filteredProducts.map((p) => `<th style="padding: 8px; text-align: right; min-width: 110px;">${p.name} ${p.thickness ? `(${p.thickness})` : ''}</th>`).join('')}
+            ${filteredProducts.map((p) => `<th style="padding: 8px; text-align: right; min-width: 110px;">
+              ${p.name} ${p.thickness ? `(${p.thickness})` : ''}
+              <br/><span style="font-size: 9px; font-weight: normal; color: #475569;">[${matrixCellMode === 'daily' ? 'GÜNLÜK SEVK' : 'TOPLAM SEVK'} (${p.unit || 'm²'})]</span>
+            </th>`).join('')}
             <th style="padding: 8px; text-align: right; background-color: #dbeafe;">GÜNLÜK SEVK</th>
             <th style="padding: 8px; text-align: right; background-color: #f3e8ff;">SİPARİŞ / KOTA</th>
             <th style="padding: 8px; text-align: right; background-color: #fef3c7;">KÜMÜLATİF SEVK</th>
@@ -553,7 +601,8 @@ export default function DailyShipmentStockMatrixReport() {
         </thead>
         <tbody>
           ${filteredCustomers.map((c) => {
-            const cTotal = customerTotals[c.id] || 0;
+            const cDaily = customerTotals[c.id] || 0;
+            const cCum = cumulativeCustomerTotals[c.id] || 0;
             const qSummary = customerQuotaMap[c.id];
             return `
               <tr>
@@ -561,21 +610,38 @@ export default function DailyShipmentStockMatrixReport() {
                   ${c.name} ${qSummary?.hasQuota ? '(Kotalı)' : ''}
                 </td>
                 ${filteredProducts.map((p) => {
-                  const val = matrix[c.id]?.[p.id];
+                  const cumVal = cumulativeProductMatrix[c.id]?.[p.id] || 0;
+                  const dailyVal = matrix[c.id]?.[p.id] || 0;
                   const pQ = qSummary?.productQuotas?.[p.id];
-                  return `<td style="padding: 6px; text-align: right;">
-                    ${val ? val.toLocaleString('tr-TR') : '-'}
-                    ${pQ ? `<br/><small style="color: #047857;">[Kal: ${pQ.remaining.toLocaleString('tr-TR')}]</small>` : ''}
+
+                  let cellContent = '-';
+                  if (matrixCellMode === 'daily') {
+                    cellContent = dailyVal ? dailyVal.toLocaleString('tr-TR') : '-';
+                  } else if (matrixCellMode === 'both') {
+                    cellContent = `<b>${cumVal ? cumVal.toLocaleString('tr-TR') : '0'}</b>`;
+                    if (dailyVal > 0) cellContent += `<br/><small style="color: #1d4ed8;">(Gün: ${dailyVal.toLocaleString('tr-TR')})</small>`;
+                  } else {
+                    // Cumulative (default)
+                    cellContent = cumVal ? `<b>${cumVal.toLocaleString('tr-TR')}</b>` : '-';
+                    if (dailyVal > 0) cellContent += `<br/><small style="color: #1d4ed8;">(Gün: +${dailyVal.toLocaleString('tr-TR')})</small>`;
+                  }
+
+                  if (pQ) {
+                    cellContent += `<br/><small style="color: #047857;">[Kal: ${pQ.remaining.toLocaleString('tr-TR')}]</small>`;
+                  }
+
+                  return `<td style="padding: 6px; text-align: right; ${cumVal > 0 ? 'background-color: #fefce8;' : ''}">
+                    ${cellContent}
                   </td>`;
                 }).join('')}
                 <td style="padding: 6px; text-align: right; font-weight: bold; background-color: #eff6ff;">
-                  ${cTotal ? cTotal.toLocaleString('tr-TR') : '-'}
+                  ${cDaily ? cDaily.toLocaleString('tr-TR') : '-'}
                 </td>
                 <td style="padding: 6px; text-align: right; font-weight: bold; background-color: #faf5ff;">
                   ${qSummary?.hasQuota ? qSummary.totalTarget.toLocaleString('tr-TR') : '-'}
                 </td>
-                <td style="padding: 6px; text-align: right; background-color: #fffbeb;">
-                  ${qSummary?.hasQuota ? `${qSummary.totalShipped.toLocaleString('tr-TR')} (%${qSummary.completionPct})` : '-'}
+                <td style="padding: 6px; text-align: right; font-weight: bold; background-color: #fffbeb;">
+                  ${qSummary?.hasQuota ? `${qSummary.totalShipped.toLocaleString('tr-TR')} (%${qSummary.completionPct})` : (cCum ? cCum.toLocaleString('tr-TR') : '-')}
                 </td>
                 <td style="padding: 6px; text-align: right; font-weight: bold; background-color: #f0fdf4; color: ${qSummary?.totalRemaining < 0 ? '#b91c1c' : '#15803d'};">
                   ${qSummary?.hasQuota ? qSummary.totalRemaining.toLocaleString('tr-TR') : '-'}
@@ -584,17 +650,28 @@ export default function DailyShipmentStockMatrixReport() {
             `;
           }).join('')}
 
-          <!-- TOPLAM GİDEN -->
+          <!-- TOPLAM GİDEN (KÜMÜLATİF) -->
           <tr style="background-color: #dbeafe; font-weight: bold; font-size: 12px;">
-            <td style="padding: 8px;">TOPLAM GİDEN (SEVKİYAT)</td>
+            <td style="padding: 8px;">TOPLAM GİDEN (KÜMÜLATİF SEVKİYAT)</td>
             ${filteredProducts.map((p) => {
-              const pTot = productTotals[p.id] || 0;
-              return `<td style="padding: 8px; text-align: right; color: #1e40af;">${pTot ? pTot.toLocaleString('tr-TR') : '-'}</td>`;
+              const cumTot = cumulativeProductTotals[p.id] || 0;
+              return `<td style="padding: 8px; text-align: right; color: #1e40af;">${cumTot ? cumTot.toLocaleString('tr-TR') : '-'}</td>`;
             }).join('')}
             <td style="padding: 8px; text-align: right; color: #1e40af;">${grandTotalShipped.toLocaleString('tr-TR')}</td>
             <td style="padding: 8px; text-align: right; color: #6b21a8;">${totalQuotaTargetSum ? totalQuotaTargetSum.toLocaleString('tr-TR') : '-'}</td>
-            <td style="padding: 8px; text-align: right; color: #b45309;">${totalQuotaShippedSum ? totalQuotaShippedSum.toLocaleString('tr-TR') : '-'}</td>
+            <td style="padding: 8px; text-align: right; color: #b45309;">${grandTotalCumulativeShipped ? grandTotalCumulativeShipped.toLocaleString('tr-TR') : (totalQuotaShippedSum ? totalQuotaShippedSum.toLocaleString('tr-TR') : '-')}</td>
             <td style="padding: 8px; text-align: right; color: #15803d;">${totalQuotaRemainingSum ? totalQuotaRemainingSum.toLocaleString('tr-TR') : '-'}</td>
+          </tr>
+
+          <!-- GÜNLÜK SEVKİYAT (SEÇİLİ GÜN) -->
+          <tr style="background-color: #eff6ff; font-weight: bold; font-size: 11px;">
+            <td style="padding: 7px;">GÜNLÜK SEVKİYAT (SEÇİLİ GÜN)</td>
+            ${filteredProducts.map((p) => {
+              const pTot = productTotals[p.id] || 0;
+              return `<td style="padding: 7px; text-align: right; color: #2563eb;">${pTot ? pTot.toLocaleString('tr-TR') : '-'}</td>`;
+            }).join('')}
+            <td style="padding: 7px; text-align: right; color: #2563eb;">${grandTotalShipped.toLocaleString('tr-TR')}</td>
+            <td colspan="3" style="padding: 7px; text-align: center; color: #64748b; font-weight: normal;">Günlük Gerçekleşen Dağılım</td>
           </tr>
 
           <!-- MEVCUT DEPO STOK -->
@@ -1026,8 +1103,48 @@ export default function DailyShipmentStockMatrixReport() {
             )}
           </div>
 
-          {/* Product Type Filter & Show Options */}
+          {/* Product Type Filter & Matrix Cell Value Mode Selector */}
           <div className="flex items-center gap-2 flex-wrap w-full md:w-auto justify-end">
+            {/* Cell Value Mode Toggle */}
+            <div className="flex bg-slate-100 p-0.5 rounded-xl text-xs font-semibold border border-slate-200">
+              <button
+                type="button"
+                onClick={() => setMatrixCellMode('cumulative')}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                  matrixCellMode === 'cumulative'
+                    ? 'bg-blue-600 text-white shadow-xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Ürün sütunlarında carilere sevk edilen TOPLAM (kümülatif) miktarı gösterir"
+              >
+                <span>📈 Toplam Sevk</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMatrixCellMode('daily')}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                  matrixCellMode === 'daily'
+                    ? 'bg-blue-600 text-white shadow-xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Ürün sütunlarında sadece seçili günde sevk edilen miktarı gösterir"
+              >
+                <span>📅 Günlük Sevk</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMatrixCellMode('both')}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                  matrixCellMode === 'both'
+                    ? 'bg-blue-600 text-white shadow-xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Hem toplam sevk hem günlük sevk birlikte gösterilir"
+              >
+                <span>🔄 Toplam + Günlük</span>
+              </button>
+            </div>
+
             <select
               value={productTypeFilter}
               onChange={(e) => setProductTypeFilter(e.target.value as any)}
@@ -1331,6 +1448,7 @@ export default function DailyShipmentStockMatrixReport() {
               <strong>Rapor Dönemi:</strong> {dateMode === 'single' ? selectedDate : `${startDate} → ${endDate}`}
             </div>
             <div><strong>Cari Filtresi:</strong> {customerFilterMode === 'all' ? 'Tüm Aktif Cariler' : customerFilterMode === 'with_quota' ? 'Sadece Kotalı Cariler' : customerFilterMode === 'shipped_only' ? 'Bugün Sevk Görenler' : 'Özel Seçim'} ({filteredCustomers.length} Cari)</div>
+            <div><strong>Rapor Türü:</strong> {matrixCellMode === 'cumulative' ? 'Kümülatif (Toplam) Sevk Matrisi' : matrixCellMode === 'daily' ? 'Günlük Sevk Matrisi' : 'Toplam + Günlük Matris'}</div>
           </div>
         </div>
       </div>
@@ -1384,6 +1502,9 @@ export default function DailyShipmentStockMatrixReport() {
                         <span>{prod.thickness ? `${prod.thickness}` : ''}</span>
                         {prod.color && <span>• {prod.color}</span>}
                         <span className="font-semibold text-slate-700">({prod.unit || 'm²'})</span>
+                      </div>
+                      <div className="text-[9px] font-bold text-blue-700 mt-0.5 print:hidden">
+                        {matrixCellMode === 'daily' ? '📅 Günlük' : '📈 Toplam Sevk'}
                       </div>
                     </th>
                   ))}
@@ -1491,22 +1612,47 @@ export default function DailyShipmentStockMatrixReport() {
                           )}
                         </td>
 
-                        {/* Product Cells ("NE KADAR GİTTİ" + ÜRÜN KOTA BAKİYESİ) */}
+                        {/* Product Cells ("NE KADAR GİTTİ" / TOPLAM SEVKİYAT + ÜRÜN KOTA BAKİYESİ) */}
                         {filteredProducts.map((prod) => {
-                          const shipped = matrix[cust.id]?.[prod.id];
+                          const dailyShipped = matrix[cust.id]?.[prod.id] || 0;
+                          const cumShipped = cumulativeProductMatrix[cust.id]?.[prod.id] || 0;
                           const pQuota = qSummary?.productQuotas?.[prod.id];
+
+                          const displayVal = matrixCellMode === 'daily' ? dailyShipped : cumShipped;
+                          const hasValue = displayVal > 0;
 
                           return (
                             <td
                               key={prod.id}
                               style={{ width: `${productColWidthPct}%` }}
                               className={`p-1.5 text-right font-mono border-r border-slate-100 print:p-0.5 print:min-w-0 print:border-slate-400 ${
-                                shipped ? 'font-bold text-slate-900 bg-amber-50/30' : 'text-slate-300'
+                                hasValue ? 'font-bold text-slate-900 bg-amber-50/20' : 'text-slate-300'
                               }`}
                             >
-                              <div className={shipped ? 'text-slate-900 font-bold text-xs print:text-[8px] print:font-bold' : 'text-slate-300 print:text-slate-400 print:text-[7.5px]'}>
-                                {shipped ? Number(shipped).toLocaleString('tr-TR') : '-'}
-                              </div>
+                              {matrixCellMode === 'both' ? (
+                                <div>
+                                  <div className={cumShipped > 0 ? 'text-slate-900 font-bold text-xs print:text-[8px] print:font-bold' : 'text-slate-300 print:text-slate-400 print:text-[7.5px]'}>
+                                    {cumShipped ? Number(cumShipped).toLocaleString('tr-TR') : '-'}
+                                  </div>
+                                  {dailyShipped > 0 && (
+                                    <div className="text-[9.5px] font-bold text-blue-700 print:text-[6.5px] print:text-blue-900">
+                                      +{Number(dailyShipped).toLocaleString('tr-TR')} gün
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div>
+                                  <div className={hasValue ? 'text-slate-900 font-bold text-xs print:text-[8px] print:font-bold' : 'text-slate-300 print:text-slate-400 print:text-[7.5px]'}>
+                                    {hasValue ? Number(displayVal).toLocaleString('tr-TR') : '-'}
+                                  </div>
+                                  {matrixCellMode === 'cumulative' && dailyShipped > 0 && (
+                                    <div className="text-[9.5px] font-bold text-blue-700 print:text-[6.5px] print:text-blue-900">
+                                      +{Number(dailyShipped).toLocaleString('tr-TR')} gün
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
                               {pQuota && (
                                 <div className="text-[9px] font-sans font-medium mt-0.5 print:hidden">
                                   {pQuota.remaining > 0 ? (
@@ -1553,6 +1699,11 @@ export default function DailyShipmentStockMatrixReport() {
                               <div>{Number(qSummary.totalShipped).toLocaleString('tr-TR')}</div>
                               <div className="text-[9px] text-amber-700 font-normal print:text-[7px]">%{qSummary.completionPct}</div>
                             </div>
+                          ) : cumulativeCustomerTotals[cust.id] > 0 ? (
+                            <div>
+                              <div>{Number(cumulativeCustomerTotals[cust.id]).toLocaleString('tr-TR')}</div>
+                              <div className="text-[8.5px] text-slate-400 font-normal print:hidden">Serbest</div>
+                            </div>
                           ) : (
                             '-'
                           )}
@@ -1583,26 +1734,41 @@ export default function DailyShipmentStockMatrixReport() {
 
               {/* ── TABLE FOOTER: TOTALS, STOCK, DAILY PRODUCTION & OPEN ORDER DEMAND ── */}
               <tfoot className="border-t-2 border-slate-400 font-bold divide-y divide-slate-200 text-xs print:text-[8px] print:static">
-                {/* 1. TOPLAM GİDEN (SEVKİYAT) */}
+                {/* 1. TOPLAM GİDEN (KÜMÜLATİF SEVKİYAT) */}
                 <tr className="bg-blue-100/90 text-blue-950 font-black">
                   <td
                     style={{ width: '15%' }}
                     className="p-2 print-col-cust sticky left-0 z-10 bg-blue-200/90 border-r border-blue-300 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
                   >
-                    <div className="flex items-center gap-1.5">
-                      <Package size={14} className="text-blue-800 print:hidden" />
-                      <span className="print:text-[8px] print:font-black">TOPLAM GİDEN</span>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Package size={14} className="text-blue-800 print:hidden" />
+                        <span className="print:text-[8px] print:font-black">
+                          {matrixCellMode === 'daily' ? 'TOPLAM GİDEN' : 'TOPLAM GİDEN (KÜMÜLATİF)'}
+                        </span>
+                      </div>
+                      <span className="text-[9.5px] text-blue-700 bg-blue-100 px-1.5 py-0.2 rounded print:hidden font-semibold">
+                        {matrixCellMode === 'daily' ? 'Seçili Gün' : 'Genel Toplam'}
+                      </span>
                     </div>
                   </td>
                   {filteredProducts.map((prod) => {
-                    const pTotal = productTotals[prod.id] || 0;
+                    const cumTotal = cumulativeProductTotals[prod.id] || 0;
+                    const dailyTotal = productTotals[prod.id] || 0;
+                    const pVal = matrixCellMode === 'daily' ? dailyTotal : cumTotal;
+
                     return (
                       <td
                         key={prod.id}
                         style={{ width: `${productColWidthPct}%` }}
                         className="p-1.5 text-right font-mono font-black border-r border-blue-200 text-blue-950 text-sm print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
                       >
-                        {pTotal ? Number(pTotal).toLocaleString('tr-TR') : '-'}
+                        <div>{pVal ? Number(pVal).toLocaleString('tr-TR') : '-'}</div>
+                        {matrixCellMode !== 'daily' && dailyTotal > 0 && (
+                          <div className="text-[9px] font-bold text-blue-800 print:text-[6.5px]">
+                            (+{Number(dailyTotal).toLocaleString('tr-TR')} gün)
+                          </div>
+                        )}
                       </td>
                     );
                   })}
@@ -1622,7 +1788,7 @@ export default function DailyShipmentStockMatrixReport() {
                     style={{ width: '6%' }}
                     className="p-2 print-col-cum text-right font-mono text-xs font-black text-amber-950 bg-amber-200/80 border-l border-amber-300 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
                   >
-                    {totalQuotaShippedSum ? totalQuotaShippedSum.toLocaleString('tr-TR') : '-'}
+                    {grandTotalCumulativeShipped ? grandTotalCumulativeShipped.toLocaleString('tr-TR') : (totalQuotaShippedSum ? totalQuotaShippedSum.toLocaleString('tr-TR') : '-')}
                   </td>
                   <td
                     style={{ width: '6.5%' }}
@@ -1631,6 +1797,48 @@ export default function DailyShipmentStockMatrixReport() {
                     {totalQuotaRemainingSum ? totalQuotaRemainingSum.toLocaleString('tr-TR') : '-'}
                   </td>
                 </tr>
+
+                {/* 1.1 GÜNLÜK SEVKİYAT (BU GÜN GİDEN) */}
+                {matrixCellMode !== 'daily' && (
+                  <tr className="bg-sky-50/80 text-sky-950 font-bold">
+                    <td
+                      style={{ width: '15%' }}
+                      className="p-2 print-col-cust sticky left-0 z-10 bg-sky-100/90 border-r border-sky-200 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="print:text-[8px] print:font-bold text-sky-900">GÜNLÜK SEVKİYAT</span>
+                        <span className="text-[9.5px] text-sky-700 bg-sky-200/60 px-1 py-0.2 rounded print:hidden font-normal">
+                          Bu Gün Giden
+                        </span>
+                      </div>
+                    </td>
+                    {filteredProducts.map((prod) => {
+                      const dailyTotal = productTotals[prod.id] || 0;
+                      return (
+                        <td
+                          key={prod.id}
+                          style={{ width: `${productColWidthPct}%` }}
+                          className="p-1.5 text-right font-mono font-bold border-r border-sky-100 text-sky-900 text-xs print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                        >
+                          {dailyTotal ? Number(dailyTotal).toLocaleString('tr-TR') : '-'}
+                        </td>
+                      );
+                    })}
+                    <td
+                      style={{ width: '5.5%' }}
+                      className="p-2 print-col-daily text-right font-mono text-xs font-bold text-sky-950 bg-sky-100 border-l border-sky-200 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                    >
+                      {grandTotalShipped.toLocaleString('tr-TR')}
+                    </td>
+                    <td
+                      colSpan={3}
+                      style={{ width: '18.5%' }}
+                      className="p-2 text-center text-sky-800 bg-sky-50 font-mono text-[10px] print:p-0.5 print:text-[7px] print:border-slate-500"
+                    >
+                      Seçili Günün Ürün Dağılımı
+                    </td>
+                  </tr>
+                )}
 
                 {/* 2. MEVCUT FABRİKA STOĞU */}
                 <tr className="bg-emerald-50/90 text-emerald-950">
