@@ -214,8 +214,8 @@ export default function DailyShipmentStockMatrixReport() {
 
   // Dynamic column width for products so table strictly fills 100% of printable width
   const productColWidthPct = useMemo(() => {
-    if (filteredProducts.length === 0) return 59;
-    return Number((59 / filteredProducts.length).toFixed(3));
+    if (filteredProducts.length === 0) return 61;
+    return Number((61 / filteredProducts.length).toFixed(3));
   }, [filteredProducts.length]);
 
   // Matrix Map: matrix[customerId][productId] = totalShipped on selected date/range
@@ -702,7 +702,7 @@ export default function DailyShipmentStockMatrixReport() {
         @media print {
           @page {
             size: A4 landscape;
-            margin: 7mm 7mm 7mm 7mm;
+            margin: 6mm 6mm 6mm 6mm;
           }
           *, *::before, *::after {
             box-sizing: border-box !important;
@@ -759,6 +759,7 @@ export default function DailyShipmentStockMatrixReport() {
             border-spacing: 0 !important;
             page-break-after: auto;
             border: 1pt solid #334155 !important;
+            font-size: 8px !important;
           }
 
           /* CRITICAL: Repeating thead across all printed pages */
@@ -781,11 +782,13 @@ export default function DailyShipmentStockMatrixReport() {
             background-color: #f1f5f9 !important;
             color: #0f172a !important;
             border: 0.75pt solid #475569 !important;
-            padding: 3.5px 2px !important;
-            font-size: 8.5px !important;
+            padding: 3px 1.5px !important;
+            font-size: 7.5px !important;
             line-height: 1.15 !important;
             white-space: normal !important;
             word-break: break-word !important;
+            min-width: 0 !important;
+            overflow: hidden !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
@@ -802,10 +805,12 @@ export default function DailyShipmentStockMatrixReport() {
             left: auto !important;
             box-shadow: none !important;
             border: 0.5pt solid #64748b !important;
-            padding: 2.5px 2px !important;
-            font-size: 9.5px !important;
+            padding: 2px 1.5px !important;
+            font-size: 8px !important;
             line-height: 1.15 !important;
             word-break: break-word !important;
+            min-width: 0 !important;
+            overflow: hidden !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
@@ -825,35 +830,43 @@ export default function DailyShipmentStockMatrixReport() {
             left: auto !important;
             box-shadow: none !important;
             border: 0.75pt solid #334155 !important;
-            padding: 3px 2px !important;
-            font-size: 9px !important;
+            padding: 2px 1.5px !important;
+            font-size: 8px !important;
             line-height: 1.15 !important;
+            min-width: 0 !important;
+            overflow: hidden !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
 
           /* Reset min-widths so table strictly fits 100% of A4 landscape width */
-          th, td, div {
+          table.matrix-table,
+          table.matrix-table th,
+          table.matrix-table td,
+          table.matrix-table div {
             min-width: 0 !important;
             max-width: none !important;
           }
 
           .print-col-cust {
-            width: 16% !important;
+            width: 15% !important;
             padding-left: 5px !important;
             text-align: left !important;
           }
           .print-col-daily {
             width: 5.5% !important;
+            text-align: right !important;
           }
           .print-col-quota {
             width: 6% !important;
+            text-align: right !important;
           }
           .print-col-cum {
             width: 6% !important;
+            text-align: right !important;
           }
           .print-col-rem {
-            width: 7.5% !important;
+            width: 6.5% !important;
             padding-right: 5px !important;
             text-align: right !important;
           }
@@ -1324,18 +1337,28 @@ export default function DailyShipmentStockMatrixReport() {
           </div>
         ) : (
           <div className="matrix-scroll-wrapper overflow-x-auto max-h-[720px] relative print:overflow-visible print:max-h-none print:h-auto print:static">
-            <table className="matrix-table w-full text-xs text-left border-collapse select-text print:text-[9.5px] print:w-full">
+            <table className="matrix-table w-full text-xs text-left border-collapse select-text print:text-[8px] print:w-full">
+              <colgroup>
+                <col style={{ width: '15%' }} className="print-col-cust" />
+                {filteredProducts.map((prod) => (
+                  <col key={prod.id} style={{ width: `${productColWidthPct}%` }} />
+                ))}
+                <col style={{ width: '5.5%' }} className="print-col-daily" />
+                <col style={{ width: '6%' }} className="print-col-quota" />
+                <col style={{ width: '6%' }} className="print-col-cum" />
+                <col style={{ width: '6.5%' }} className="print-col-rem" />
+              </colgroup>
               {/* ── TABLE HEADER: PRODUCTS & SUMMARY COLUMNS ── */}
               <thead className="matrix-thead sticky top-0 z-20 bg-slate-100 shadow-xs print:static print:table-header-group">
                 <tr className="border-b border-slate-300 text-slate-700 font-bold">
                   {/* Sticky Column A: Customer Header */}
                   <th
-                    style={{ width: '16%' }}
+                    style={{ width: '15%' }}
                     className="p-2.5 print-col-cust sticky left-0 z-30 bg-slate-200 min-w-[210px] border-r border-slate-300 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
                   >
                     <div className="flex items-center gap-1.5">
                       <Building2 size={13} className="text-slate-600 print:hidden" />
-                      <span className="print:text-[9px] print:font-black print:uppercase">Müşteri / Cari Ünvanı</span>
+                      <span className="print:text-[8.5px] print:font-black print:uppercase">Müşteri / Cari Ünvanı</span>
                     </div>
                   </th>
 
@@ -1344,13 +1367,13 @@ export default function DailyShipmentStockMatrixReport() {
                     <th
                       key={prod.id}
                       style={{ width: `${productColWidthPct}%` }}
-                      className="p-2 text-right min-w-[125px] border-r border-slate-200 bg-slate-100 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8.5px] print:text-center"
+                      className="p-2 text-right min-w-[125px] border-r border-slate-200 bg-slate-100 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[7.5px] print:text-center"
                       title={`${prod.name} (${prod.thickness || ''} ${prod.color || ''})`}
                     >
-                      <div className="font-bold text-slate-900 text-[11px] leading-tight line-clamp-2 print:text-[8.5px] print:font-black print:leading-tight print:line-clamp-none break-words">
+                      <div className="font-bold text-slate-900 text-[11px] leading-tight line-clamp-2 print:text-[7.5px] print:font-black print:leading-tight print:line-clamp-none break-words">
                         {prod.name}
                       </div>
-                      <div className="text-[10px] text-slate-500 font-normal flex items-center justify-end gap-1 mt-0.5 print:text-[7.5px] print:justify-center print:mt-0 print:font-medium">
+                      <div className="text-[10px] text-slate-500 font-normal flex items-center justify-end gap-1 mt-0.5 print:text-[7px] print:justify-center print:mt-0 print:font-medium">
                         <span>{prod.thickness ? `${prod.thickness}` : ''}</span>
                         {prod.color && <span>• {prod.color}</span>}
                         <span className="font-semibold text-slate-700">({prod.unit || 'm²'})</span>
@@ -1361,9 +1384,9 @@ export default function DailyShipmentStockMatrixReport() {
                   {/* Far Right 4 Columns: Planning & Balance Tracking */}
                   <th
                     style={{ width: '5.5%' }}
-                    className="p-2 print-col-daily text-right min-w-[95px] bg-blue-100 text-blue-950 font-black border-l border-slate-300 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                    className="p-2 print-col-daily text-right min-w-[95px] bg-blue-100 text-blue-950 font-black border-l border-slate-300 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
                   >
-                    <div className="text-[10px] uppercase print:text-[8px] print:leading-tight">
+                    <div className="text-[10px] uppercase print:text-[7.5px] print:leading-tight">
                       <div>GÜNLÜK</div>
                       <div>SEVK</div>
                     </div>
@@ -1371,9 +1394,9 @@ export default function DailyShipmentStockMatrixReport() {
                   </th>
                   <th
                     style={{ width: '6%' }}
-                    className="p-2 print-col-quota text-right min-w-[105px] bg-purple-100 text-purple-950 font-black border-l border-purple-200 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                    className="p-2 print-col-quota text-right min-w-[105px] bg-purple-100 text-purple-950 font-black border-l border-purple-200 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
                   >
-                    <div className="text-[10px] uppercase print:text-[8px] print:leading-tight">
+                    <div className="text-[10px] uppercase print:text-[7.5px] print:leading-tight">
                       <div>SİPARİŞ</div>
                       <div>/ KOTA</div>
                     </div>
@@ -1381,19 +1404,19 @@ export default function DailyShipmentStockMatrixReport() {
                   </th>
                   <th
                     style={{ width: '6%' }}
-                    className="p-2 print-col-cum text-right min-w-[105px] bg-amber-100 text-amber-950 font-black border-l border-amber-200 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                    className="p-2 print-col-cum text-right min-w-[105px] bg-amber-100 text-amber-950 font-black border-l border-amber-200 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
                   >
-                    <div className="text-[10px] uppercase print:text-[8px] print:leading-tight">
+                    <div className="text-[10px] uppercase print:text-[7.5px] print:leading-tight">
                       <div>KÜMÜLATİF</div>
                       <div>SEVK</div>
                     </div>
                     <div className="text-[9px] text-amber-700 font-normal print:hidden">Tüm Çekilen</div>
                   </th>
                   <th
-                    style={{ width: '7.5%' }}
-                    className="p-2 print-col-rem text-right min-w-[110px] bg-emerald-100 text-emerald-950 font-black border-l border-emerald-200 print:p-0.5 print:pr-2 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                    style={{ width: '6.5%' }}
+                    className="p-2 print-col-rem text-right min-w-[110px] bg-emerald-100 text-emerald-950 font-black border-l border-emerald-200 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
                   >
-                    <div className="text-[10px] uppercase print:text-[8px] print:leading-tight">
+                    <div className="text-[10px] uppercase print:text-[7.5px] print:leading-tight">
                       <div>KALAN</div>
                       <div>BAKİYE</div>
                     </div>
@@ -1428,15 +1451,15 @@ export default function DailyShipmentStockMatrixReport() {
                       >
                         {/* Sticky Customer Name Cell with Quota Summary */}
                         <td
-                          style={{ width: '16%' }}
+                          style={{ width: '15%' }}
                           className="p-2 print-col-cust sticky left-0 z-10 bg-inherit border-r border-slate-200 font-bold text-slate-900 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-400"
                         >
                           <div className="flex items-center justify-between gap-1">
-                            <div className="truncate max-w-[160px] print:max-w-none print:whitespace-normal print:text-[9.5px] print:font-bold print:leading-snug print:text-slate-950 break-words" title={cust.name}>
+                            <div className="truncate max-w-[160px] print:max-w-none print:whitespace-normal print:text-[8.5px] print:font-bold print:leading-tight print:text-slate-950 break-words" title={cust.name}>
                               {cust.name}
                             </div>
                             {qSummary?.hasQuota ? (
-                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 border border-purple-200 shrink-0 print:text-[7px] print:px-1 print:py-0 print:font-bold">
+                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 border border-purple-200 shrink-0 print:hidden">
                                 Kotalı
                               </span>
                             ) : (
@@ -1446,7 +1469,7 @@ export default function DailyShipmentStockMatrixReport() {
                             )}
                           </div>
                           {cust.phone && (
-                            <div className="text-[10px] text-slate-400 font-normal font-mono mt-0.5 print:text-[7.5px] print:text-slate-600 print:mt-0">
+                            <div className="text-[10px] text-slate-400 font-normal font-mono mt-0.5 print:text-[7px] print:text-slate-600 print:mt-0">
                               {cust.phone}
                             </div>
                           )}
@@ -1474,20 +1497,20 @@ export default function DailyShipmentStockMatrixReport() {
                                 shipped ? 'font-bold text-slate-900 bg-amber-50/30' : 'text-slate-300'
                               }`}
                             >
-                              <div className={shipped ? 'text-slate-900 font-bold text-xs print:text-[9.5px] print:font-bold' : 'text-slate-300 print:text-slate-400 print:text-[8.5px]'}>
+                              <div className={shipped ? 'text-slate-900 font-bold text-xs print:text-[8px] print:font-bold' : 'text-slate-300 print:text-slate-400 print:text-[7.5px]'}>
                                 {shipped ? Number(shipped).toLocaleString('tr-TR') : '-'}
                               </div>
                               {pQuota && (
-                                <div className="text-[9px] font-sans font-medium mt-0.5 print:text-[7px] print:mt-0">
+                                <div className="text-[9px] font-sans font-medium mt-0.5 print:hidden">
                                   {pQuota.remaining > 0 ? (
                                     <span
-                                      className="text-emerald-700 bg-emerald-50 px-1 py-0.2 rounded border border-emerald-200 inline-block print:border-none print:bg-transparent print:p-0 print:text-purple-800 print:font-semibold"
+                                      className="text-emerald-700 bg-emerald-50 px-1 py-0.2 rounded border border-emerald-200 inline-block"
                                       title={`Bu taştan kalan taahhüt: ${pQuota.remaining.toLocaleString('tr-TR')} ${pQuota.unit}`}
                                     >
                                       Kal: {pQuota.remaining.toLocaleString('tr-TR')}
                                     </span>
                                   ) : (
-                                    <span className="text-rose-700 bg-rose-50 px-1 py-0.2 rounded border border-rose-200 font-bold inline-block print:border-none print:bg-transparent print:p-0 print:text-rose-700">
+                                    <span className="text-rose-700 bg-rose-50 px-1 py-0.2 rounded border border-rose-200 font-bold inline-block">
                                       Doldu
                                     </span>
                                   )}
@@ -1500,7 +1523,7 @@ export default function DailyShipmentStockMatrixReport() {
                         {/* 1. Günlük Sevk Toplamı */}
                         <td
                           style={{ width: '5.5%' }}
-                          className="p-2 print-col-daily text-right font-mono font-black text-blue-900 bg-blue-50/60 border-l border-slate-200 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[9.5px]"
+                          className="p-2 print-col-daily text-right font-mono font-black text-blue-900 bg-blue-50/60 border-l border-slate-200 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[8px]"
                         >
                           {custDailyTotal ? Number(custDailyTotal).toLocaleString('tr-TR') : '-'}
                         </td>
@@ -1508,7 +1531,7 @@ export default function DailyShipmentStockMatrixReport() {
                         {/* 2. Toplam Sipariş / Kota */}
                         <td
                           style={{ width: '6%' }}
-                          className="p-2 print-col-quota text-right font-mono font-bold text-purple-900 bg-purple-50/40 border-l border-purple-100 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[9.5px]"
+                          className="p-2 print-col-quota text-right font-mono font-bold text-purple-900 bg-purple-50/40 border-l border-purple-100 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[8px]"
                         >
                           {qSummary?.hasQuota ? Number(qSummary.totalTarget).toLocaleString('tr-TR') : '-'}
                         </td>
@@ -1516,12 +1539,12 @@ export default function DailyShipmentStockMatrixReport() {
                         {/* 3. Kümülatif Çekilen */}
                         <td
                           style={{ width: '6%' }}
-                          className="p-2 print-col-cum text-right font-mono font-semibold text-amber-900 bg-amber-50/40 border-l border-amber-100 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[9px]"
+                          className="p-2 print-col-cum text-right font-mono font-semibold text-amber-900 bg-amber-50/40 border-l border-amber-100 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[8px]"
                         >
                           {qSummary?.hasQuota ? (
                             <div>
                               <div>{Number(qSummary.totalShipped).toLocaleString('tr-TR')}</div>
-                              <div className="text-[9px] text-amber-700 font-normal print:text-[7.5px]">%{qSummary.completionPct}</div>
+                              <div className="text-[9px] text-amber-700 font-normal print:text-[7px]">%{qSummary.completionPct}</div>
                             </div>
                           ) : (
                             '-'
@@ -1530,8 +1553,8 @@ export default function DailyShipmentStockMatrixReport() {
 
                         {/* 4. Kalan Açık İhtiyaç Bakiyesi */}
                         <td
-                          style={{ width: '7.5%' }}
-                          className="p-2 print-col-rem text-right font-mono font-black bg-emerald-50/60 border-l border-emerald-100 print:p-0.5 print:pr-2 print:min-w-0 print:border-slate-400 print:text-[9.5px]"
+                          style={{ width: '6.5%' }}
+                          className="p-2 print-col-rem text-right font-mono font-black bg-emerald-50/60 border-l border-emerald-100 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-400 print:text-[8px]"
                         >
                           {qSummary?.hasQuota ? (
                             qSummary.totalRemaining > 0 ? (
@@ -1552,16 +1575,16 @@ export default function DailyShipmentStockMatrixReport() {
               </tbody>
 
               {/* ── TABLE FOOTER: TOTALS, STOCK, DAILY PRODUCTION & OPEN ORDER DEMAND ── */}
-              <tfoot className="border-t-2 border-slate-400 font-bold divide-y divide-slate-200 text-xs print:text-[9px] print:static">
+              <tfoot className="border-t-2 border-slate-400 font-bold divide-y divide-slate-200 text-xs print:text-[8px] print:static">
                 {/* 1. TOPLAM GİDEN (SEVKİYAT) */}
                 <tr className="bg-blue-100/90 text-blue-950 font-black">
                   <td
-                    style={{ width: '16%' }}
+                    style={{ width: '15%' }}
                     className="p-2 print-col-cust sticky left-0 z-10 bg-blue-200/90 border-r border-blue-300 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
                   >
                     <div className="flex items-center gap-1.5">
                       <Package size={14} className="text-blue-800 print:hidden" />
-                      <span className="print:text-[8.5px] print:font-black">TOPLAM GİDEN</span>
+                      <span className="print:text-[8px] print:font-black">TOPLAM GİDEN</span>
                     </div>
                   </td>
                   {filteredProducts.map((prod) => {
@@ -1570,7 +1593,7 @@ export default function DailyShipmentStockMatrixReport() {
                       <td
                         key={prod.id}
                         style={{ width: `${productColWidthPct}%` }}
-                        className="p-1.5 text-right font-mono font-black border-r border-blue-200 text-blue-950 text-sm print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[9.5px]"
+                        className="p-1.5 text-right font-mono font-black border-r border-blue-200 text-blue-950 text-sm print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
                       >
                         {pTotal ? Number(pTotal).toLocaleString('tr-TR') : '-'}
                       </td>
@@ -1578,25 +1601,25 @@ export default function DailyShipmentStockMatrixReport() {
                   })}
                   <td
                     style={{ width: '5.5%' }}
-                    className="p-2 print-col-daily text-right font-mono text-sm font-black text-blue-950 bg-blue-300/80 border-l border-blue-300 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[9.5px]"
+                    className="p-2 print-col-daily text-right font-mono text-sm font-black text-blue-950 bg-blue-300/80 border-l border-blue-300 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
                   >
                     {grandTotalShipped.toLocaleString('tr-TR')}
                   </td>
                   <td
                     style={{ width: '6%' }}
-                    className="p-2 print-col-quota text-right font-mono text-xs font-black text-purple-950 bg-purple-200/80 border-l border-purple-300 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[9.5px]"
+                    className="p-2 print-col-quota text-right font-mono text-xs font-black text-purple-950 bg-purple-200/80 border-l border-purple-300 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
                   >
                     {totalQuotaTargetSum ? totalQuotaTargetSum.toLocaleString('tr-TR') : '-'}
                   </td>
                   <td
                     style={{ width: '6%' }}
-                    className="p-2 print-col-cum text-right font-mono text-xs font-black text-amber-950 bg-amber-200/80 border-l border-amber-300 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[9px]"
+                    className="p-2 print-col-cum text-right font-mono text-xs font-black text-amber-950 bg-amber-200/80 border-l border-amber-300 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
                   >
                     {totalQuotaShippedSum ? totalQuotaShippedSum.toLocaleString('tr-TR') : '-'}
                   </td>
                   <td
-                    style={{ width: '7.5%' }}
-                    className="p-2 print-col-rem text-right font-mono text-sm font-black text-emerald-950 bg-emerald-200/90 border-l border-emerald-300 print:p-0.5 print:pr-2 print:min-w-0 print:border-slate-500 print:text-[9.5px]"
+                    style={{ width: '6.5%' }}
+                    className="p-2 print-col-rem text-right font-mono text-sm font-black text-emerald-950 bg-emerald-200/90 border-l border-emerald-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
                   >
                     {totalQuotaRemainingSum ? totalQuotaRemainingSum.toLocaleString('tr-TR') : '-'}
                   </td>
@@ -1605,11 +1628,11 @@ export default function DailyShipmentStockMatrixReport() {
                 {/* 2. MEVCUT FABRİKA STOĞU */}
                 <tr className="bg-emerald-50/90 text-emerald-950">
                   <td
-                    style={{ width: '16%' }}
+                    style={{ width: '15%' }}
                     className="p-2 print-col-cust sticky left-0 z-10 bg-emerald-100/90 border-r border-emerald-200 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-emerald-900 print:text-[8.5px] print:font-black">FABRİKA STOĞU</span>
+                      <span className="font-bold text-emerald-900 print:text-[8px] print:font-black">FABRİKA STOĞU</span>
                       <span className="text-[10px] text-emerald-700 bg-emerald-200/60 px-1.5 py-0.5 rounded font-normal print:hidden">
                         Depo
                       </span>
@@ -1621,13 +1644,13 @@ export default function DailyShipmentStockMatrixReport() {
                       <td
                         key={prod.id}
                         style={{ width: `${productColWidthPct}%` }}
-                        className="p-1.5 text-right font-mono font-bold border-r border-emerald-100 text-emerald-900 text-xs print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[9.5px]"
+                        className="p-1.5 text-right font-mono font-bold border-r border-emerald-100 text-emerald-900 text-xs print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
                       >
                         {stk ? stk.toLocaleString('tr-TR') : '-'}
                       </td>
                     );
                   })}
-                  <td colSpan={4} style={{ width: '25%' }} className="p-2 text-center text-emerald-800 bg-emerald-100/50 border-l border-emerald-200 font-mono text-xs font-bold print:p-0.5 print:text-[8px] print:border-slate-500">
+                  <td colSpan={4} style={{ width: '24%' }} className="p-2 text-center text-emerald-800 bg-emerald-100/50 border-l border-emerald-200 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
                     Depo Hazır Mamul Rezervi
                   </td>
                 </tr>
@@ -1635,12 +1658,12 @@ export default function DailyShipmentStockMatrixReport() {
                 {/* 3. GÜNLÜK ÜRETİM MİKTARI (HÜCRE İÇİ DÜZENLENEBİLİR) */}
                 <tr className="bg-amber-50/90 text-amber-950">
                   <td
-                    style={{ width: '16%' }}
+                    style={{ width: '15%' }}
                     className="p-2 print-col-cust sticky left-0 z-10 bg-amber-100/90 border-r border-amber-200 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
                   >
                     <div className="flex items-center justify-between">
                       <div>
-                        <span className="font-bold text-amber-900 print:text-[8.5px] print:font-black">GÜNLÜK ÜRETİM</span>
+                        <span className="font-bold text-amber-900 print:text-[8px] print:font-black">GÜNLÜK ÜRETİM</span>
                         <div className="text-[10px] text-amber-700 font-normal print:hidden">Hücreye yazıp kaydedin</div>
                       </div>
                       <button
@@ -1664,7 +1687,7 @@ export default function DailyShipmentStockMatrixReport() {
                       <td
                         key={prod.id}
                         style={{ width: `${productColWidthPct}%` }}
-                        className="p-1 text-right font-mono border-r border-amber-200 bg-amber-50/40 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[9.5px]"
+                        className="p-1 text-right font-mono border-r border-amber-200 bg-amber-50/40 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
                       >
                         <div className="flex items-center gap-1 justify-end">
                           <input
@@ -1685,14 +1708,14 @@ export default function DailyShipmentStockMatrixReport() {
                           >
                             <Check size={13} />
                           </button>
-                          <span className="print-only text-right font-bold text-amber-950 print:text-[9.5px]">
+                          <span className="print-only text-right font-bold text-amber-950 print:text-[8px]">
                             {currentVal ? Number(currentVal).toLocaleString('tr-TR') : '-'}
                           </span>
                         </div>
                       </td>
                     );
                   })}
-                  <td colSpan={4} style={{ width: '25%' }} className="p-2 text-center text-amber-800 bg-amber-100/50 border-l border-amber-200 font-mono text-xs font-bold print:p-0.5 print:text-[8px] print:border-slate-500">
+                  <td colSpan={4} style={{ width: '24%' }} className="p-2 text-center text-amber-800 bg-amber-100/50 border-l border-amber-200 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
                     Bantlardan Çıkan Günlük İmalat
                   </td>
                 </tr>
@@ -1700,11 +1723,11 @@ export default function DailyShipmentStockMatrixReport() {
                 {/* 4. GÜN SONU / NET KALAN DENGE */}
                 <tr className="bg-purple-100/80 text-purple-950 font-black">
                   <td
-                    style={{ width: '16%' }}
+                    style={{ width: '15%' }}
                     className="p-2 print-col-cust sticky left-0 z-10 bg-purple-200/90 border-r border-purple-300 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-black text-purple-950 print:text-[8.5px]">GÜN SONU DENGE</span>
+                      <span className="font-black text-purple-950 print:text-[8px]">GÜN SONU DENGE</span>
                       <span className="text-[10px] text-purple-800 font-normal print:hidden">
                         Stok+Üretim-Sevk
                       </span>
@@ -1720,7 +1743,7 @@ export default function DailyShipmentStockMatrixReport() {
                       <td
                         key={prod.id}
                         style={{ width: `${productColWidthPct}%` }}
-                        className={`p-1.5 text-right font-mono font-black border-r border-purple-200 text-xs print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[9.5px] ${
+                        className={`p-1.5 text-right font-mono font-black border-r border-purple-200 text-xs print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px] ${
                           balance < 0
                             ? 'text-rose-700 bg-rose-100/70'
                             : balance > 0
@@ -1732,7 +1755,7 @@ export default function DailyShipmentStockMatrixReport() {
                       </td>
                     );
                   })}
-                  <td colSpan={4} style={{ width: '25%' }} className="p-2 text-center text-purple-900 bg-purple-200/60 border-l border-purple-300 font-mono text-xs font-bold print:p-0.5 print:text-[8px] print:border-slate-500">
+                  <td colSpan={4} style={{ width: '24%' }} className="p-2 text-center text-purple-900 bg-purple-200/60 border-l border-purple-300 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
                     Net Stok Bakiyesi
                   </td>
                 </tr>
@@ -1740,12 +1763,12 @@ export default function DailyShipmentStockMatrixReport() {
                 {/* 5. TOPLAM AÇIK SİPARİŞ / KOTA İHTİYACI (ÜRETİM PLANLAMA KILAVUZU) */}
                 <tr className="bg-rose-100/80 text-rose-950 font-black">
                   <td
-                    style={{ width: '16%' }}
+                    style={{ width: '15%' }}
                     className="p-2 print-col-cust sticky left-0 z-10 bg-rose-200/90 border-r border-rose-300 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
                   >
                     <div className="flex items-center justify-between">
                       <div>
-                        <span className="font-black text-rose-950 uppercase print:text-[8.5px]">AÇIK KOTA İHTİYACI</span>
+                        <span className="font-black text-rose-950 uppercase print:text-[8px]">AÇIK KOTA İHTİYACI</span>
                         <div className="text-[10px] text-rose-800 font-normal print:hidden">Planlanacak Üretim Talebi</div>
                       </div>
                       <Target size={14} className="text-rose-800 print:hidden" />
@@ -1757,7 +1780,7 @@ export default function DailyShipmentStockMatrixReport() {
                       <td
                         key={prod.id}
                         style={{ width: `${productColWidthPct}%` }}
-                        className={`p-1.5 text-right font-mono font-black border-r border-rose-200 text-xs print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[9.5px] ${
+                        className={`p-1.5 text-right font-mono font-black border-r border-rose-200 text-xs print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px] ${
                           demand > 0 ? 'text-rose-900 bg-rose-50' : 'text-slate-300'
                         }`}
                         title={`${prod.name} için teslim edilmesi gereken toplam açık taahhüt`}
@@ -1766,12 +1789,12 @@ export default function DailyShipmentStockMatrixReport() {
                       </td>
                     );
                   })}
-                  <td colSpan={3} style={{ width: '17.5%' }} className="p-2 text-right text-rose-900 bg-rose-200/60 border-l border-rose-300 font-mono text-xs font-bold print:p-0.5 print:text-[8px] print:border-slate-500">
+                  <td colSpan={3} style={{ width: '17.5%' }} className="p-2 text-right text-rose-900 bg-rose-200/60 border-l border-rose-300 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
                     TÜM AÇIK SİPARİŞ BAKİYESİ:
                   </td>
                   <td
-                    style={{ width: '7.5%' }}
-                    className="p-2 print-col-rem text-right font-mono text-sm font-black text-rose-950 bg-rose-300/80 border-l border-rose-300 print:p-0.5 print:pr-2 print:min-w-0 print:border-slate-500 print:text-[10px]"
+                    style={{ width: '6.5%' }}
+                    className="p-2 print-col-rem text-right font-mono text-sm font-black text-rose-950 bg-rose-300/80 border-l border-rose-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8.5px]"
                   >
                     {totalQuotaRemainingSum ? Number(totalQuotaRemainingSum).toLocaleString('tr-TR') : '-'}
                   </td>
