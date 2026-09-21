@@ -29,6 +29,8 @@ interface CustomerQuotaSummary {
   totalRemaining: number;
   completionPct: number;
   productQuotas: Record<string, QuotaMetric>;
+  hasUnassignedProductQuota?: boolean;
+  unassignedRemaining?: number;
 }
 
 export default function DailyShipmentStockMatrixReport() {
@@ -317,16 +319,21 @@ export default function DailyShipmentStockMatrixReport() {
           totalRemaining: 0,
           completionPct: 0,
           productQuotas: {},
+          hasUnassignedProductQuota: false,
+          unassignedRemaining: 0,
         };
         return;
       }
 
       let totalTarget = 0;
       let totalShipped = 0;
+      let unassignedRemaining = 0;
+      let hasUnassigned = false;
       const productQuotas: Record<string, QuotaMetric> = {};
 
       custQuotas.forEach((q) => {
-        totalTarget += Number(q.target_quantity) || 0;
+        const qTarget = Number(q.target_quantity) || 0;
+        totalTarget += qTarget;
 
         // Matching items across history for this quota
         const matching = cumulativeShipmentItems.filter((item) => {
@@ -349,7 +356,7 @@ export default function DailyShipmentStockMatrixReport() {
 
         if (q.product_id) {
           const prev = productQuotas[q.product_id];
-          const t = (prev?.target || 0) + (Number(q.target_quantity) || 0);
+          const t = (prev?.target || 0) + qTarget;
           const sh = (prev?.shipped || 0) + qShipped;
           productQuotas[q.product_id] = {
             target: t,
@@ -357,6 +364,9 @@ export default function DailyShipmentStockMatrixReport() {
             remaining: t - sh,
             unit: q.unit || 'm²',
           };
+        } else {
+          hasUnassigned = true;
+          unassignedRemaining += (qTarget - qShipped);
         }
       });
 
@@ -370,6 +380,8 @@ export default function DailyShipmentStockMatrixReport() {
         totalRemaining,
         completionPct,
         productQuotas,
+        hasUnassignedProductQuota: hasUnassigned,
+        unassignedRemaining,
       };
     });
 
@@ -436,6 +448,31 @@ export default function DailyShipmentStockMatrixReport() {
     });
     return demands;
   }, [filteredCustomers, customerQuotaMap]);
+
+  // Sum of product-specific demands vs unassigned general quotas
+  const { totalProductQuotaDemandSum, totalUnassignedQuotaRemainingSum, unassignedCustomerNames } = useMemo(() => {
+    let pSum = 0;
+    Object.values(productQuotaDemands).forEach((qty) => {
+      pSum += qty;
+    });
+
+    let uSum = 0;
+    const names: string[] = [];
+    filteredCustomers.forEach((c) => {
+      const qSummary = customerQuotaMap[c.id];
+      if (qSummary?.hasUnassignedProductQuota && (qSummary.unassignedRemaining ?? 0) > 0) {
+        const uRem = qSummary.unassignedRemaining ?? 0;
+        uSum += uRem;
+        names.push(`${c.name} (${Number(uRem).toLocaleString('tr-TR')})`);
+      }
+    });
+
+    return {
+      totalProductQuotaDemandSum: pSum,
+      totalUnassignedQuotaRemainingSum: uSum,
+      unassignedCustomerNames: names,
+    };
+  }, [productQuotaDemands, filteredCustomers, customerQuotaMap]);
 
   // Summary Totals for Right Columns
   const { totalQuotaTargetSum, totalQuotaShippedSum, totalQuotaRemainingSum } = useMemo(() => {
@@ -1585,10 +1622,16 @@ export default function DailyShipmentStockMatrixReport() {
                           <div className="flex items-center justify-between gap-1">
                             <div className="truncate max-w-[160px] print:max-w-none print:whitespace-normal print:text-[8.5px] print:font-bold print:leading-tight print:text-slate-950 break-words" title={cust.name}>
                               {cust.name}
+                              {qSummary?.hasUnassignedProductQuota && Object.keys(qSummary.productQuotas).length === 0 && (
+                                <span className="print-only text-[7px] font-semibold text-purple-800 ml-1">(Genel Kota)</span>
+                              )}
                             </div>
                             {qSummary?.hasQuota ? (
-                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 border border-purple-200 shrink-0 print:hidden">
-                                Kotalı
+                              <span
+                                className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 border border-purple-200 shrink-0 print:hidden"
+                                title={qSummary.hasUnassignedProductQuota && Object.keys(qSummary.productQuotas).length === 0 ? 'Bu cariye spesifik bir taş seçilmemiş, genel metrekare kotası tanımlanmış.' : undefined}
+                              >
+                                {qSummary.hasUnassignedProductQuota && Object.keys(qSummary.productQuotas).length === 0 ? 'Genel Kota' : 'Kotalı'}
                               </span>
                             ) : (
                               <span className="text-[9px] font-normal px-1 py-0.2 rounded bg-slate-100 text-slate-500 shrink-0 print:hidden">
@@ -1608,6 +1651,9 @@ export default function DailyShipmentStockMatrixReport() {
                               <span className={qSummary.totalRemaining > 0 ? 'text-emerald-700 font-bold' : 'text-rose-600 font-bold'}>
                                 Kal: {qSummary.totalRemaining.toLocaleString('tr-TR')}
                               </span>
+                              {qSummary.hasUnassignedProductQuota && Object.keys(qSummary.productQuotas).length === 0 && (
+                                <span className="text-[8.5px] text-purple-600 font-semibold">(Taş Seçilmemiş)</span>
+                              )}
                             </div>
                           )}
                         </td>
@@ -2005,11 +2051,23 @@ export default function DailyShipmentStockMatrixReport() {
                     );
                   })}
                   <td colSpan={3} style={{ width: '17.5%' }} className="p-2 text-right text-rose-900 bg-rose-200/60 border-l border-rose-300 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
-                    TÜM AÇIK SİPARİŞ BAKİYESİ:
+                    <div className="leading-tight">
+                      <div className="font-black">TÜM AÇIK SİPARİŞ BAKİYESİ:</div>
+                      {totalUnassignedQuotaRemainingSum > 0 && (
+                        <div className="text-[9px] text-rose-800 font-medium print:text-[6.5px]">
+                          (Ürünlü: {Number(totalProductQuotaDemandSum).toLocaleString('tr-TR')} + Genel: {Number(totalUnassignedQuotaRemainingSum).toLocaleString('tr-TR')})
+                        </div>
+                      )}
+                    </div>
                   </td>
                   <td
                     style={{ width: '6.5%' }}
                     className="p-2 print-col-rem text-right font-mono text-sm font-black text-rose-950 bg-rose-300/80 border-l border-rose-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8.5px]"
+                    title={
+                      totalUnassignedQuotaRemainingSum > 0
+                        ? `Taş Tanımlı Açık İhtiyaç: ${Number(totalProductQuotaDemandSum).toLocaleString('tr-TR')} m²\nGenel (Taşsız) Kotalar: ${Number(totalUnassignedQuotaRemainingSum).toLocaleString('tr-TR')} m² [${unassignedCustomerNames.join(', ')}]`
+                        : undefined
+                    }
                   >
                     {totalQuotaRemainingSum ? Number(totalQuotaRemainingSum).toLocaleString('tr-TR') : '-'}
                   </td>
