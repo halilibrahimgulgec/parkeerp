@@ -696,13 +696,13 @@ export default function DailyShipmentStockMatrixReport() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="matrix-print-wrapper space-y-4">
       {/* ── PRINT MEDIA STYLES (A4 LANDSCAPE & MULTI-PAGE THEAD REPEAT) ── */}
       <style>{`
         @media print {
           @page {
             size: A4 landscape;
-            margin: 6mm 6mm 6mm 6mm;
+            margin: 8mm 12mm 8mm 12mm;
           }
           *, *::before, *::after {
             box-sizing: border-box !important;
@@ -722,6 +722,13 @@ export default function DailyShipmentStockMatrixReport() {
             position: static !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
+          }
+          .matrix-print-wrapper {
+            width: 100% !important;
+            max-width: 100% !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            box-sizing: border-box !important;
           }
           .no-print, header, nav, aside, footer {
             display: none !important;
@@ -759,7 +766,7 @@ export default function DailyShipmentStockMatrixReport() {
             border-spacing: 0 !important;
             page-break-after: auto;
             border: 1pt solid #334155 !important;
-            font-size: 8px !important;
+            font-size: 7.5px !important;
           }
 
           /* CRITICAL: Repeating thead across all printed pages */
@@ -782,8 +789,8 @@ export default function DailyShipmentStockMatrixReport() {
             background-color: #f1f5f9 !important;
             color: #0f172a !important;
             border: 0.75pt solid #475569 !important;
-            padding: 3px 1.5px !important;
-            font-size: 7.5px !important;
+            padding: 2.5px 1px !important;
+            font-size: 7px !important;
             line-height: 1.15 !important;
             white-space: normal !important;
             word-break: break-word !important;
@@ -806,7 +813,7 @@ export default function DailyShipmentStockMatrixReport() {
             box-shadow: none !important;
             border: 0.5pt solid #64748b !important;
             padding: 2px 1.5px !important;
-            font-size: 8px !important;
+            font-size: 7.5px !important;
             line-height: 1.15 !important;
             word-break: break-word !important;
             min-width: 0 !important;
@@ -831,7 +838,7 @@ export default function DailyShipmentStockMatrixReport() {
             box-shadow: none !important;
             border: 0.75pt solid #334155 !important;
             padding: 2px 1.5px !important;
-            font-size: 8px !important;
+            font-size: 7.5px !important;
             line-height: 1.15 !important;
             min-width: 0 !important;
             overflow: hidden !important;
@@ -850,7 +857,7 @@ export default function DailyShipmentStockMatrixReport() {
 
           .print-col-cust {
             width: 15% !important;
-            padding-left: 5px !important;
+            padding-left: 4px !important;
             text-align: left !important;
           }
           .print-col-daily {
@@ -867,7 +874,7 @@ export default function DailyShipmentStockMatrixReport() {
           }
           .print-col-rem {
             width: 6.5% !important;
-            padding-right: 5px !important;
+            padding-right: 4px !important;
             text-align: right !important;
           }
 
@@ -1310,15 +1317,15 @@ export default function DailyShipmentStockMatrixReport() {
       )}
 
       {/* ── PRINT-ONLY OFFICIAL DOCUMENT HEADER ── */}
-      <div className="print-only border-b-2 border-slate-800 pb-2 mb-2">
+      <div className="print-only border-b-2 border-slate-800 pb-1.5 mb-2 px-1">
         <div className="flex justify-between items-start">
           <div>
-            <h1 className="text-base font-black text-slate-900 tracking-tight">PARKE ERP • FABRİKA YÖNETİM SİSTEMİ</h1>
-            <h2 className="text-xs font-bold text-emerald-800 uppercase mt-0.5">
+            <h1 className="text-base font-black text-slate-900 tracking-tight print:text-[13px] print:font-black">PARKE ERP • FABRİKA YÖNETİM SİSTEMİ</h1>
+            <h2 className="text-xs font-bold text-emerald-800 uppercase mt-0.5 print:text-[9px]">
               📋 GÜNLÜK MÜŞTERİ SEVKİYAT, ÜRETİM & STOK PLANLAMA MATRİSİ
             </h2>
           </div>
-          <div className="text-right text-[8.5px] text-slate-700 font-mono">
+          <div className="text-right text-[8.5px] text-slate-700 font-mono print:text-[8px] print:leading-tight">
             <div><strong>Rapor Tarihi:</strong> {new Date().toLocaleString('tr-TR')}</div>
             <div>
               <strong>Rapor Dönemi:</strong> {dateMode === 'single' ? selectedDate : `${startDate} → ${endDate}`}
