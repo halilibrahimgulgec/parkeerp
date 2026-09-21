@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { Product, Customer } from '../types';
 import {
   Table, ChevronLeft, ChevronRight, Download, Printer,
-  RefreshCw, Layers, Building2, Package, Check
+  RefreshCw, Layers, Building2, Package, Check, AlertTriangle
 } from 'lucide-react';
 
 const getLocalDateStr = (d = new Date()) => {
@@ -35,6 +35,7 @@ export default function DailyShipmentStockMatrixReport() {
   const [productionEntries, setProductionEntries] = useState<any[]>([]);
   const [stockViewData, setStockViewData] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [latestShipmentDate, setLatestShipmentDate] = useState<string | null>(null);
 
   // In-line Quick Production Editing State: { [productId: string]: string }
   const [editingProduction, setEditingProduction] = useState<{ [productId: string]: string }>({});
@@ -48,45 +49,74 @@ export default function DailyShipmentStockMatrixReport() {
       const qStart = dateMode === 'single' ? selectedDate : startDate;
       const qEnd = dateMode === 'single' ? selectedDate : endDate;
 
-      const [prodRes, custRes, shipItemsRes, prodEntriesRes, stockRes] = await Promise.all([
+      const [prodRes, custRes, shipRes, prodEntriesRes, stockRes, latestShipRes] = await Promise.all([
         supabase.from('products').select('*').eq('is_active', true).order('name'),
         supabase.from('customers').select('*').eq('is_active', true).order('name'),
         supabase
-          .from('shipment_items')
+          .from('shipments')
           .select(`
             id,
-            product_id,
-            m2,
-            unit,
-            pallets,
-            shipment_id,
-            shipments!inner(
+            shipment_date,
+            customer_id,
+            site_id,
+            status,
+            invoice_no,
+            vehicle_plate,
+            customers(name),
+            sites(name),
+            shipment_items (
               id,
-              shipment_date,
-              customer_id,
-              site_id,
-              status,
-              invoice_no,
-              vehicle_plate,
-              customers(name),
-              sites(name)
+              product_id,
+              m2,
+              unit,
+              pallets,
+              pallet_type
             )
           `)
-          .eq('shipments.status', 'completed')
-          .gte('shipments.shipment_date', qStart)
-          .lte('shipments.shipment_date', qEnd),
+          .eq('status', 'completed')
+          .gte('shipment_date', qStart)
+          .lte('shipment_date', qEnd),
         supabase
           .from('production_entries')
           .select('id, date, product_id, net_m2, total_m2, shift, machine_no, notes')
           .gte('date', qStart)
           .lte('date', qEnd),
         supabase.from('v_product_stock').select('*'),
+        supabase
+          .from('shipments')
+          .select('shipment_date')
+          .eq('status', 'completed')
+          .order('shipment_date', { ascending: false })
+          .limit(1),
       ]);
 
       if (prodRes.data) setProducts(prodRes.data);
       if (custRes.data) setCustomers(custRes.data);
-      if (shipItemsRes.data) setShipmentItems(shipItemsRes.data);
-      if (prodEntriesRes.data) {
+      if (stockRes.data) setStockViewData(stockRes.data);
+      if (latestShipRes.data && latestShipRes.data.length > 0) {
+        setLatestShipmentDate(latestShipRes.data[0].shipment_date);
+      }
+
+      if (shipRes.data) {
+        const flatItems: any[] = [];
+        shipRes.data.forEach((s: any) => {
+          const sDate = s.shipment_date;
+          if (dateMode === 'single' && sDate !== selectedDate) return;
+          if (dateMode === 'range' && (sDate < startDate || sDate > endDate)) return;
+
+          (s.shipment_items || []).forEach((it: any) => {
+            flatItems.push({
+              ...it,
+              shipments: s,
+            });
+          });
+        });
+        setShipmentItems(flatItems);
+      } else {
+        setShipmentItems([]);
+      }
+
+      if (prodEntriesRes.data && prodEntriesRes.data.length > 0) {
         setProductionEntries(prodEntriesRes.data);
         // Pre-fill in-line editing map for the active day
         const pMap: { [id: string]: string } = {};
@@ -95,8 +125,10 @@ export default function DailyShipmentStockMatrixReport() {
           pMap[pe.product_id] = String(prev + (Number(pe.net_m2 || pe.total_m2) || 0));
         });
         setEditingProduction(pMap);
+      } else {
+        setProductionEntries([]);
+        setEditingProduction({});
       }
-      if (stockRes.data) setStockViewData(stockRes.data);
     } catch (err) {
       console.error('Matris veri yükleme hatası:', err);
     } finally {
@@ -144,7 +176,13 @@ export default function DailyShipmentStockMatrixReport() {
     let grandTotal = 0;
 
     shipmentItems.forEach((item) => {
-      const custId = item.shipments?.customer_id;
+      const s = item.shipments;
+      if (!s) return;
+      const sDate = s.shipment_date;
+      if (dateMode === 'single' && sDate !== selectedDate) return;
+      if (dateMode === 'range' && (sDate < startDate || sDate > endDate)) return;
+
+      const custId = s.customer_id;
       const prodId = item.product_id;
       const qty = Number(item.m2 || 0);
 
@@ -167,7 +205,7 @@ export default function DailyShipmentStockMatrixReport() {
       grandTotalShipped: grandTotal,
       activeCustomerIds: activeSet,
     };
-  }, [shipmentItems]);
+  }, [shipmentItems, dateMode, selectedDate, startDate, endDate]);
 
   // Filtered Customers (Rows)
   const filteredCustomers = useMemo(() => {
@@ -580,6 +618,15 @@ export default function DailyShipmentStockMatrixReport() {
                 >
                   Bugün
                 </button>
+                {latestShipmentDate && latestShipmentDate !== selectedDate && (
+                  <button
+                    onClick={() => setSelectedDate(latestShipmentDate)}
+                    className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-800 rounded-lg text-xs font-bold transition-colors cursor-pointer border border-blue-200"
+                    title="Sistemde sevkiyat yapılmış en son güne git"
+                  >
+                    Son Sevk: {latestShipmentDate}
+                  </button>
+                )}
               </div>
             ) : (
               <div className="flex items-center gap-2">
@@ -630,6 +677,30 @@ export default function DailyShipmentStockMatrixReport() {
             </label>
           </div>
         </div>
+
+        {/* Empty Shipment Warning with Jump Button */}
+        {dateMode === 'single' && shipmentItems.length === 0 && !loading && (
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={16} className="text-amber-600 shrink-0" />
+              <span>
+                <strong>{selectedDate}</strong> tarihinde tamamlanmış sevkiyat (irsaliye) bulunamadı.
+                {latestShipmentDate ? (
+                  <> Sistemdeki en son sevkiyat tarihi: <strong>{latestShipmentDate}</strong></>
+                ) : null}
+              </span>
+            </div>
+            {latestShipmentDate && latestShipmentDate !== selectedDate && (
+              <button
+                type="button"
+                onClick={() => setSelectedDate(latestShipmentDate)}
+                className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-xs shadow-xs transition-colors shrink-0 cursor-pointer"
+              >
+                Son Sevkiyat Gününe Git ({latestShipmentDate})
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Success Alert */}
         {saveSuccessMsg && (
