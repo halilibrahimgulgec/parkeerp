@@ -4,7 +4,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { Product, Customer } from '../types';
 import {
   Table, ChevronLeft, ChevronRight, Download, Printer,
-  RefreshCw, Layers, Building2, Package, Check, AlertTriangle
+  RefreshCw, Layers, Building2, Package, Check, AlertTriangle,
+  Filter, CheckSquare, Square, Users, Target, X, Search
 } from 'lucide-react';
 
 const getLocalDateStr = (d = new Date()) => {
@@ -13,6 +14,22 @@ const getLocalDateStr = (d = new Date()) => {
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
+
+interface QuotaMetric {
+  target: number;
+  shipped: number;
+  remaining: number;
+  unit: string;
+}
+
+interface CustomerQuotaSummary {
+  hasQuota: boolean;
+  totalTarget: number;
+  totalShipped: number;
+  totalRemaining: number;
+  completionPct: number;
+  productQuotas: Record<string, QuotaMetric>;
+}
 
 export default function DailyShipmentStockMatrixReport() {
   const { user } = useAuth();
@@ -25,7 +42,10 @@ export default function DailyShipmentStockMatrixReport() {
 
   // Filters
   const [productTypeFilter, setProductTypeFilter] = useState<'all' | 'parke' | 'bordur' | 'diger'>('all');
-  const [showOnlyShippedCustomers, setShowOnlyShippedCustomers] = useState<boolean>(true);
+  const [customerFilterMode, setCustomerFilterMode] = useState<'all' | 'with_quota' | 'shipped_only' | 'custom'>('all');
+  const [selectedCustomerIds, setSelectedCustomerIds] = useState<Set<string>>(new Set());
+  const [isCustomerModalOpen, setIsCustomerModalOpen] = useState<boolean>(false);
+  const [customerModalSearch, setCustomerModalSearch] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Raw Database Data
@@ -34,6 +54,8 @@ export default function DailyShipmentStockMatrixReport() {
   const [shipmentItems, setShipmentItems] = useState<any[]>([]);
   const [productionEntries, setProductionEntries] = useState<any[]>([]);
   const [stockViewData, setStockViewData] = useState<any[]>([]);
+  const [quotas, setQuotas] = useState<any[]>([]);
+  const [cumulativeShipmentItems, setCumulativeShipmentItems] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [latestShipmentDate, setLatestShipmentDate] = useState<string | null>(null);
 
@@ -49,7 +71,7 @@ export default function DailyShipmentStockMatrixReport() {
       const qStart = dateMode === 'single' ? selectedDate : startDate;
       const qEnd = dateMode === 'single' ? selectedDate : endDate;
 
-      const [prodRes, custRes, shipRes, prodEntriesRes, stockRes, latestShipRes] = await Promise.all([
+      const [prodRes, custRes, shipRes, prodEntriesRes, stockRes, latestShipRes, quotasRes, cumShipItemsRes] = await Promise.all([
         supabase.from('products').select('*').eq('is_active', true).order('name'),
         supabase.from('customers').select('*').eq('is_active', true).order('name'),
         supabase
@@ -88,11 +110,35 @@ export default function DailyShipmentStockMatrixReport() {
           .eq('status', 'completed')
           .order('shipment_date', { ascending: false })
           .limit(1),
+        supabase
+          .from('customer_quotas')
+          .select('*, products(*), sites(*)')
+          .eq('is_active', true),
+        supabase
+          .from('shipment_items')
+          .select(`
+            id,
+            product_id,
+            m2,
+            unit,
+            shipments!inner (
+              id,
+              shipment_date,
+              customer_id,
+              site_id,
+              status
+            )
+          `)
+          .eq('shipments.status', 'completed')
+          .limit(50000),
       ]);
 
       if (prodRes.data) setProducts(prodRes.data);
       if (custRes.data) setCustomers(custRes.data);
       if (stockRes.data) setStockViewData(stockRes.data);
+      if (quotasRes.data) setQuotas(quotasRes.data);
+      if (cumShipItemsRes.data) setCumulativeShipmentItems(cumShipItemsRes.data);
+
       if (latestShipRes.data && latestShipRes.data.length > 0) {
         setLatestShipmentDate(latestShipRes.data[0].shipment_date);
       }
@@ -118,7 +164,6 @@ export default function DailyShipmentStockMatrixReport() {
 
       if (prodEntriesRes.data && prodEntriesRes.data.length > 0) {
         setProductionEntries(prodEntriesRes.data);
-        // Pre-fill in-line editing map for the active day
         const pMap: { [id: string]: string } = {};
         prodEntriesRes.data.forEach((pe: any) => {
           const prev = Number(pMap[pe.product_id] || 0);
@@ -167,7 +212,7 @@ export default function DailyShipmentStockMatrixReport() {
     });
   }, [products, productTypeFilter]);
 
-  // Matrix Map: matrix[customerId][productId] = totalShipped
+  // Matrix Map: matrix[customerId][productId] = totalShipped on selected date/range
   const { matrix, customerTotals, productTotals, grandTotalShipped, activeCustomerIds } = useMemo(() => {
     const mat: { [cust: string]: { [prod: string]: number } } = {};
     const cTotals: { [cust: string]: number } = {};
@@ -207,42 +252,168 @@ export default function DailyShipmentStockMatrixReport() {
     };
   }, [shipmentItems, dateMode, selectedDate, startDate, endDate]);
 
+  // Customer Quota & Cumulative Shipment Calculations
+  const customerQuotaMap = useMemo(() => {
+    const map: Record<string, CustomerQuotaSummary> = {};
+
+    customers.forEach((cust) => {
+      const custQuotas = quotas.filter((q) => q.customer_id === cust.id);
+      if (custQuotas.length === 0) {
+        map[cust.id] = {
+          hasQuota: false,
+          totalTarget: 0,
+          totalShipped: 0,
+          totalRemaining: 0,
+          completionPct: 0,
+          productQuotas: {},
+        };
+        return;
+      }
+
+      let totalTarget = 0;
+      let totalShipped = 0;
+      const productQuotas: Record<string, QuotaMetric> = {};
+
+      custQuotas.forEach((q) => {
+        totalTarget += Number(q.target_quantity) || 0;
+
+        // Matching items across history for this quota
+        const matching = cumulativeShipmentItems.filter((item) => {
+          const s = item.shipments;
+          if (!s) return false;
+          if (s.customer_id !== q.customer_id) return false;
+          if (q.site_id && s.site_id !== q.site_id) return false;
+          if (q.product_id && item.product_id !== q.product_id) return false;
+          if (q.start_date && s.shipment_date < q.start_date) return false;
+          if (q.end_date && s.shipment_date > q.end_date) return false;
+
+          const prod = products.find((p) => p.id === item.product_id);
+          const u = prod?.unit === 'metre' || item.unit === 'metre' ? 'metre' : prod?.unit === 'adet' || item.unit === 'adet' ? 'adet' : 'm2';
+          if (!q.product_id && u !== q.unit) return false;
+          return true;
+        });
+
+        const qShipped = matching.reduce((acc, cur) => acc + (Number(cur.m2) || 0), 0);
+        totalShipped += qShipped;
+
+        if (q.product_id) {
+          const prev = productQuotas[q.product_id];
+          const t = (prev?.target || 0) + (Number(q.target_quantity) || 0);
+          const sh = (prev?.shipped || 0) + qShipped;
+          productQuotas[q.product_id] = {
+            target: t,
+            shipped: sh,
+            remaining: t - sh,
+            unit: q.unit || 'm²',
+          };
+        }
+      });
+
+      const totalRemaining = totalTarget - totalShipped;
+      const completionPct = totalTarget > 0 ? Math.round((totalShipped / totalTarget) * 100) : 0;
+
+      map[cust.id] = {
+        hasQuota: true,
+        totalTarget,
+        totalShipped,
+        totalRemaining,
+        completionPct,
+        productQuotas,
+      };
+    });
+
+    return map;
+  }, [customers, quotas, cumulativeShipmentItems, products]);
+
+  // Quota Customers Count
+  const quotaCustomersCount = useMemo(() => {
+    return customers.filter((c) => customerQuotaMap[c.id]?.hasQuota).length;
+  }, [customers, customerQuotaMap]);
+
   // Filtered Customers (Rows)
   const filteredCustomers = useMemo(() => {
     return customers.filter((c) => {
-      if (showOnlyShippedCustomers && !activeCustomerIds.has(c.id)) {
-        return false;
+      // 1. Customer Filter Mode
+      if (customerFilterMode === 'with_quota') {
+        const qSummary = customerQuotaMap[c.id];
+        if (!qSummary?.hasQuota) return false;
+      } else if (customerFilterMode === 'shipped_only') {
+        if (!activeCustomerIds.has(c.id)) return false;
+      } else if (customerFilterMode === 'custom') {
+        if (!selectedCustomerIds.has(c.id)) return false;
       }
+
+      // 2. Search query filter
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        return c.name.toLowerCase().includes(q);
+        return c.name.toLowerCase().includes(q) || (c.phone && c.phone.includes(q));
       }
       return true;
     });
-  }, [customers, showOnlyShippedCustomers, activeCustomerIds, searchQuery]);
+  }, [customers, customerFilterMode, selectedCustomerIds, customerQuotaMap, activeCustomerIds, searchQuery]);
 
   // Current Stock Map: stockMap[productId] = current_stock
   const stockMap = useMemo(() => {
     const sm: { [prodId: string]: number } = {};
-    stockViewData.forEach((s) => {
-      sm[s.product_id] = Number(s.current_stock || 0);
+    stockViewData.forEach((stk) => {
+      sm[stk.product_id] = Number(stk.current_stock || 0);
     });
     return sm;
   }, [stockViewData]);
 
-  // Daily Production Map: prodMap[productId] = totalProduced
+  // Daily Production Map: dailyProductionMap[productId] = sum of net_m2 for that day/range
   const dailyProductionMap = useMemo(() => {
     const pm: { [prodId: string]: number } = {};
     productionEntries.forEach((pe) => {
-      pm[pe.product_id] = (pm[pe.product_id] || 0) + (Number(pe.net_m2 || pe.total_m2) || 0);
+      const qty = Number(pe.net_m2 || pe.total_m2) || 0;
+      pm[pe.product_id] = (pm[pe.product_id] || 0) + qty;
     });
     return pm;
   }, [productionEntries]);
 
-  // Save in-line edited production to Supabase
+  // Product Quota Demands (Total remaining quota needed for each product across displayed customers)
+  const productQuotaDemands = useMemo(() => {
+    const demands: Record<string, number> = {};
+    filteredCustomers.forEach((cust) => {
+      const qSummary = customerQuotaMap[cust.id];
+      if (!qSummary || !qSummary.hasQuota) return;
+      Object.entries(qSummary.productQuotas).forEach(([prodId, pQ]) => {
+        if (pQ.remaining > 0) {
+          demands[prodId] = (demands[prodId] || 0) + pQ.remaining;
+        }
+      });
+    });
+    return demands;
+  }, [filteredCustomers, customerQuotaMap]);
+
+  // Summary Totals for Right Columns
+  const { totalQuotaTargetSum, totalQuotaShippedSum, totalQuotaRemainingSum } = useMemo(() => {
+    let tTarget = 0;
+    let tShipped = 0;
+    let tRemaining = 0;
+
+    filteredCustomers.forEach((c) => {
+      const qSummary = customerQuotaMap[c.id];
+      if (qSummary?.hasQuota) {
+        tTarget += qSummary.totalTarget;
+        tShipped += qSummary.totalShipped;
+        tRemaining += qSummary.totalRemaining;
+      }
+    });
+
+    return {
+      totalQuotaTargetSum: tTarget,
+      totalQuotaShippedSum: tShipped,
+      totalQuotaRemainingSum: tRemaining,
+    };
+  }, [filteredCustomers, customerQuotaMap]);
+
+  // Save single product production entry
   const handleSaveProduction = async (productId: string) => {
-    const rawVal = editingProduction[productId];
-    const qty = Number(rawVal);
+    const qtyStr = editingProduction[productId];
+    if (qtyStr === undefined || qtyStr === '') return;
+
+    const qty = Number(qtyStr);
     if (isNaN(qty) || qty < 0) {
       alert('Lütfen geçerli bir üretim miktarı giriniz.');
       return;
@@ -253,8 +424,9 @@ export default function DailyShipmentStockMatrixReport() {
       const targetDate = dateMode === 'single' ? selectedDate : endDate;
       const targetProd = products.find((p) => p.id === productId);
 
-      // Check if existing record for this date and product exists
-      const existing = productionEntries.find((pe) => pe.product_id === productId && pe.date === targetDate);
+      const existing = productionEntries.find(
+        (pe) => pe.product_id === productId && pe.date === targetDate
+      );
 
       if (existing) {
         const { error } = await supabase
@@ -263,11 +435,11 @@ export default function DailyShipmentStockMatrixReport() {
             total_m2: qty,
             net_m2: qty,
             total_pallets: targetProd?.m2_per_pallet ? Math.ceil(qty / targetProd.m2_per_pallet) : 1,
-            notes: (existing.notes ? existing.notes + ' ' : '') + '[Matris Hızlı Güncelleme]',
+            notes: 'Günlük Matris Hızlı Üretim Girişi',
           })
           .eq('id', existing.id);
         if (error) throw error;
-      } else if (qty > 0) {
+      } else {
         const { error } = await supabase.from('production_entries').insert([
           {
             date: targetDate,
@@ -360,27 +532,48 @@ export default function DailyShipmentStockMatrixReport() {
       <table border="1" style="border-collapse: collapse; font-family: Arial, sans-serif; font-size: 11px;">
         <thead>
           <tr style="background-color: #1e3a8a; color: #ffffff; font-weight: bold; text-align: center;">
-            <th colspan="${filteredProducts.length + 2}" style="font-size: 14px; padding: 10px;">
+            <th colspan="${filteredProducts.length + 5}" style="font-size: 14px; padding: 10px;">
               PARKE ERP • ${reportTitle}
             </th>
           </tr>
           <tr style="background-color: #f1f5f9; font-weight: bold;">
             <th style="padding: 8px; text-align: left; min-width: 180px;">MÜŞTERİ / CARİ</th>
             ${filteredProducts.map((p) => `<th style="padding: 8px; text-align: right; min-width: 110px;">${p.name} ${p.thickness ? `(${p.thickness})` : ''}</th>`).join('')}
-            <th style="padding: 8px; text-align: right; background-color: #e2e8f0;">TOPLAM SEVK</th>
+            <th style="padding: 8px; text-align: right; background-color: #dbeafe;">GÜNLÜK SEVK</th>
+            <th style="padding: 8px; text-align: right; background-color: #f3e8ff;">SİPARİŞ / KOTA</th>
+            <th style="padding: 8px; text-align: right; background-color: #fef3c7;">KÜMÜLATİF SEVK</th>
+            <th style="padding: 8px; text-align: right; background-color: #dcfce7;">KALAN BAKİYE</th>
           </tr>
         </thead>
         <tbody>
           ${filteredCustomers.map((c) => {
             const cTotal = customerTotals[c.id] || 0;
+            const qSummary = customerQuotaMap[c.id];
             return `
               <tr>
-                <td style="padding: 6px; font-weight: bold; background-color: #f8fafc;">${c.name}</td>
+                <td style="padding: 6px; font-weight: bold; background-color: #f8fafc;">
+                  ${c.name} ${qSummary?.hasQuota ? '(Kotalı)' : ''}
+                </td>
                 ${filteredProducts.map((p) => {
                   const val = matrix[c.id]?.[p.id];
-                  return `<td style="padding: 6px; text-align: right;">${val ? val.toLocaleString('tr-TR') : '-'}</td>`;
+                  const pQ = qSummary?.productQuotas?.[p.id];
+                  return `<td style="padding: 6px; text-align: right;">
+                    ${val ? val.toLocaleString('tr-TR') : '-'}
+                    ${pQ ? `<br/><small style="color: #047857;">[Kal: ${pQ.remaining.toLocaleString('tr-TR')}]</small>` : ''}
+                  </td>`;
                 }).join('')}
-                <td style="padding: 6px; text-align: right; font-weight: bold; background-color: #e0f2fe;">${cTotal ? cTotal.toLocaleString('tr-TR') : '-'}</td>
+                <td style="padding: 6px; text-align: right; font-weight: bold; background-color: #eff6ff;">
+                  ${cTotal ? cTotal.toLocaleString('tr-TR') : '-'}
+                </td>
+                <td style="padding: 6px; text-align: right; font-weight: bold; background-color: #faf5ff;">
+                  ${qSummary?.hasQuota ? qSummary.totalTarget.toLocaleString('tr-TR') : '-'}
+                </td>
+                <td style="padding: 6px; text-align: right; background-color: #fffbeb;">
+                  ${qSummary?.hasQuota ? `${qSummary.totalShipped.toLocaleString('tr-TR')} (%${qSummary.completionPct})` : '-'}
+                </td>
+                <td style="padding: 6px; text-align: right; font-weight: bold; background-color: #f0fdf4; color: ${qSummary?.totalRemaining < 0 ? '#b91c1c' : '#15803d'};">
+                  ${qSummary?.hasQuota ? qSummary.totalRemaining.toLocaleString('tr-TR') : '-'}
+                </td>
               </tr>
             `;
           }).join('')}
@@ -393,29 +586,32 @@ export default function DailyShipmentStockMatrixReport() {
               return `<td style="padding: 8px; text-align: right; color: #1e40af;">${pTot ? pTot.toLocaleString('tr-TR') : '-'}</td>`;
             }).join('')}
             <td style="padding: 8px; text-align: right; color: #1e40af;">${grandTotalShipped.toLocaleString('tr-TR')}</td>
+            <td style="padding: 8px; text-align: right; color: #6b21a8;">${totalQuotaTargetSum ? totalQuotaTargetSum.toLocaleString('tr-TR') : '-'}</td>
+            <td style="padding: 8px; text-align: right; color: #b45309;">${totalQuotaShippedSum ? totalQuotaShippedSum.toLocaleString('tr-TR') : '-'}</td>
+            <td style="padding: 8px; text-align: right; color: #15803d;">${totalQuotaRemainingSum ? totalQuotaRemainingSum.toLocaleString('tr-TR') : '-'}</td>
           </tr>
 
-          <!-- STOK -->
+          <!-- MEVCUT DEPO STOK -->
           <tr style="background-color: #dcfce7; font-weight: bold; font-size: 12px;">
             <td style="padding: 8px; color: #166534;">MEVCUT DEPO STOK</td>
             ${filteredProducts.map((p) => {
               const stk = stockMap[p.id] || 0;
               return `<td style="padding: 8px; text-align: right; color: #166534;">${stk.toLocaleString('tr-TR')}</td>`;
             }).join('')}
-            <td style="padding: 8px; text-align: right; color: #166534;">-</td>
+            <td colspan="4" style="padding: 8px; text-align: center; color: #166534;">-</td>
           </tr>
 
-          <!-- ÜRETİM MİKTARI -->
+          <!-- GÜNLÜK ÜRETİM MİKTARI -->
           <tr style="background-color: #fef3c7; font-weight: bold; font-size: 12px;">
             <td style="padding: 8px; color: #92400e;">GÜNLÜK ÜRETİM MİKTARI</td>
             ${filteredProducts.map((p) => {
               const prd = editingProduction[p.id] || dailyProductionMap[p.id] || 0;
               return `<td style="padding: 8px; text-align: right; color: #92400e;">${prd ? Number(prd).toLocaleString('tr-TR') : '-'}</td>`;
             }).join('')}
-            <td style="padding: 8px; text-align: right; color: #92400e;">-</td>
+            <td colspan="4" style="padding: 8px; text-align: center; color: #92400e;">-</td>
           </tr>
 
-          <!-- NET GÜN SONU DENGE -->
+          <!-- GÜN SONU DENGE -->
           <tr style="background-color: #f3e8ff; font-weight: bold; font-size: 12px;">
             <td style="padding: 8px; color: #6b21a8;">GÜN SONU / NET KALAN DENGE</td>
             ${filteredProducts.map((p) => {
@@ -425,7 +621,18 @@ export default function DailyShipmentStockMatrixReport() {
               const balance = stk + prd - gdn;
               return `<td style="padding: 8px; text-align: right; color: #6b21a8;">${balance.toLocaleString('tr-TR')}</td>`;
             }).join('')}
-            <td style="padding: 8px; text-align: right; color: #6b21a8;">-</td>
+            <td colspan="4" style="padding: 8px; text-align: center; color: #6b21a8;">-</td>
+          </tr>
+
+          <!-- TOPLAM AÇIK SİPARİŞ / KOTA İHTİYACI -->
+          <tr style="background-color: #ffe4e6; font-weight: bold; font-size: 12px;">
+            <td style="padding: 8px; color: #be123c;">AÇIK SİPARİŞ / KOTA İHTİYACI</td>
+            ${filteredProducts.map((p) => {
+              const demand = productQuotaDemands[p.id] || 0;
+              return `<td style="padding: 8px; text-align: right; color: #be123c;">${demand ? demand.toLocaleString('tr-TR') : '-'}</td>`;
+            }).join('')}
+            <td colspan="3" style="padding: 8px; text-align: right; color: #be123c;">TOPLAM AÇIK İHTİYAÇ:</td>
+            <td style="padding: 8px; text-align: right; color: #be123c; font-size: 13px;">${totalQuotaRemainingSum.toLocaleString('tr-TR')}</td>
           </tr>
         </tbody>
       </table>
@@ -442,37 +649,64 @@ export default function DailyShipmentStockMatrixReport() {
     const base64 = (s: string) => window.btoa(unescape(encodeURIComponent(s)));
     const link = document.createElement('a');
     link.href = uri + base64(template);
-    link.download = `RAPOR_111_SEVK_STOK_MATRIS_${dateMode === 'single' ? selectedDate : `${startDate}_${endDate}`}.xls`;
+    link.download = `RAPOR_111_PLANLAMA_MATRIS_${dateMode === 'single' ? selectedDate : `${startDate}_${endDate}`}.xls`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  // Print Report (A4 Landscape)
   const handlePrint = () => {
     window.print();
   };
 
+  // Multi-select customer toggle helpers
+  const handleToggleCustomer = (customerId: string) => {
+    setSelectedCustomerIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(customerId)) {
+        next.delete(customerId);
+      } else {
+        next.add(customerId);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllCustomers = () => {
+    setSelectedCustomerIds(new Set(customers.map((c) => c.id)));
+  };
+
+  const handleClearAllCustomers = () => {
+    setSelectedCustomerIds(new Set());
+  };
+
+  const handleSelectOnlyQuotaCustomers = () => {
+    const quotaIds = customers.filter((c) => customerQuotaMap[c.id]?.hasQuota).map((c) => c.id);
+    setSelectedCustomerIds(new Set(quotaIds));
+  };
+
+  const handleSelectOnlyShippedCustomers = () => {
+    setSelectedCustomerIds(new Set(Array.from(activeCustomerIds)));
+  };
+
   return (
-    <div className="space-y-6">
-      {/* ── PRINT CSS STYLES ── */}
+    <div className="space-y-4">
+      {/* ── PRINT MEDIA STYLES (A4 LANDSCAPE) ── */}
       <style>{`
         @media print {
           @page {
             size: A4 landscape;
-            margin: 0.6cm 0.8cm !important;
+            margin: 6mm;
           }
-          aside, header, nav, .no-print, button, input, select {
-            display: none !important;
-          }
-          body, html, #root, main, main > div {
-            display: block !important;
-            width: 100% !important;
-            max-width: 100% !important;
-            margin: 0 !important;
-            padding: 0 !important;
+          body {
             background: white !important;
             color: black !important;
+            font-size: 8.5px !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          .no-print, header, nav, aside, footer {
+            display: none !important;
           }
           .print-clean {
             border: 1px solid #cbd5e1 !important;
@@ -492,19 +726,19 @@ export default function DailyShipmentStockMatrixReport() {
           table {
             width: 100% !important;
             border-collapse: collapse !important;
-            font-size: 8.5px !important;
+            font-size: 8px !important;
           }
           th {
             background-color: #f1f5f9 !important;
             color: #0f172a !important;
             border: 1px solid #94a3b8 !important;
-            padding: 4px 6px !important;
+            padding: 3px 4px !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
           td {
             border: 1px solid #cbd5e1 !important;
-            padding: 3px 5px !important;
+            padding: 2.5px 3.5px !important;
             vertical-align: middle !important;
           }
           .print-exact {
@@ -528,13 +762,13 @@ export default function DailyShipmentStockMatrixReport() {
             </div>
             <div>
               <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                Günlük Sevk, Üretim & Stok Denge Matrisi
+                Günlük Sevk, Üretim & Stok Planlama Matrisi
                 <span className="px-2 py-0.5 text-[11px] font-bold bg-emerald-100 text-emerald-800 rounded-full border border-emerald-200">
-                  Excel Görünümü
+                  Üretim Planlama & Excel
                 </span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Taş cinsleri bazında müşterilere giden sevk miktarları, mevcut stok ve günlük üretim dengesi
+                Müşteri kotaları ve açık sipariş bakiyeleriyle entegre fabrika üretim ve sevkiyat denge tablosu
               </p>
             </div>
           </div>
@@ -654,7 +888,7 @@ export default function DailyShipmentStockMatrixReport() {
           </div>
 
           {/* Product Type Filter & Show Options */}
-          <div className="flex items-center gap-3 flex-wrap w-full md:w-auto justify-end">
+          <div className="flex items-center gap-2 flex-wrap w-full md:w-auto justify-end">
             <select
               value={productTypeFilter}
               onChange={(e) => setProductTypeFilter(e.target.value as any)}
@@ -665,16 +899,100 @@ export default function DailyShipmentStockMatrixReport() {
               <option value="bordur">Sadece Bordürler</option>
               <option value="diger">Diğer Ürünler</option>
             </select>
+          </div>
+        </div>
 
-            <label className="flex items-center gap-1.5 text-xs font-medium text-slate-700 cursor-pointer select-none bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-200">
-              <input
-                type="checkbox"
-                checked={showOnlyShippedCustomers}
-                onChange={(e) => setShowOnlyShippedCustomers(e.target.checked)}
-                className="rounded text-emerald-600 focus:ring-emerald-500"
-              />
-              <span>Yalnızca Sevk Gören Cariler ({activeCustomerIds.size})</span>
-            </label>
+        {/* ── CUSTOMER SCOPE & MULTI-SELECT CHECKBOX BAR ── */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs font-bold text-slate-600 mr-1 flex items-center gap-1">
+              <Users size={14} className="text-slate-500" />
+              Müşteri Kapsamı:
+            </span>
+
+            {/* Mode 1: All Active Customers */}
+            <button
+              type="button"
+              onClick={() => setCustomerFilterMode('all')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                customerFilterMode === 'all'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              🌐 Tüm Aktif Cariler ({customers.length})
+            </button>
+
+            {/* Mode 2: With Quotas Only */}
+            <button
+              type="button"
+              onClick={() => setCustomerFilterMode('with_quota')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                customerFilterMode === 'with_quota'
+                  ? 'bg-purple-600 text-white shadow-xs'
+                  : 'bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200'
+              }`}
+            >
+              <Target size={13} />
+              <span>Sadece Kotalı / Siparişli ({quotaCustomersCount})</span>
+            </button>
+
+            {/* Mode 3: Shipped Only */}
+            <button
+              type="button"
+              onClick={() => setCustomerFilterMode('shipped_only')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                customerFilterMode === 'shipped_only'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              🚚 Bugün Sevk Görenler ({activeCustomerIds.size})
+            </button>
+
+            {/* Mode 4: Custom Checkbox Modal Trigger */}
+            <button
+              type="button"
+              onClick={() => {
+                if (selectedCustomerIds.size === 0) {
+                  // Default fill with current filtered or all
+                  setSelectedCustomerIds(new Set(customers.map((c) => c.id)));
+                }
+                setCustomerFilterMode('custom');
+                setIsCustomerModalOpen(true);
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                customerFilterMode === 'custom'
+                  ? 'bg-teal-600 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300'
+              }`}
+            >
+              <CheckSquare size={13} />
+              <span>
+                ☑️ Özel Seçim {customerFilterMode === 'custom' ? `(${selectedCustomerIds.size} Seçili)` : '...'}
+              </span>
+            </button>
+          </div>
+
+          {/* Search Box */}
+          <div className="relative min-w-[200px]">
+            <input
+              type="text"
+              placeholder="Tabloda cari ara..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X size={12} />
+              </button>
+            )}
           </div>
         </div>
 
@@ -714,13 +1032,158 @@ export default function DailyShipmentStockMatrixReport() {
         )}
       </div>
 
+      {/* ── CUSTOMER MULTI-SELECT CHECKBOX MODAL ── */}
+      {isCustomerModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]">
+            {/* Modal Header */}
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CheckSquare size={18} className="text-teal-400" />
+                <h3 className="font-bold text-sm">Raporda Gösterilecek Müşterileri Seç (Çoklu Onay)</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCustomerModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Quick Action Buttons & Search */}
+            <div className="p-4 bg-slate-50 border-b border-slate-200 space-y-3">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Müşteri adına veya telefonuna göre ara..."
+                  value={customerModalSearch}
+                  onChange={(e) => setCustomerModalSearch(e.target.value)}
+                  className="w-full bg-white border border-slate-300 rounded-xl pl-9 pr-3 py-2 text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              </div>
+
+              <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleSelectAllCustomers}
+                    className="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 font-semibold rounded-lg border border-slate-300 shadow-xs cursor-pointer"
+                  >
+                    Tümünü Seç ({customers.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClearAllCustomers}
+                    className="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 font-semibold rounded-lg border border-slate-300 shadow-xs cursor-pointer"
+                  >
+                    Temizle
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSelectOnlyQuotaCustomers}
+                    className="px-2.5 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold rounded-lg border border-purple-200 shadow-xs cursor-pointer"
+                  >
+                    Sadece Kotalılar ({quotaCustomersCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSelectOnlyShippedCustomers}
+                    className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded-lg border border-blue-200 shadow-xs cursor-pointer"
+                  >
+                    Bugün Sevk Görenler ({activeCustomerIds.size})
+                  </button>
+                </div>
+                <div className="font-bold text-slate-600 font-mono">
+                  {selectedCustomerIds.size} / {customers.length} Seçili
+                </div>
+              </div>
+            </div>
+
+            {/* Checkbox List */}
+            <div className="p-4 overflow-y-auto divide-y divide-slate-100 flex-1">
+              {customers
+                .filter((c) => {
+                  if (!customerModalSearch.trim()) return true;
+                  const q = customerModalSearch.toLowerCase();
+                  return c.name.toLowerCase().includes(q) || (c.phone && c.phone.includes(q));
+                })
+                .map((cust) => {
+                  const isChecked = selectedCustomerIds.has(cust.id);
+                  const qSummary = customerQuotaMap[cust.id];
+                  const hasShippedToday = activeCustomerIds.has(cust.id);
+
+                  return (
+                    <label
+                      key={cust.id}
+                      className={`flex items-center justify-between p-2.5 rounded-xl cursor-pointer transition-colors ${
+                        isChecked ? 'bg-teal-50/60 hover:bg-teal-50' : 'hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => handleToggleCustomer(cust.id)}
+                          className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 cursor-pointer"
+                        />
+                        <div>
+                          <div className="font-bold text-slate-900 text-xs flex items-center gap-2">
+                            <span>{cust.name}</span>
+                            {hasShippedToday && (
+                              <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-blue-100 text-blue-800">
+                                🚚 Bugün Sevk Var
+                              </span>
+                            )}
+                          </div>
+                          {cust.phone && (
+                            <div className="text-[10px] text-slate-400 font-mono">{cust.phone}</div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        {qSummary?.hasQuota ? (
+                          <div className="text-[11px] font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-lg border border-purple-200">
+                            🎯 Kota: {qSummary.totalTarget.toLocaleString('tr-TR')} | Kal: {qSummary.totalRemaining.toLocaleString('tr-TR')}
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-slate-400">Serbest Satış</span>
+                        )}
+                      </div>
+                    </label>
+                  );
+                })}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+              <div className="text-xs text-slate-500">
+                Seçilen müşteriler raporda satır olarak listelenecektir.
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setCustomerFilterMode('custom');
+                  setIsCustomerModalOpen(false);
+                }}
+                className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer transition-all"
+              >
+                Uygula & Raporu Göster ({selectedCustomerIds.size} Cari)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── PRINT-ONLY OFFICIAL DOCUMENT HEADER ── */}
       <div className="print-only border-b-2 border-slate-800 pb-3 mb-4">
         <div className="flex justify-between items-start">
           <div>
             <h1 className="text-xl font-black text-slate-900 tracking-tight">PARKE ERP • FABRİKA YÖNETİM SİSTEMİ</h1>
             <h2 className="text-sm font-bold text-emerald-800 uppercase mt-0.5">
-              📋 GÜNLÜK MÜŞTERİ SEVKİYAT, ÜRETİM & STOK DENGE MATRİSİ
+              📋 GÜNLÜK MÜŞTERİ SEVKİYAT, ÜRETİM & STOK PLANLAMA MATRİSİ
             </h2>
           </div>
           <div className="text-right text-[10px] text-slate-600 font-mono">
@@ -728,7 +1191,7 @@ export default function DailyShipmentStockMatrixReport() {
             <div>
               <strong>Rapor Dönemi:</strong> {dateMode === 'single' ? selectedDate : `${startDate} → ${endDate}`}
             </div>
-            <div><strong>Ürün Kapsamı:</strong> {productTypeFilter === 'all' ? 'Tüm Ürünler' : productTypeFilter}</div>
+            <div><strong>Cari Filtresi:</strong> {customerFilterMode === 'all' ? 'Tüm Aktif Cariler' : customerFilterMode === 'with_quota' ? 'Sadece Kotalı Cariler' : customerFilterMode === 'shipped_only' ? 'Bugün Sevk Görenler' : 'Özel Seçim'} ({filteredCustomers.length} Cari)</div>
           </div>
         </div>
       </div>
@@ -738,16 +1201,16 @@ export default function DailyShipmentStockMatrixReport() {
         {loading ? (
           <div className="py-20 text-center text-slate-400 space-y-3">
             <RefreshCw size={32} className="mx-auto animate-spin text-emerald-600" />
-            <p className="text-xs font-semibold">Matris verileri ve stoklar hesaplanıyor...</p>
+            <p className="text-xs font-semibold">Matris verileri, stoklar ve kotalar hesaplanıyor...</p>
           </div>
         ) : (
           <div className="overflow-x-auto max-h-[720px] relative">
             <table className="w-full text-xs text-left border-collapse select-text">
-              {/* ── TABLE HEADER: PRODUCTS (COLUMNS) ── */}
+              {/* ── TABLE HEADER: PRODUCTS & SUMMARY COLUMNS ── */}
               <thead className="sticky top-0 z-20 bg-slate-100 shadow-xs">
                 <tr className="border-b border-slate-300 text-slate-700 font-bold">
                   {/* Sticky Column A: Customer Header */}
-                  <th className="p-3 sticky left-0 z-30 bg-slate-200 min-w-[200px] border-r border-slate-300 shadow-xs">
+                  <th className="p-3 sticky left-0 z-30 bg-slate-200 min-w-[210px] border-r border-slate-300 shadow-xs">
                     <div className="flex items-center gap-1.5">
                       <Building2 size={13} className="text-slate-600" />
                       <span>Müşteri / Cari Ünvanı</span>
@@ -758,7 +1221,7 @@ export default function DailyShipmentStockMatrixReport() {
                   {filteredProducts.map((prod) => (
                     <th
                       key={prod.id}
-                      className="p-2.5 text-right min-w-[130px] border-r border-slate-200 bg-slate-100"
+                      className="p-2.5 text-right min-w-[125px] border-r border-slate-200 bg-slate-100"
                       title={`${prod.name} (${prod.thickness || ''} ${prod.color || ''})`}
                     >
                       <div className="font-bold text-slate-900 text-[11px] leading-tight line-clamp-2">
@@ -772,9 +1235,22 @@ export default function DailyShipmentStockMatrixReport() {
                     </th>
                   ))}
 
-                  {/* Far Right Column: Customer Total */}
-                  <th className="p-3 text-right min-w-[120px] bg-blue-100 text-blue-950 font-black border-l border-blue-200">
-                    Toplam Sevk
+                  {/* Far Right 4 Columns: Planning & Balance Tracking */}
+                  <th className="p-2.5 text-right min-w-[95px] bg-blue-100 text-blue-950 font-black border-l border-slate-300">
+                    <div className="text-[10px] uppercase">GÜNLÜK SEVK</div>
+                    <div className="text-[9px] text-blue-700 font-normal">Bu Gün / Aralık</div>
+                  </th>
+                  <th className="p-2.5 text-right min-w-[105px] bg-purple-100 text-purple-950 font-black border-l border-purple-200">
+                    <div className="text-[10px] uppercase">SİPARİŞ / KOTA</div>
+                    <div className="text-[9px] text-purple-700 font-normal">Taahhüt</div>
+                  </th>
+                  <th className="p-2.5 text-right min-w-[105px] bg-amber-100 text-amber-950 font-black border-l border-amber-200">
+                    <div className="text-[10px] uppercase">KÜMÜLATİF SEVK</div>
+                    <div className="text-[9px] text-amber-700 font-normal">Tüm Çekilen</div>
+                  </th>
+                  <th className="p-2.5 text-right min-w-[110px] bg-emerald-100 text-emerald-950 font-black border-l border-emerald-200">
+                    <div className="text-[10px] uppercase">KALAN BAKİYE</div>
+                    <div className="text-[9px] text-emerald-700 font-normal">Açık İhtiyaç</div>
                   </th>
                 </tr>
               </thead>
@@ -784,16 +1260,18 @@ export default function DailyShipmentStockMatrixReport() {
                 {filteredCustomers.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={filteredProducts.length + 2}
+                      colSpan={filteredProducts.length + 5}
                       className="py-12 text-center text-slate-400 bg-slate-50"
                     >
                       <Layers size={32} className="mx-auto text-slate-300 mb-2 opacity-60" />
-                      Seçilen tarih ({dateMode === 'single' ? selectedDate : `${startDate} → ${endDate}`}) için sevkiyat hareketi bulunamadı.
+                      Seçilen filtre kriterlerine uygun müşteri kaydı bulunamadı.
                     </td>
                   </tr>
                 ) : (
                   filteredCustomers.map((cust, idx) => {
-                    const custTotal = customerTotals[cust.id] || 0;
+                    const custDailyTotal = customerTotals[cust.id] || 0;
+                    const qSummary = customerQuotaMap[cust.id];
+
                     return (
                       <tr
                         key={cust.id}
@@ -801,36 +1279,108 @@ export default function DailyShipmentStockMatrixReport() {
                           idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'
                         }`}
                       >
-                        {/* Sticky Customer Name Cell */}
-                        <td className="p-3 sticky left-0 z-10 bg-inherit border-r border-slate-200 font-bold text-slate-900 shadow-xs">
-                          <div className="truncate max-w-[190px]" title={cust.name}>
-                            {cust.name}
+                        {/* Sticky Customer Name Cell with Quota Summary */}
+                        <td className="p-2.5 sticky left-0 z-10 bg-inherit border-r border-slate-200 font-bold text-slate-900 shadow-xs">
+                          <div className="flex items-center justify-between gap-1">
+                            <div className="truncate max-w-[160px]" title={cust.name}>
+                              {cust.name}
+                            </div>
+                            {qSummary?.hasQuota ? (
+                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 border border-purple-200 shrink-0">
+                                Kotalı
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-normal px-1 py-0.2 rounded bg-slate-100 text-slate-500 shrink-0">
+                                Serbest
+                              </span>
+                            )}
                           </div>
                           {cust.phone && (
-                            <div className="text-[10px] text-slate-400 font-normal font-mono">
+                            <div className="text-[10px] text-slate-400 font-normal font-mono mt-0.5">
                               {cust.phone}
+                            </div>
+                          )}
+                          {qSummary?.hasQuota && (
+                            <div className="text-[9.5px] text-slate-500 font-normal mt-0.5 flex items-center gap-1">
+                              <span className="text-purple-700 font-semibold">Hedef: {qSummary.totalTarget.toLocaleString('tr-TR')}</span>
+                              <span>•</span>
+                              <span className={qSummary.totalRemaining > 0 ? 'text-emerald-700 font-bold' : 'text-rose-600 font-bold'}>
+                                Kal: {qSummary.totalRemaining.toLocaleString('tr-TR')}
+                              </span>
                             </div>
                           )}
                         </td>
 
-                        {/* Product Cells ("NE KADAR GİTTİ") */}
+                        {/* Product Cells ("NE KADAR GİTTİ" + ÜRÜN KOTA BAKİYESİ) */}
                         {filteredProducts.map((prod) => {
                           const shipped = matrix[cust.id]?.[prod.id];
+                          const pQuota = qSummary?.productQuotas?.[prod.id];
+
                           return (
                             <td
                               key={prod.id}
-                              className={`p-2.5 text-right font-mono border-r border-slate-100 ${
+                              className={`p-2 text-right font-mono border-r border-slate-100 ${
                                 shipped ? 'font-bold text-slate-900 bg-amber-50/30' : 'text-slate-300'
                               }`}
                             >
-                              {shipped ? Number(shipped).toLocaleString('tr-TR') : '-'}
+                              <div className={shipped ? 'text-slate-900 font-bold text-xs' : 'text-slate-300'}>
+                                {shipped ? Number(shipped).toLocaleString('tr-TR') : '-'}
+                              </div>
+                              {pQuota && (
+                                <div className="text-[9px] font-sans font-medium mt-0.5">
+                                  {pQuota.remaining > 0 ? (
+                                    <span
+                                      className="text-emerald-700 bg-emerald-50 px-1 py-0.2 rounded border border-emerald-200 inline-block"
+                                      title={`Bu taştan kalan taahhüt: ${pQuota.remaining.toLocaleString('tr-TR')} ${pQuota.unit}`}
+                                    >
+                                      Kal: {pQuota.remaining.toLocaleString('tr-TR')}
+                                    </span>
+                                  ) : (
+                                    <span className="text-rose-700 bg-rose-50 px-1 py-0.2 rounded border border-rose-200 font-bold inline-block">
+                                      Doldu
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                             </td>
                           );
                         })}
 
-                        {/* Customer Row Total */}
-                        <td className="p-3 text-right font-mono font-black text-blue-900 bg-blue-50/60 border-l border-blue-200">
-                          {custTotal ? Number(custTotal).toLocaleString('tr-TR') : '-'}
+                        {/* 1. Günlük Sevk Toplamı */}
+                        <td className="p-2.5 text-right font-mono font-black text-blue-900 bg-blue-50/60 border-l border-slate-200">
+                          {custDailyTotal ? Number(custDailyTotal).toLocaleString('tr-TR') : '-'}
+                        </td>
+
+                        {/* 2. Toplam Sipariş / Kota */}
+                        <td className="p-2.5 text-right font-mono font-bold text-purple-900 bg-purple-50/40 border-l border-purple-100">
+                          {qSummary?.hasQuota ? Number(qSummary.totalTarget).toLocaleString('tr-TR') : '-'}
+                        </td>
+
+                        {/* 3. Kümülatif Çekilen */}
+                        <td className="p-2.5 text-right font-mono font-semibold text-amber-900 bg-amber-50/40 border-l border-amber-100">
+                          {qSummary?.hasQuota ? (
+                            <div>
+                              <div>{Number(qSummary.totalShipped).toLocaleString('tr-TR')}</div>
+                              <div className="text-[9px] text-amber-700 font-normal">%{qSummary.completionPct}</div>
+                            </div>
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+
+                        {/* 4. Kalan Açık İhtiyaç Bakiyesi */}
+                        <td className="p-2.5 text-right font-mono font-black bg-emerald-50/60 border-l border-emerald-100">
+                          {qSummary?.hasQuota ? (
+                            qSummary.totalRemaining > 0 ? (
+                              <span className="text-emerald-700">+{Number(qSummary.totalRemaining).toLocaleString('tr-TR')}</span>
+                            ) : qSummary.totalRemaining === 0 ? (
+                              <span className="text-blue-700">Tamam</span>
+                            ) : (
+                              <span className="text-rose-600">{Number(qSummary.totalRemaining).toLocaleString('tr-TR')}</span>
+                            )
+                          ) : (
+                            <span className="text-slate-300">-</span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -838,11 +1388,11 @@ export default function DailyShipmentStockMatrixReport() {
                 )}
               </tbody>
 
-              {/* ── TABLE FOOTER: TOTALS, STOCK, DAILY PRODUCTION & BALANCE ── */}
+              {/* ── TABLE FOOTER: TOTALS, STOCK, DAILY PRODUCTION & OPEN ORDER DEMAND ── */}
               <tfoot className="border-t-2 border-slate-400 font-bold divide-y divide-slate-200 text-xs">
                 {/* 1. TOPLAM GİDEN (SEVKİYAT) */}
                 <tr className="bg-blue-100/90 text-blue-950 font-black">
-                  <td className="p-3 sticky left-0 z-10 bg-blue-200/90 border-r border-blue-300 shadow-xs">
+                  <td className="p-2.5 sticky left-0 z-10 bg-blue-200/90 border-r border-blue-300 shadow-xs">
                     <div className="flex items-center gap-1.5">
                       <Package size={14} className="text-blue-800" />
                       <span>TOPLAM GİDEN (SEVKİYAT)</span>
@@ -851,115 +1401,112 @@ export default function DailyShipmentStockMatrixReport() {
                   {filteredProducts.map((prod) => {
                     const pTotal = productTotals[prod.id] || 0;
                     return (
-                      <td key={prod.id} className="p-2.5 text-right font-mono font-black border-r border-blue-200 text-blue-950 text-sm">
+                      <td key={prod.id} className="p-2 text-right font-mono font-black border-r border-blue-200 text-blue-950 text-sm">
                         {pTotal ? Number(pTotal).toLocaleString('tr-TR') : '-'}
                       </td>
                     );
                   })}
-                  <td className="p-3 text-right font-mono text-sm font-black text-blue-950 bg-blue-300/80 border-l border-blue-300">
+                  <td className="p-2.5 text-right font-mono text-sm font-black text-blue-950 bg-blue-300/80 border-l border-blue-300">
                     {grandTotalShipped.toLocaleString('tr-TR')}
+                  </td>
+                  <td className="p-2.5 text-right font-mono text-xs font-black text-purple-950 bg-purple-200/80 border-l border-purple-300">
+                    {totalQuotaTargetSum ? totalQuotaTargetSum.toLocaleString('tr-TR') : '-'}
+                  </td>
+                  <td className="p-2.5 text-right font-mono text-xs font-black text-amber-950 bg-amber-200/80 border-l border-amber-300">
+                    {totalQuotaShippedSum ? totalQuotaShippedSum.toLocaleString('tr-TR') : '-'}
+                  </td>
+                  <td className="p-2.5 text-right font-mono text-sm font-black text-emerald-950 bg-emerald-200/90 border-l border-emerald-300">
+                    {totalQuotaRemainingSum ? totalQuotaRemainingSum.toLocaleString('tr-TR') : '-'}
                   </td>
                 </tr>
 
-                {/* 2. GÜNCEL MEVCUT STOK */}
-                <tr className="bg-emerald-50 text-emerald-950">
-                  <td className="p-3 sticky left-0 z-10 bg-emerald-100/90 border-r border-emerald-200 shadow-xs">
+                {/* 2. MEVCUT FABRİKA STOĞU */}
+                <tr className="bg-emerald-50/90 text-emerald-950">
+                  <td className="p-2.5 sticky left-0 z-10 bg-emerald-100/90 border-r border-emerald-200 shadow-xs">
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-emerald-900">MEVCUT FABRİKA STOĞU</span>
-                      <span className="text-[9px] bg-emerald-200 text-emerald-900 px-1.5 py-0.5 rounded font-bold">
-                        Stok
+                      <span className="text-[10px] text-emerald-700 bg-emerald-200/60 px-1.5 py-0.5 rounded font-normal">
+                        Depo
                       </span>
                     </div>
                   </td>
                   {filteredProducts.map((prod) => {
                     const stk = stockMap[prod.id] || 0;
                     return (
-                      <td key={prod.id} className="p-2.5 text-right font-mono font-bold border-r border-emerald-100 text-emerald-900 text-xs">
-                        {stk.toLocaleString('tr-TR')}
+                      <td key={prod.id} className="p-2 text-right font-mono font-bold border-r border-emerald-100 text-emerald-900 text-xs">
+                        {stk ? stk.toLocaleString('tr-TR') : '-'}
                       </td>
                     );
                   })}
-                  <td className="p-3 text-right font-mono text-xs text-emerald-800 bg-emerald-100/70 border-l border-emerald-200">
-                    -
+                  <td colSpan={4} className="p-2.5 text-center text-emerald-800 bg-emerald-100/50 border-l border-emerald-200 font-mono text-xs font-bold">
+                    Fabrika Sahasındaki Hazır Mamul Rezervi
                   </td>
                 </tr>
 
-                {/* 3. GÜNLÜK ÜRETİM MİKTARI (HÜCREDEN ELLE GİRİLEBİLECEK) */}
-                <tr className="bg-amber-50 text-amber-950">
-                  <td className="p-3 sticky left-0 z-10 bg-amber-100/90 border-r border-amber-200 shadow-xs">
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-amber-950">GÜNLÜK ÜRETİM MİKTARI</span>
-                        <span className="text-[9px] bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded font-bold">
-                          Elle Giriş
-                        </span>
+                {/* 3. GÜNLÜK ÜRETİM MİKTARI (HÜCRE İÇİ DÜZENLENEBİLİR) */}
+                <tr className="bg-amber-50/90 text-amber-950">
+                  <td className="p-2.5 sticky left-0 z-10 bg-amber-100/90 border-r border-amber-200 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="font-bold text-amber-900">GÜNLÜK ÜRETİM MİKTARI</span>
+                        <div className="text-[10px] text-amber-700 font-normal">Hücreye yazıp kaydedin</div>
                       </div>
-                      <div className="no-print flex items-center gap-1 text-[10px] text-amber-800 font-normal">
-                        <span>Hücreye yazıp</span>
-                        <button
-                          type="button"
-                          onClick={handleSaveAllProductions}
-                          disabled={savingProduction}
-                          className="font-bold text-amber-900 underline hover:text-amber-700 cursor-pointer"
-                        >
-                          Tümünü Kaydet
-                        </button>
-                      </div>
+                      <button
+                        onClick={handleSaveAllProductions}
+                        disabled={savingProduction}
+                        className="no-print px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-[10px] font-bold shadow-xs cursor-pointer transition-colors"
+                        title="Tüm girilen üretimleri veritabanına kaydet"
+                      >
+                        {savingProduction ? '...' : 'Tümünü Kaydet'}
+                      </button>
                     </div>
                   </td>
                   {filteredProducts.map((prod) => {
-                    const currentVal = editingProduction[prod.id] ?? '';
+                    const currentVal = editingProduction[prod.id] !== undefined
+                      ? editingProduction[prod.id]
+                      : dailyProductionMap[prod.id]
+                      ? String(dailyProductionMap[prod.id])
+                      : '';
+
                     return (
-                      <td key={prod.id} className="p-1.5 text-right border-r border-amber-100 bg-amber-50/70">
-                        {/* Interactive Input for Screen */}
-                        <div className="no-print flex items-center justify-end gap-1">
+                      <td key={prod.id} className="p-1 text-right font-mono border-r border-amber-200 bg-amber-50/40">
+                        <div className="flex items-center gap-1 justify-end">
                           <input
                             type="number"
-                            min="0"
-                            step="any"
                             placeholder="0"
                             value={currentVal}
-                            onChange={(e) =>
-                              setEditingProduction((prev) => ({
-                                ...prev,
-                                [prod.id]: e.target.value,
-                              }))
-                            }
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                handleSaveProduction(prod.id);
-                              }
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setEditingProduction((prev) => ({ ...prev, [prod.id]: val }));
                             }}
-                            className="w-20 px-1.5 py-1 text-right font-mono font-bold text-xs bg-white border border-amber-300 rounded focus:outline-none focus:ring-1 focus:ring-amber-500"
+                            className="w-16 bg-white border border-amber-300 rounded px-1.5 py-0.5 text-right font-mono text-xs font-bold text-amber-950 focus:outline-none focus:ring-2 focus:ring-amber-500 no-print"
                           />
                           <button
                             type="button"
                             onClick={() => handleSaveProduction(prod.id)}
-                            disabled={savingProduction}
-                            className="p-1 bg-amber-500 hover:bg-amber-600 text-white rounded cursor-pointer transition-colors shadow-2xs"
-                            title="Bu ürünün üretimini kaydet"
+                            className="no-print text-amber-700 hover:text-amber-950 hover:bg-amber-200/70 p-1 rounded cursor-pointer"
+                            title="Bu üretimi kaydet"
                           >
-                            <Check size={12} />
+                            <Check size={13} />
                           </button>
-                        </div>
-                        {/* Clean Text for Print Output */}
-                        <div className="print-only font-mono font-bold text-amber-950 text-right">
-                          {currentVal ? Number(currentVal).toLocaleString('tr-TR') : '-'}
+                          <span className="print-only text-right font-bold text-amber-950">
+                            {currentVal ? Number(currentVal).toLocaleString('tr-TR') : '-'}
+                          </span>
                         </div>
                       </td>
                     );
                   })}
-                  <td className="p-3 text-right font-mono text-xs text-amber-900 bg-amber-100/70 border-l border-amber-200">
-                    -
+                  <td colSpan={4} className="p-2.5 text-center text-amber-800 bg-amber-100/50 border-l border-amber-200 font-mono text-xs font-bold">
+                    Vibropres Bantlarından Çıkan Günlük Üretim
                   </td>
                 </tr>
 
                 {/* 4. GÜN SONU / NET KALAN DENGE */}
-                <tr className="bg-purple-100/90 text-purple-950 font-black">
-                  <td className="p-3 sticky left-0 z-10 bg-purple-200/90 border-r border-purple-300 shadow-xs">
+                <tr className="bg-purple-100/80 text-purple-950 font-black">
+                  <td className="p-2.5 sticky left-0 z-10 bg-purple-200/90 border-r border-purple-300 shadow-xs">
                     <div className="flex items-center justify-between">
                       <span className="font-black text-purple-950">GÜN SONU KALAN / DENGE</span>
-                      <span className="text-[9px] bg-purple-300 text-purple-950 px-1.5 py-0.5 rounded font-bold">
+                      <span className="text-[10px] text-purple-800 font-normal">
                         Stok+Üretim-Sevk
                       </span>
                     </div>
@@ -969,19 +1516,57 @@ export default function DailyShipmentStockMatrixReport() {
                     const prd = Number(editingProduction[prod.id] || dailyProductionMap[prod.id] || 0);
                     const gdn = productTotals[prod.id] || 0;
                     const balance = stk + prd - gdn;
+
                     return (
                       <td
                         key={prod.id}
-                        className={`p-2.5 text-right font-mono font-black border-r border-purple-200 text-xs ${
-                          balance < 0 ? 'text-red-700 bg-red-100/60' : 'text-purple-950'
+                        className={`p-2 text-right font-mono font-black border-r border-purple-200 text-xs ${
+                          balance < 0
+                            ? 'text-rose-700 bg-rose-100/70'
+                            : balance > 0
+                            ? 'text-purple-950 bg-purple-50'
+                            : 'text-slate-400'
                         }`}
                       >
-                        {balance.toLocaleString('tr-TR')}
+                        {balance ? Number(balance).toLocaleString('tr-TR') : '0'}
                       </td>
                     );
                   })}
-                  <td className="p-3 text-right font-mono text-xs text-purple-950 bg-purple-300/80 border-l border-purple-300">
-                    -
+                  <td colSpan={4} className="p-2.5 text-center text-purple-900 bg-purple-200/60 border-l border-purple-300 font-mono text-xs font-bold">
+                    Gün Sonu Net Stok Bakiyesi
+                  </td>
+                </tr>
+
+                {/* 5. TOPLAM AÇIK SİPARİŞ / KOTA İHTİYACI (ÜRETİM PLANLAMA KILAVUZU) */}
+                <tr className="bg-rose-100/80 text-rose-950 font-black">
+                  <td className="p-2.5 sticky left-0 z-10 bg-rose-200/90 border-r border-rose-300 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="font-black text-rose-950 uppercase">AÇIK KOTA İHTİYACI</span>
+                        <div className="text-[10px] text-rose-800 font-normal">Planlanacak Üretim Talebi</div>
+                      </div>
+                      <Target size={14} className="text-rose-800" />
+                    </div>
+                  </td>
+                  {filteredProducts.map((prod) => {
+                    const demand = productQuotaDemands[prod.id] || 0;
+                    return (
+                      <td
+                        key={prod.id}
+                        className={`p-2 text-right font-mono font-black border-r border-rose-200 text-xs ${
+                          demand > 0 ? 'text-rose-900 bg-rose-50' : 'text-slate-300'
+                        }`}
+                        title={`${prod.name} için teslim edilmesi gereken toplam açık taahhüt`}
+                      >
+                        {demand ? Number(demand).toLocaleString('tr-TR') : '-'}
+                      </td>
+                    );
+                  })}
+                  <td colSpan={3} className="p-2.5 text-right text-rose-900 bg-rose-200/60 border-l border-rose-300 font-mono text-xs font-bold">
+                    TÜM AÇIK SİPARİŞ BAKİYESİ:
+                  </td>
+                  <td className="p-2.5 text-right font-mono text-sm font-black text-rose-950 bg-rose-300/80 border-l border-rose-300">
+                    {totalQuotaRemainingSum ? Number(totalQuotaRemainingSum).toLocaleString('tr-TR') : '-'}
                   </td>
                 </tr>
               </tfoot>
@@ -990,30 +1575,26 @@ export default function DailyShipmentStockMatrixReport() {
         )}
       </div>
 
-      {/* ── PRINT-ONLY SIGNATURE FOOTER ── */}
-      <div className="print-only mt-8 pt-4 border-t border-slate-300">
-        <div className="grid grid-cols-3 gap-8 text-center text-xs">
-          <div>
-            <div className="font-bold text-slate-800">Raporu Hazırlayan</div>
-            <div className="text-slate-500 text-[10px] mt-0.5">Saha / Sevkiyat Sorumlusu</div>
-            <div className="mt-12 border-b border-dashed border-slate-400 mx-8"></div>
-            <div className="text-[10px] text-slate-400 mt-1">İmza</div>
+      {/* ── PRINT-ONLY 3-COLUMN OFFICIAL SIGNATURE BLOCK ── */}
+      <div className="print-only mt-8 pt-4 border-t-2 border-slate-700">
+        <div className="grid grid-cols-3 gap-6 text-center text-xs">
+          <div className="border border-slate-300 rounded p-3">
+            <div className="font-bold text-slate-900">Raporu Hazırlayan</div>
+            <div className="text-[10px] text-slate-500 mt-0.5">Saha / Sevkiyat Sorumlusu</div>
+            <div className="mt-8 pt-1 border-t border-slate-400 font-mono text-[10px] text-slate-600">İmza & Tarih</div>
           </div>
-          <div>
-            <div className="font-bold text-slate-800">Kantar & Lojistik Şefi</div>
-            <div className="text-slate-500 text-[10px] mt-0.5">Sevk & Tartım Kontrol</div>
-            <div className="mt-12 border-b border-dashed border-slate-400 mx-8"></div>
-            <div className="text-[10px] text-slate-400 mt-1">İmza</div>
+
+          <div className="border border-slate-300 rounded p-3">
+            <div className="font-bold text-slate-900">Kantar & Lojistik Yetkilisi</div>
+            <div className="text-[10px] text-slate-500 mt-0.5">Kantar Sevkiyat Kontrol</div>
+            <div className="mt-8 pt-1 border-t border-slate-400 font-mono text-[10px] text-slate-600">İmza & Tarih</div>
           </div>
-          <div>
-            <div className="font-bold text-slate-800">Fabrika / İşletme Müdürü</div>
-            <div className="text-slate-500 text-[10px] mt-0.5">Onay & Tasdik</div>
-            <div className="mt-12 border-b border-dashed border-slate-400 mx-8"></div>
-            <div className="text-[10px] text-slate-400 mt-1">İmza / Kaşe</div>
+
+          <div className="border border-slate-300 rounded p-3">
+            <div className="font-bold text-slate-900">Fabrika / Üretim Müdürü</div>
+            <div className="text-[10px] text-slate-500 mt-0.5">Onay & Tasdik</div>
+            <div className="mt-8 pt-1 border-t border-slate-400 font-mono text-[10px] text-slate-600">İmza & Kaşe</div>
           </div>
-        </div>
-        <div className="text-center text-[9px] text-slate-400 mt-6">
-          Bu resmi döküm Parke ERP Fabrika Otomasyon Sistemi tarafından üretilmiştir.
         </div>
       </div>
     </div>
