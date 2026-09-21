@@ -21,7 +21,7 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
   };
 
   return (
-    <div className="flex flex-col md:flex-row min-h-screen bg-slate-50">
+    <div className="flex flex-col md:flex-row min-h-screen bg-slate-50 print:block print:bg-white print:m-0 print:p-0 print:w-full print:min-h-0">
       {/* Mobile Top Navbar */}
       <header className="flex md:hidden items-center justify-between px-4 py-3 bg-slate-900 text-white sticky top-0 z-30 shadow-md">
         <span className="font-bold text-lg">Parke ERP</span>
@@ -56,12 +56,12 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
       </div>
 
       {/* Main Content Pane */}
-      <main className="flex-1 overflow-auto flex flex-col min-h-screen print:overflow-visible print:block print:min-h-0 print:h-auto">
+      <main className="flex-1 overflow-auto flex flex-col min-h-screen print:overflow-visible print:block print:min-h-0 print:h-auto print:m-0 print:p-0 print:w-full">
         {/* Desktop Top Bar with Notification Bell */}
         <div className="no-print hidden md:flex items-center justify-end px-8 py-3 bg-white/70 backdrop-blur border-b border-slate-100 sticky top-0 z-20">
           <NotificationBell onNavigate={handleNavigate} />
         </div>
-        <div className="flex-1">
+        <div className="flex-1 print:block print:w-full print:m-0 print:p-0">
           {children}
         </div>
       </main>

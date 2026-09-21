@@ -22,11 +22,13 @@ html, body {
     overflow: visible !important;
     overflow-x: visible !important;
     overflow-y: visible !important;
-    max-width: none !important;
+    max-width: 100% !important;
     width: 100% !important;
     height: auto !important;
     position: static !important;
     min-height: 0 !important;
     background: white !important;
+    margin: 0 !important;
+    padding: 0 !important;
   }
 }
