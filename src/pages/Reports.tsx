@@ -384,7 +384,7 @@ export default function Reports() {
   const totalShipAdet = stocks.filter(s => s.unit === 'adet').reduce((acc, s) => acc + s.total_shipped, 0);
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 space-y-6">
+    <div className="p-4 sm:p-6 lg:p-8 space-y-6 print:p-0 print:space-y-2">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2 no-print">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">

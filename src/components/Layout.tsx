@@ -56,7 +56,7 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
       </div>
 
       {/* Main Content Pane */}
-      <main className="flex-1 overflow-auto flex flex-col min-h-screen">
+      <main className="flex-1 overflow-auto flex flex-col min-h-screen print:overflow-visible print:block print:min-h-0 print:h-auto">
         {/* Desktop Top Bar with Notification Bell */}
         <div className="no-print hidden md:flex items-center justify-end px-8 py-3 bg-white/70 backdrop-blur border-b border-slate-100 sticky top-0 z-20">
           <NotificationBell onNavigate={handleNavigate} />

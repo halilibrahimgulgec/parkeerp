@@ -16,3 +16,17 @@ html, body {
   width: 100%;
   position: relative;
 }
+
+@media print {
+  html, body, #root, main {
+    overflow: visible !important;
+    overflow-x: visible !important;
+    overflow-y: visible !important;
+    max-width: none !important;
+    width: 100% !important;
+    height: auto !important;
+    position: static !important;
+    min-height: 0 !important;
+    background: white !important;
+  }
+}
