@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase';
 import { ActionDraftPayload, ShipmentItemDraft } from '../types/aiActionTypes';
 import { normalizeTurkish } from './aiFactoryBrain';
+import { getLearnedRules } from './aiTrainingKnowledge';
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════
@@ -142,6 +143,11 @@ const VISION_MODELS = [
  * Kapsamlı Optik Belge, İrsaliye ve Kalite Kontrol Sistem İstemi
  */
 function buildVisionPrompt(userNote = ''): string {
+  const learned = getLearnedRules();
+  const learnedSection = learned.length > 0
+    ? `\nÖĞRENİLMİŞ FABRİKA VE İRSALİYE KURALLARI:\n` + learned.map(r => `• ${r.rule}`).join('\n')
+    : '';
+
   return `Sen "Parke ERP" fabrikasının Üst Düzey Optik Karakter Tanıma (OCR) ve Belge/Kalite Yapay Zekasısın.
 Sana gönderilen görsel bir SEVKİYAT İRSALİYESİ, KANTAR ÇIKIŞ FİŞİ, HAMMADDE GİRİŞ İRSALİYESİ veya BOZUK TAŞ FOTOĞRAFIDIR.
 Görseli en yüksek dikkatle incele. Hem matbaa/yazıcı yazılarını hem de elle yazılmış (tükenmez/kurşun kalem) notları eksiksiz oku.
@@ -150,15 +156,32 @@ Belgeler çoğunlukla şu 3 sınıftan birine aittir:
 
 SINIF 1: PARKE / BORDÜR SEVKİYAT FORMU VEYA SEVK İRSALİYESİ (ÇIKIŞ)
 Özellikle şu alanları bul ve ayıkla:
-- İrsaliye No / Form No (örn: 2468, 10542 vb.)
-- Müşteri / Firma Ünvanı (Alıcı: örn. ASİLSA, Kaya İnşaat, Aksoy Ltd. vb.)
-- Teslim Şantiyesi / Sevk Yeri (örn. Hacıbaba, Altınova, Merkez vb.)
-- Araç Plakası (örn. 31 AHG 622, 46 K 1234, 06 BC 789)
+- İrsaliye No / Form No (örn: 2468, 2494 vb.)
+- Müşteri / Firma Ünvanı (Alıcı: örn. FATİH ERGİŞİ, ASİLSA, Kaya İnşaat vb.)
+- Teslim Şantiyesi / Sevk Yeri (örn. Kılavuzlu, Hacıbaba, Altınova vb.)
+- Araç Plakası (örn. 46-AHR-237, 31 AHG 622 vb.)
 - Şoför Adı veya Teslim Alan (örn. Mehmet Kaya, Ali vb.)
-- Tarih
-- Sevk Edilen Malzemeler (Her bir satır için: Taş cinsi örn. "8'lik Kilit Parke", "50x25 Bordür", Miktar, Birim m² veya Metre/Adet, Palet Sayısı, Palet Türü örn: üretim/tahta/dokme)
+- Tarih (örn. 19/09/2026 -> 2026-09-19)
+- Sevk Edilen Malzemeler (Her bir satır için: Taş cinsi örn. "8'lik Kilit Parke", "50x25 Bordür", Miktar, Birim m² veya Metre/Adet, Palet Sayısı, Palet Türü: tahta / uretim / sevkiyat / dokme)
 - Kantar Tartımı varsa (Brüt kg, Dara kg, Net kg)
 - Varsa dış tedarikçi/transit firma adı
+
+═══ SARİTEK VE PARKE SEVKİYAT FORMLARINDA ÇOK KRİTİK OKUMA KURALLARI ═══
+1. TABLO ALANLARI:
+   Formun gövdesinde matbu bir tablo bulunur:
+   [ Firma | Plaka | Malzeme Cinsi 1 | Malzeme Cinsi 2 | Palet Cinsi | Palet Adeti ]
+   - "Firma": Müşteri ve Şantiye (Örn: "Fatih Ergisi - Kılavuzlu" -> müşteri: "FATİH ERGİŞİ", şantiye: "Kılavuzlu").
+   - "Plaka": Sevk aracının plakası (Örn: "46-AHR-237").
+   - "Malzeme Cinsi 1": Taş cinsi ve m² (Örn: "8'lik taş - 32 m2" veya "8'lik kilit parke").
+     *ÖNEMLİ:* "8'lik taş" veya "8'lik kilit" yazıyorsa bu kesinlikle **"8'lik Kilit Parke Taşı"**dır. ASLA 10'luk veya 6'lık seçme!
+     *Miktar:* Burada yazan m² değerini (örn: 32) "m2" alanına yaz.
+   - "Palet Cinsi": Sevk edilen paletin türüdür. Formda "Tahta" veya "Ahşap" yazıyorsa "pallet_type" MUTLAKA "tahta" olmalıdır! Kesinlikle "sevkiyat" veya "uretim" yazma!
+   - "Palet Adeti": **SEVKİYATIN ASIL PALET SAYISI BU SÜTUNDUR!**
+     Tablodaki "Palet Adeti" sütununun altında kaç yazıyorsa (Örn: "4") "pallets" değerine O SAYIYI YAZ. (4 palet x 8 m² = 32 m² eder).
+
+2. ÇOK ÖNEMLİ: SAĞ TARAFTAKİ STOK DÜŞÜM NOTLARI SEVKİYAT PALETİ DEĞİLDİR!
+   Formun sağ kenarında, altında veya boşluklarında el yazısıyla yazılmış olan "Üretim 56 - 30 palet = 26", "Kalan", "Üretim bakiye" gibi notlar fabrikanın İÇ STOK / ÜRETİM HESABIDIR!
+   Bu hesaplardaki sayıları (Örn: 56) SEVKİYAT PALETİ SANMA! Sevkiyat palet adedi tablodaki "Palet Adeti" sütununda yazan sayıdır (Örn: 4).
 
 SINIF 2: HAMMADDE / ÇİMENTO / AGREGA / MICIR GİRİŞİ VEYA KANTAR FİŞİ
 - Tedarikçi Adı (örn. Kahramanmaraş Çimento A.Ş., Taş Ocağı vb.)
@@ -171,6 +194,8 @@ SINIF 3: BOZUK / HATALI PARKE VEYA BORDÜR TAŞI (KALİTE KONTROL)
 - Hata Tipi (Kenar kırığı, yüzey çatlağı, kalıp pabuç çizgisi, harç dağılması)
 - Hatanın şiddeti ve operatöre tavsiye
 
+${learnedSection}
+
 ÇOK ÖNEMLİ KURALLAR:
 1. Yanıtının EN BAŞINA mutlaka aşağıdaki JSON formatında \`\`\`json ... \`\`\` kod bloğu koy.
 2. JSON'dan sonra Türkçe, nazik ve maddeli bir özet rapor yaz.
@@ -179,32 +204,32 @@ Eğer SINIF 1 (Parke Sevkiyat Formu / İrsaliyesi) ise JSON Şablonu:
 \`\`\`json
 {
   "analysis_type": "document_shipment",
-  "invoice_no": "2468",
-  "customer_name": "ASİLSA İNŞAAT",
-  "site_name": "Hacıbaba Şantiyesi",
-  "vehicle_plate": "31 AHG 622",
-  "driver_name": "Mehmet Kaya",
+  "invoice_no": "2494",
+  "customer_name": "FATİH ERGİŞİ",
+  "site_name": "Kılavuzlu Şantiyesi",
+  "vehicle_plate": "46 AHR 237",
+  "driver_name": "",
   "shipment_date": "2026-09-19",
   "items": [
     {
       "product_name": "8'lik Kilit Parke Taşı",
-      "pallets": 20,
-      "pallet_type": "uretim",
-      "m2": 144,
+      "pallets": 4,
+      "pallet_type": "tahta",
+      "m2": 32,
       "unit": "m²",
       "thickness": "8 cm",
       "color": "Gri"
     }
   ],
-  "total_m2": 144,
-  "total_pallets": 20,
-  "gross_weight": 40000,
-  "tare_weight": 14080,
-  "net_weight": 25920,
-  "estimated_tonnage": 25.92,
+  "total_m2": 32,
+  "total_pallets": 4,
+  "gross_weight": 0,
+  "tare_weight": 0,
+  "net_weight": 0,
+  "estimated_tonnage": 5.76,
   "supplier_name": "",
   "is_external": false,
-  "summary": "ASİLSA Hacıbaba şantiyesine 144 m2 8'lik kilit parke sevk irsaliyesi"
+  "summary": "FATİH ERGİŞİ Kılavuzlu şantiyesine 32 m² 8'lik kilit parke (4 tahta palet) sevk irsaliyesi"
 }
 \`\`\`
 
@@ -397,6 +422,71 @@ export async function callVisionCascade(
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════
+ * AKILLI ÜRÜN EŞLEŞTİRİCİ (SMART PRODUCT MATCHER)
+ * ══════════════════════════════════════════════════════════════════════════════
+ * OCR metninden okunan ürün adı, ebat ve kalınlık bilgisini
+ * veritabanındaki ürünlerle kalınlık (8, 6, 10 cm vb.) ve malzeme anahtar kelimelerine
+ * göre puanlayarak en doğru ürün kartıyla eşleştirir.
+ */
+export function smartMatchProduct(rawName: string, products: any[]): any | null {
+  if (!products || products.length === 0 || !rawName) return null;
+  const norm = (s: string) => normalizeTurkish(s || '').toLowerCase().trim();
+  const targetNorm = norm(rawName);
+
+  // 1. Ebat / Kalınlık Tespiti (8, 6, 10, 50x25 vb.)
+  const isTarget8 = /\b8(\s*lik|\s*cm|lik|\b)/i.test(targetNorm);
+  const isTarget6 = /\b6(\s*lik|\s*cm|lik|\b)/i.test(targetNorm);
+  const isTarget10 = /\b10(\s*luk|\s*cm|luk|\b)/i.test(targetNorm);
+
+  let bestProd: any = null;
+  let bestScore = -999;
+
+  for (const p of products) {
+    const pNorm = norm(p.name);
+    const pThick = norm(p.thickness || '');
+    const pCombined = `${pNorm} ${pThick}`;
+
+    const isProd8 = /\b8(\s*lik|\s*cm|lik|\b)/i.test(pCombined);
+    const isProd6 = /\b6(\s*lik|\s*cm|lik|\b)/i.test(pCombined);
+    const isProd10 = /\b10(\s*luk|\s*cm|luk|\b)/i.test(pCombined);
+
+    let score = 0;
+
+    // Ebat Çakışması Kontrolü (8'lik isteniyorsa 10'luk veya 6'lık elenmeli!)
+    if (isTarget8) {
+      if (isProd8) score += 70;
+      if (isProd10 || isProd6) score -= 90;
+    } else if (isTarget10) {
+      if (isProd10) score += 70;
+      if (isProd8 || isProd6) score -= 90;
+    } else if (isTarget6) {
+      if (isProd6) score += 70;
+      if (isProd8 || isProd10) score -= 90;
+    }
+
+    // Anahtar Kelime Puanlaması
+    const keywords = ['kilit', 'parke', 'tas', 'tasi', 'bordur', 'oluk', 'cimen'];
+    for (const kw of keywords) {
+      if (targetNorm.includes(kw) && pCombined.includes(kw)) {
+        score += 20;
+      }
+    }
+
+    // Tam veya alt metin eşleşmesi
+    if (pNorm === targetNorm) score += 100;
+    if (pNorm.includes(targetNorm) || targetNorm.includes(pNorm)) score += 30;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestProd = p;
+    }
+  }
+
+  return bestScore > 0 ? bestProd : null;
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════
  * VERİTABANI VARLIK ÇÖZÜMLEME (DATABASE ENTITY RESOLUTION)
  * ══════════════════════════════════════════════════════════════════════════════
  * Fotoğraftan okunan metindeki Müşteri, Şantiye ve Ürün adlarını Supabase'deki
@@ -467,7 +557,7 @@ export async function resolveEntitiesWithDatabase(rawShipment: any): Promise<Par
       : [{
           product_name: rawShipment.product_name || "8'lik Kilit Parke Taşı",
           pallets: Number(rawShipment.pallets || 0),
-          pallet_type: rawShipment.pallet_type || 'uretim',
+          pallet_type: rawShipment.pallet_type || 'tahta',
           m2: Number(rawShipment.quantity_m2 || rawShipment.m2 || 0),
           unit: rawShipment.unit || 'm²',
         }];
@@ -476,13 +566,9 @@ export async function resolveEntitiesWithDatabase(rawShipment: any): Promise<Par
       let pId = '';
       let pName = it.product_name || "8'lik Kilit Parke Taşı";
       let pUnit = it.unit || 'm²';
-      const itNorm = norm(pName);
 
       if (products && products.length > 0) {
-        const matchedProd = products.find(p => {
-          const pn = norm(p.name);
-          return pn === itNorm || (pn.length >= 4 && itNorm.includes(pn)) || (itNorm.length >= 4 && pn.includes(itNorm));
-        });
+        const matchedProd = smartMatchProduct(pName, products);
         if (matchedProd) {
           pId = matchedProd.id;
           pName = matchedProd.name;
@@ -500,7 +586,30 @@ export async function resolveEntitiesWithDatabase(rawShipment: any): Promise<Par
         pal = Math.ceil(m2 / 10.66);
       }
 
-      const pType = it.pallet_type === 'uretim' ? 'uretim' : (it.pallet_type === 'tahta' ? 'tahta' : (it.pallet_type === 'dokme' ? 'dokme' : 'sevkiyat'));
+      // Pallet count sanity check:
+      // Beton parke ve bordür ürünlerinde 1 palet ortalama 6.5 - 12 m² arasındadır.
+      // Eğer kullanıcı fişinde 32 m² yazıp palet sayısı 56 (sağdaki stok/üretim bakiye notu) olarak okunmuşsa,
+      // m2 / pal oranı (32 / 56 = 0.57 m²) fiziken imkansızdır.
+      // Bu durumda formun sağındaki stok bakiye notu temizlenir ve doğru palet hesaplanır (örn: 32 / 8 = 4).
+      if (m2 > 0 && pal > 0) {
+        const ratio = m2 / pal;
+        if (ratio < 2.5 && pal > 10) {
+          pal = Math.round(m2 / 8) || 4;
+        }
+      }
+
+      // Palet Tipi Güvenli Normalizasyonu
+      let pType: 'uretim' | 'tahta' | 'sevkiyat' | 'dokme' = 'tahta';
+      const rawType = normalizeTurkish(String(it.pallet_type || '')).toLowerCase().trim();
+      if (rawType.includes('tahta') || rawType.includes('ahsap') || rawType.includes('wood')) {
+        pType = 'tahta';
+      } else if (rawType.includes('uretim') || rawType.includes('demir') || rawType.includes('celik') || rawType.includes('metal')) {
+        pType = 'uretim';
+      } else if (rawType.includes('dokme') || rawType.includes('paletsiz') || rawType.includes('yok')) {
+        pType = 'dokme';
+      } else if (rawType.includes('sevk') || rawType.includes('euro') || rawType.includes('standart')) {
+        pType = 'sevkiyat';
+      }
 
       return {
         product_name: pName,

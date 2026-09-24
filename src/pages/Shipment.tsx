@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { Shipment, Customer, Site, Product } from '../types';
 import Modal from '../components/Modal';
 import { Plus, Truck, Search, Filter, AlertCircle, Trash2, Eye, Pencil, PackageX, Target, ShoppingBag, Lock, Camera, Image, Loader2, Sparkles, X, Check } from 'lucide-react';
-import { scanWaybillImageForShipment, ParsedShipmentOCRData } from '../utils/aiVisionOCREngine';
+import { scanWaybillImageForShipment, ParsedShipmentOCRData, smartMatchProduct } from '../utils/aiVisionOCREngine';
 
 const getLocalDateString = () => {
   const now = new Date();
@@ -218,13 +218,13 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
           next.items = ocr.items.map(it => {
             let prodId = it.product_id;
             if (!prodId) {
-              const matched = products.find(p => p.name.toLowerCase().includes(it.product_name.toLowerCase()));
+              const matched = smartMatchProduct(it.product_name, products) || products.find(p => p.name.toLowerCase().includes(it.product_name.toLowerCase()));
               prodId = matched?.id || products[0]?.id || '';
             }
             return {
               product_id: prodId,
               pallets: it.pallets,
-              pallet_type: it.pallet_type || 'uretim',
+              pallet_type: it.pallet_type || 'tahta',
               m2: it.m2,
               unit: it.unit || 'm2',
             };

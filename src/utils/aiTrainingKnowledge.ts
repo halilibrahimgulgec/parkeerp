@@ -43,6 +43,24 @@ const DEFAULT_RULES: AILearnedRule[] = [
     category: 'shipment',
     createdAt: new Date().toISOString(),
   },
+  {
+    id: 'vision-rule-saritek-1',
+    rule: 'SARİTEK Parke Sevkiyat Formlarında tablo içerisindeki "Palet Adeti" sütununda yazan sayı (örn: 4) asıl sevkiyat palet adedidir. Formun sağ tarafındaki "Üretim 56 - 30 palet = 26" gibi iç stok ve üretim hesap notlarındaki sayılar (56 gibi) kesinlikle sevkiyat palet sayısı değildir.',
+    category: 'pallet',
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'vision-rule-saritek-2',
+    rule: 'İrsaliye ve sevk fişlerinde "8\'lik taş" veya "8\'lik kilit" yazıyorsa ürün 8\'lik Kilit Parke Taşıdır (8 cm). Kesinlikle 10\'luk veya başka kalınlıktaki parke taşları ile karıştırılmamalı ve eşleştirilmemelidir.',
+    category: 'shipment',
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'vision-rule-saritek-3',
+    rule: 'İrsaliyede "Palet Cinsi" sütununda "Tahta" veya "Ahşap" yazıyorsa palet tipi mutlaka Tahta Palet ("tahta") olarak seçilmelidir; "Sevkiyat Paleti" seçilmemelidir.',
+    category: 'pallet',
+    createdAt: new Date().toISOString(),
+  },
 ];
 
 /**
