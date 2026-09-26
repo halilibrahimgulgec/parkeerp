@@ -330,17 +330,6 @@ export function generateSmartProductionPlan({
     return Math.max(100, Math.round(Number(machDef.daily_capacity_m2 || 1000)));
   };
 
-  // 4. Fill Slots Day by Day (Sadece Çalışma Günleri - Pazarlar Hariç)
-  workingDates.forEach(dateStr => {
-    shifts.forEach(shift => {
-      // Allocate for Machine 1
-      allocateForMachine('1', dateStr, shift);
-
-      // Allocate for Machine 2
-      allocateForMachine('2', dateStr, shift);
-    });
-  });
-
   let productCustomCapacityUsage = 0;
 
   function allocateForMachine(
@@ -439,6 +428,17 @@ export function generateSmartProductionPlan({
       products: item.product,
     });
   }
+
+  // 4. Fill Slots Day by Day (Sadece Çalışma Günleri - Pazarlar Hariç)
+  workingDates.forEach(dateStr => {
+    shifts.forEach(shift => {
+      // Allocate for Machine 1
+      allocateForMachine('1', dateStr, shift);
+
+      // Allocate for Machine 2
+      allocateForMachine('2', dateStr, shift);
+    });
+  });
 
   // 5. Build Comprehensive Reasoning Report
   const totalPlannedM2 = (machineState['1']?.totalM2 || 0) + (machineState['2']?.totalM2 || 0);
