@@ -71,6 +71,7 @@ export default function ProductionPlanning() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSavingPlan, setIsSavingPlan] = useState(false);
   const [saveStatusText, setSaveStatusText] = useState('');
+  const planPreviewRef = React.useRef<HTMLDivElement>(null);
 
   // Order Form Modal State
   const [showOrderModal, setShowOrderModal] = useState(false);
@@ -370,19 +371,28 @@ export default function ProductionPlanning() {
   const handleRunAIAgent = () => {
     setIsGenerating(true);
     setTimeout(() => {
-      const res = generateSmartProductionPlan({
-        products,
-        stockMap,
-        orders,
-        quotas,
-        machines,
-        options: {
-          ...planningOptions,
-          shipmentVelocities: shipmentVelocityMap,
-        },
-      });
-      setGeneratedPlan(res);
-      setIsGenerating(false);
+      try {
+        const res = generateSmartProductionPlan({
+          products,
+          stockMap,
+          orders,
+          quotas,
+          machines,
+          options: {
+            ...planningOptions,
+            shipmentVelocities: shipmentVelocityMap,
+          },
+        });
+        setGeneratedPlan(res);
+        setTimeout(() => {
+          planPreviewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 150);
+      } catch (err: any) {
+        console.error('AI plan oluşturma hatası:', err);
+        alert('Plan hesaplanırken bir hata oluştu: ' + (err?.message || 'Bilinmeyen hata'));
+      } finally {
+        setIsGenerating(false);
+      }
     }, 400);
   };
 
@@ -1026,7 +1036,7 @@ export default function ProductionPlanning() {
                   <input
                     type="date"
                     value={planningOptions.startDate}
-                    onChange={e => setPlanningOptions(o => ({ ...o, startDate: e.target.value }))}
+                    onChange={e => setPlanningOptions(o => ({ ...o, startDate: e.target.value || getLocalDateStr() }))}
                     className="w-full bg-slate-800/80 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-amber-400"
                   />
                 </div>
@@ -1141,7 +1151,7 @@ export default function ProductionPlanning() {
 
           {/* AI GENERATED PLAN PREVIEW & REASONING (IF GENERATED) */}
           {generatedPlan && (
-            <div className="bg-white rounded-3xl p-6 border-2 border-amber-400 shadow-lg space-y-6">
+            <div ref={planPreviewRef} className="bg-white rounded-3xl p-6 border-2 border-amber-400 shadow-lg space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
                 <div>
                   <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300">
@@ -1164,15 +1174,19 @@ export default function ProductionPlanning() {
                   </button>
                   <button
                     onClick={handleSaveAndActivatePlan}
-                    disabled={isSavingPlan}
-                    className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold shadow-md shadow-emerald-600/20 transition-all disabled:opacity-80 cursor-pointer disabled:cursor-wait"
+                    disabled={isSavingPlan || generatedPlan.items.length === 0}
+                    className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold shadow-md shadow-emerald-600/20 transition-all disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
                   >
                     {isSavingPlan ? (
                       <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     ) : (
                       <CheckCircle2 size={18} />
                     )}
-                    <span>{isSavingPlan ? (saveStatusText || 'Kaydediliyor...') : 'Planı Onayla & İş Emirlerine Dönüştür'}</span>
+                    <span>
+                      {isSavingPlan
+                        ? (saveStatusText || 'Kaydediliyor...')
+                        : (generatedPlan.items.length === 0 ? 'Üretilecek İş Yok' : 'Planı Onayla & İş Emirlerine Dönüştür')}
+                    </span>
                   </button>
                 </div>
               </div>
@@ -1236,88 +1250,100 @@ export default function ProductionPlanning() {
               </div>
 
               {/* Generated Plan Items Table Preview */}
-              <div className="border border-slate-200 rounded-2xl overflow-hidden">
-                <div className="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-700">
-                    Önerilen Vardiya ve İş Dağılımı ({generatedPlan.items.length} İş Emri)
-                  </span>
-                  <span className="text-[11px] text-slate-500">
-                    Makineler arası aktarmak için 🔁 butonuna tıklayabilirsiniz
-                  </span>
+              {generatedPlan.items.length === 0 ? (
+                <div className="p-8 text-center bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+                  <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-2">
+                    <CheckCircle2 size={24} />
+                  </div>
+                  <h4 className="font-bold text-slate-800 text-sm">Tüm Stok Seviyeleri Yeterli & Bekleyen Sipariş Yok</h4>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    Seçtiğiniz kriterlere göre acil üretim gerektiren bir stok açığı bulunmuyor. Yeni sipariş eklendiğinde veya stok emniyet seviyesinin altına indiğinde AI otomatik olarak üretim planı hazırlayacaktır.
+                  </p>
                 </div>
+              ) : (
+                <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                  <div className="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700">
+                      Önerilen Vardiya ve İş Dağılımı ({generatedPlan.items.length} İş Emri)
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      Makineler arası aktarmak için 🔁 butonuna tıklayabilirsiniz
+                    </span>
+                  </div>
 
-                <div className="max-h-96 overflow-y-auto">
-                  <table className="w-full text-xs text-left">
-                    <thead className="bg-slate-50 sticky top-0 border-b border-slate-200 text-slate-600 font-bold">
-                      <tr>
-                        <th className="px-3 py-2.5">Tarih</th>
-                        <th className="px-3 py-2.5">Vardiya</th>
-                        <th className="px-3 py-2.5">Makine</th>
-                        <th className="px-3 py-2.5">Ürün</th>
-                        <th className="px-3 py-2.5 text-right">Hedef Miktar</th>
-                        <th className="px-3 py-2.5 text-right">Palet</th>
-                        <th className="px-3 py-2.5 text-center">İşlemler</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {generatedPlan.items.map((it, idx) => {
-                        const isM1 = it.machine_no === '1';
-                        return (
-                          <tr key={idx} className="hover:bg-slate-50/70 transition-colors">
-                            <td className="px-3 py-2.5 font-mono text-slate-700 whitespace-nowrap">
-                              {new Date(it.planned_date).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', weekday: 'short' })}
-                            </td>
-                            <td className="px-3 py-2.5 font-semibold text-slate-800">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                it.shift === 'Gündüz' ? 'bg-amber-100 text-amber-900' : 'bg-indigo-100 text-indigo-900'
-                              }`}>
-                                {it.shift} ({planningOptions.dailyWorkingHours || 10} Saat)
-                              </span>
-                            </td>
-                            <td className="px-3 py-2.5">
-                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                isM1 ? 'bg-blue-100 text-blue-900' : 'bg-emerald-100 text-emerald-900'
-                              }`}>
-                                <Factory size={10} />
-                                {isM1 ? 'Makine 1 (Parke)' : 'Makine 2 (Bordür)'}
-                              </span>
-                            </td>
-                            <td className="px-3 py-2.5 font-bold text-slate-900">
-                              {it.products?.name} ({it.products?.thickness || 'Standart'} / {it.products?.color || 'Gri'})
-                            </td>
-                            <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-900">
-                              {it.planned_m2.toLocaleString('tr-TR')} {it.products?.unit || 'm²'}
-                            </td>
-                            <td className="px-3 py-2.5 text-right font-mono text-slate-600">
-                              {it.planned_pallets} palet
-                            </td>
-                            <td className="px-3 py-2.5 text-center">
-                              <div className="flex items-center justify-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => handleTogglePreviewMachine(idx)}
-                                  className="p-1 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
-                                  title="Diğer makineye aktar"
-                                >
-                                  <ArrowLeftRight size={14} />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemovePreviewItem(idx)}
-                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                                  title="Bu iş emrini plandan çıkar"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                  <div className="max-h-96 overflow-y-auto">
+                    <table className="w-full text-xs text-left">
+                      <thead className="bg-slate-50 sticky top-0 border-b border-slate-200 text-slate-600 font-bold">
+                        <tr>
+                          <th className="px-3 py-2.5">Tarih</th>
+                          <th className="px-3 py-2.5">Vardiya</th>
+                          <th className="px-3 py-2.5">Makine</th>
+                          <th className="px-3 py-2.5">Ürün</th>
+                          <th className="px-3 py-2.5 text-right">Hedef Miktar</th>
+                          <th className="px-3 py-2.5 text-right">Palet</th>
+                          <th className="px-3 py-2.5 text-center">İşlemler</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {generatedPlan.items.map((it, idx) => {
+                          const isM1 = it.machine_no === '1';
+                          return (
+                            <tr key={idx} className="hover:bg-slate-50/70 transition-colors">
+                              <td className="px-3 py-2.5 font-mono text-slate-700 whitespace-nowrap">
+                                {new Date(it.planned_date).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', weekday: 'short' })}
+                              </td>
+                              <td className="px-3 py-2.5 font-semibold text-slate-800">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  it.shift === 'Gündüz' ? 'bg-amber-100 text-amber-900' : 'bg-indigo-100 text-indigo-900'
+                                }`}>
+                                  {it.shift} ({planningOptions.dailyWorkingHours || 10} Saat)
+                                </span>
+                              </td>
+                              <td className="px-3 py-2.5">
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  isM1 ? 'bg-blue-100 text-blue-900' : 'bg-emerald-100 text-emerald-900'
+                                }`}>
+                                  <Factory size={10} />
+                                  {isM1 ? 'Makine 1 (Parke)' : 'Makine 2 (Bordür)'}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2.5 font-bold text-slate-900">
+                                {it.products?.name} ({it.products?.thickness || 'Standart'} / {it.products?.color || 'Gri'})
+                              </td>
+                              <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-900">
+                                {it.planned_m2.toLocaleString('tr-TR')} {it.products?.unit || 'm²'}
+                              </td>
+                              <td className="px-3 py-2.5 text-right font-mono text-slate-600">
+                                {it.planned_pallets} palet
+                              </td>
+                              <td className="px-3 py-2.5 text-center">
+                                <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleTogglePreviewMachine(idx)}
+                                    className="p-1 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                                    title="Diğer makineye aktar"
+                                  >
+                                    <ArrowLeftRight size={14} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemovePreviewItem(idx)}
+                                    className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                                    title="Bu iş emrini plandan çıkar"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
 

@@ -61,6 +61,30 @@ export interface AIPlanningResult {
   };
 }
 
+export function parseSafeDate(dateStr?: string | null): Date {
+  if (!dateStr || typeof dateStr !== 'string') return new Date();
+  const trimmed = dateStr.trim();
+  const dmyMatch = trimmed.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const month = parseInt(dmyMatch[2], 10) - 1;
+    const year = parseInt(dmyMatch[3], 10);
+    const d = new Date(year, month, day);
+    if (!isNaN(d.getTime())) return d;
+  }
+  const parsed = new Date(trimmed);
+  if (!isNaN(parsed.getTime())) return parsed;
+  return new Date();
+}
+
+export function formatSafeISODate(d: Date): string {
+  if (!d || isNaN(d.getTime())) d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export function getMachineProductCapacity(machine?: MachineDefinition, product?: Product): number {
   if (!machine) return 1000;
   if (machine.product_capacities && product?.id && machine.product_capacities[product.id] !== undefined) {
@@ -86,16 +110,16 @@ export function generateSmartProductionPlan({
   options: PlanningOptions;
 }): AIPlanningResult {
   const excludedSet = new Set(options.excludedProductIds || []);
-  const activeProducts = products.filter(p => p.is_active && !excludedSet.has(p.id));
+  const activeProducts = (products || []).filter(p => p && p.is_active && !excludedSet.has(p.id));
 
   // 1. Calculate Demands & Urgency
   const demands: ProductDemand[] = activeProducts.map(p => {
-    const currentStock = stockMap[p.id] || 0;
-    const minStockAlert = p.min_stock_alert || 0;
+    const currentStock = Number(stockMap?.[p.id]) || 0;
+    const minStockAlert = Number(p.min_stock_alert) || 0;
     const stockDeficit = currentStock < minStockAlert ? minStockAlert - currentStock : 0;
 
     // Filter pending orders for this product
-    const prodOrders = orders.filter(o => o.product_id === p.id && (o.status === 'pending' || o.status === 'planned'));
+    const prodOrders = (orders || []).filter(o => o && o.product_id === p.id && (o.status === 'pending' || o.status === 'planned'));
     const pendingOrderQty = prodOrders.reduce((sum, o) => sum + Number(o.quantity || 0), 0);
 
     let closestDueDate: string | undefined = undefined;
@@ -108,7 +132,7 @@ export function generateSmartProductionPlan({
     // Quotas remaining demand
     let quotaDemandQty = 0;
     if (options.includeQuotaDemand) {
-      const prodQuotas = quotas.filter(q => q.product_id === p.id && q.is_active);
+      const prodQuotas = (quotas || []).filter(q => q && q.product_id === p.id && q.is_active);
       quotaDemandQty = prodQuotas.reduce((sum, q) => {
         const target = Number(q.target_quantity || 0);
         const shipped = Number(q.shipped_quantity || 0);
@@ -210,24 +234,25 @@ export function generateSmartProductionPlan({
   });
 
   // 2. Setup Machines and Capacities (Günlük 10 Saatlik Çalışma)
-  const m1Def = machines.find(m => m.machine_no === '1') || {
+  const m1Def = (machines || []).find(m => String(m.machine_no) === '1') || {
     machine_no: '1',
     name: '1 Nolu Parke Baskı Makinesi',
     daily_capacity_m2: 1000,
-    shift_count: options.shiftsPerDay,
+    shift_count: options.shiftsPerDay || 1,
     specialized_types: ['Kilitli', 'Aşık', 'Prizma', 'Küp Taşı'],
+    product_capacities: {},
     is_active: true,
   };
 
-  const m2Def = machines.find(m => m.machine_no === '2') || {
+  const m2Def = (machines || []).find(m => String(m.machine_no) === '2') || {
     machine_no: '2',
     name: '2 Nolu Parke & Bordür Makinesi',
     daily_capacity_m2: 1000,
-    shift_count: options.shiftsPerDay,
+    shift_count: options.shiftsPerDay || 1,
     specialized_types: ['Bordür', 'Oluk', 'Begonit', 'Tretuar'],
+    product_capacities: {},
     is_active: true,
   };
-
 
   // 3. Date & Shift Grid Generation (Pazar Günleri Tatil Kontrolü)
   const shifts: ('Gündüz' | 'Gece')[] = options.shiftsPerDay === 2 ? ['Gündüz', 'Gece'] : ['Gündüz'];
@@ -244,10 +269,10 @@ export function generateSmartProductionPlan({
   }[] = [];
 
   sortedMoldKeys.forEach(mKey => {
-    moldGroups[mKey].forEach(d => {
+    (moldGroups[mKey] || []).forEach(d => {
       // Check if linked to order
-      const relatedOrder = orders.find(o => o.product_id === d.product.id && o.status === 'pending');
-      const relatedQuota = quotas.find(q => q.product_id === d.product.id && q.is_active);
+      const relatedOrder = (orders || []).find(o => o && o.product_id === d.product.id && o.status === 'pending');
+      const relatedQuota = (quotas || []).find(q => q && q.product_id === d.product.id && q.is_active);
       queue.push({
         product: d.product,
         remainingQty: d.totalNetNeed,
@@ -262,11 +287,12 @@ export function generateSmartProductionPlan({
   // Build calendar dates (Check Sundays)
   const workingDates: string[] = [];
   const sundayDates: string[] = [];
-  const startObj = new Date(options.startDate);
-  for (let i = 0; i < options.daysCount; i++) {
+  const startObj = parseSafeDate(options.startDate);
+  const daysCount = Math.max(1, Number(options.daysCount) || 7);
+  for (let i = 0; i < daysCount; i++) {
     const cur = new Date(startObj);
     cur.setDate(cur.getDate() + i);
-    const dateStr = cur.toISOString().split('T')[0];
+    const dateStr = formatSafeISODate(cur);
     const isSunday = cur.getDay() === 0; // 0 = Pazar
 
     if (isSunday && options.excludeSundays) {
@@ -295,12 +321,13 @@ export function generateSmartProductionPlan({
   };
 
   // Helper for product-specific daily capacity
-  const getProductCap = (machDef: MachineDefinition, prod: Product) => {
-    if (machDef.product_capacities && prod?.id && machDef.product_capacities[prod.id] !== undefined) {
+  const getProductCap = (machDef?: MachineDefinition, prod?: Product) => {
+    if (!machDef || !prod) return 1000;
+    if (machDef.product_capacities && prod.id && machDef.product_capacities[prod.id] !== undefined) {
       const val = Number(machDef.product_capacities[prod.id]);
       if (val > 0) return val;
     }
-    return Math.round(Number(machDef.daily_capacity_m2 || 1000));
+    return Math.max(100, Math.round(Number(machDef.daily_capacity_m2 || 1000)));
   };
 
   // 4. Fill Slots Day by Day (Sadece Çalışma Günleri - Pazarlar Hariç)
@@ -332,7 +359,7 @@ export function generateSmartProductionPlan({
     // 3) Or match specialized type
     // 4) Or highest urgency
     let chosenIdx = -1;
-    const currentMold = machineState[machineNo].currentMold;
+    const currentMold = machineState[machineNo]?.currentMold;
 
     if (options.strategy === 'minimize_mold_change' && currentMold) {
       chosenIdx = queue.findIndex(q => q.moldKey === currentMold && q.remainingQty > 0);
@@ -345,8 +372,8 @@ export function generateSmartProductionPlan({
     if (chosenIdx === -1) {
       chosenIdx = queue.findIndex(q => {
         if (q.remainingQty <= 0) return false;
-        const hasThis = !!(mDef.product_capacities && mDef.product_capacities[q.product.id]);
-        const hasOther = !!(otherDef.product_capacities && otherDef.product_capacities[q.product.id]);
+        const hasThis = !!(mDef?.product_capacities && mDef.product_capacities[q.product?.id]);
+        const hasOther = !!(otherDef?.product_capacities && otherDef.product_capacities[q.product?.id]);
         return hasThis && !hasOther;
       });
     }
@@ -355,7 +382,7 @@ export function generateSmartProductionPlan({
     if (chosenIdx === -1) {
       chosenIdx = queue.findIndex(q => {
         if (q.remainingQty <= 0) return false;
-        const prefM2 = isM2Preferred(q.product.product_type);
+        const prefM2 = isM2Preferred(q.product?.product_type);
         return machineNo === '2' ? prefM2 : !prefM2;
       });
     }
@@ -370,11 +397,12 @@ export function generateSmartProductionPlan({
     const item = queue[chosenIdx];
     const effectiveCapacity = getProductCap(mDef, item.product);
 
-    if (mDef.product_capacities && mDef.product_capacities[item.product.id]) {
+    if (mDef?.product_capacities && mDef.product_capacities[item.product?.id]) {
       productCustomCapacityUsage++;
     }
 
     const qtyToProduce = Math.min(item.remainingQty, effectiveCapacity);
+    if (qtyToProduce <= 0 || isNaN(qtyToProduce)) return;
 
     item.remainingQty -= qtyToProduce;
     machineState[machineNo].currentMold = item.moldKey;
@@ -385,9 +413,15 @@ export function generateSmartProductionPlan({
       criticalDeficitsCovered++;
     }
 
-    const pallets = item.product.m2_per_pallet > 0
+    const pallets = item.product?.m2_per_pallet && item.product.m2_per_pallet > 0
       ? Math.round((qtyToProduce / item.product.m2_per_pallet) * 10) / 10
       : 0;
+
+    const capStr = (Number(effectiveCapacity) || 1000).toLocaleString('tr-TR');
+    const unitStr = item.product?.unit || 'm²';
+    const prodName = item.product?.name || 'Ürün';
+    const thickStr = item.product?.thickness || 'Standart';
+    const colorStr = item.product?.color || 'Gri';
 
     planItems.push({
       machine_no: machineNo,
@@ -401,30 +435,33 @@ export function generateSmartProductionPlan({
       produced_m2: 0,
       status: 'scheduled',
       sequence_order: planItems.length + 1,
-      notes: `${item.product.name} (${item.product.thickness || '6cm'}/${item.product.color || 'Gri'}) — ${shift} (Kapasite: ${effectiveCapacity.toLocaleString('tr-TR')} ${item.product.unit}/10s)`,
+      notes: `${prodName} (${thickStr}/${colorStr}) — ${shift} (Kapasite: ${capStr} ${unitStr}/10s)`,
       products: item.product,
     });
   }
 
   // 5. Build Comprehensive Reasoning Report
-  const totalPlannedM2 = machineState['1'].totalM2 + machineState['2'].totalM2;
+  const totalPlannedM2 = (machineState['1']?.totalM2 || 0) + (machineState['2']?.totalM2 || 0);
 
   // Alerts
   neededDemands.forEach(d => {
+    const pName = d.product?.name || 'Ürün';
+    const pUnit = d.product?.unit || 'm²';
     if (d.currentStock <= 0) {
-      criticalAlerts.push(`🚨 ${d.product.name}: Stok tamamen tükenmiş durumda (Mevcut: 0 ${d.product.unit || 'm²'}). Acil ilk vardiyalara alındı.`);
+      criticalAlerts.push(`🚨 ${pName}: Stok tamamen tükenmiş durumda (Mevcut: 0 ${pUnit}). Acil ilk vardiyalara alındı.`);
     } else if (d.currentStock < d.minStockAlert) {
-      criticalAlerts.push(`⚠️ ${d.product.name}: Emniyet stoğu (${d.minStockAlert}) altına düşmüş (Kalan: ${d.currentStock}).`);
+      criticalAlerts.push(`⚠️ ${pName}: Emniyet stoğu (${d.minStockAlert}) altına düşmüş (Kalan: ${d.currentStock} ${pUnit}).`);
     }
     if (d.closestDueDate) {
-      criticalAlerts.push(`📅 ${d.product.name}: Sipariş teslim tarihi yaklaşıyor (${new Date(d.closestDueDate).toLocaleDateString('tr-TR')}).`);
+      const parsedDue = parseSafeDate(d.closestDueDate);
+      criticalAlerts.push(`📅 ${pName}: Sipariş teslim tarihi yaklaşıyor (${parsedDue.toLocaleDateString('tr-TR')}).`);
     }
   });
 
   // Reasoning
   reasoning.push(`📅 Çalışma Takvimi: Günlük 10 saat çalışma esasına göre planlandı. Toplam ${workingDates.length} iş günü planlandı (${sundayDates.length} Pazar günü fabrika tatili olarak ayrıldı).`);
-  reasoning.push(`Makine 1 (Hat 1) üzerine toplam ${machineState['1'].totalM2.toLocaleString('tr-TR')} m² parke taşı üretimi planlandı (${machineState['1'].busyDays.size} çalışma günü).`);
-  reasoning.push(`Makine 2 (Hat 2) üzerine toplam ${machineState['2'].totalM2.toLocaleString('tr-TR')} m² bordür ve ikincil taş üretimi planlandı (${machineState['2'].busyDays.size} çalışma günü).`);
+  reasoning.push(`Makine 1 (Hat 1) üzerine toplam ${(machineState['1']?.totalM2 || 0).toLocaleString('tr-TR')} m² parke taşı üretimi planlandı (${machineState['1']?.busyDays.size || 0} çalışma günü).`);
+  reasoning.push(`Makine 2 (Hat 2) üzerine toplam ${(machineState['2']?.totalM2 || 0).toLocaleString('tr-TR')} m² bordür ve ikincil taş üretimi planlandı (${machineState['2']?.busyDays.size || 0} çalışma günü).`);
   
   if (moldChangesSaved > 0) {
     reasoning.push(`Kalıp optimizasyonu sayesinde aynı kalıp tipindeki ürünler peş peşe kümelenerek yaklaşık ${moldChangesSaved} gereksiz kalıp söküm-takım işleminden tasarruf edildi.`);
@@ -445,17 +482,20 @@ export function generateSmartProductionPlan({
   // Sevkiyat & Stok Erime Analizi Raporlama
   if (options.considerShipmentVelocity && options.shipmentVelocities) {
     const velList = Object.values(options.shipmentVelocities);
-    const sortedByBurn = [...velList].sort((a, b) => b.dailyBurnRate - a.dailyBurnRate);
+    const sortedByBurn = [...velList].sort((a, b) => (Number(b.dailyBurnRate) || 0) - (Number(a.dailyBurnRate) || 0));
     const topBurn = sortedByBurn[0];
-    const topProduct = topBurn ? products.find(p => p.id === topBurn.productId) : null;
+    const topProduct = topBurn ? (products || []).find(p => p && p.id === topBurn.productId) : null;
 
-    if (topProduct && topBurn && topBurn.dailyBurnRate > 0) {
-      reasoning.push(`🔥 En Hızlı Eriyen / Çok Satan Ürün: "${topProduct.name}" (Günde ortalama ${topBurn.dailyBurnRate} ${topProduct.unit || 'm²'} sevk ediliyor; son 30 gün toplamı: ${topBurn.totalShippedLast30Days.toLocaleString('tr-TR')} ${topProduct.unit || 'm²'}).`);
+    if (topProduct && topBurn && (Number(topBurn.dailyBurnRate) || 0) > 0) {
+      const burnRateStr = (Number(topBurn.dailyBurnRate) || 0).toLocaleString('tr-TR');
+      const shipped30Str = (Number(topBurn.totalShippedLast30Days) || 0).toLocaleString('tr-TR');
+      const unit = topProduct.unit || 'm²';
+      reasoning.push(`🔥 En Hızlı Eriyen / Çok Satan Ürün: "${topProduct.name}" (Günde ortalama ${burnRateStr} ${unit} sevk ediliyor; son 30 gün toplamı: ${shipped30Str} ${unit}).`);
     }
 
-    const runOutRisks = velList.filter(v => v.dailyBurnRate > 0 && v.daysOfStockRemaining <= 7 && v.daysOfStockRemaining > 0);
+    const runOutRisks = velList.filter(v => (Number(v.dailyBurnRate) || 0) > 0 && (Number(v.daysOfStockRemaining) || 999) <= 7 && (Number(v.daysOfStockRemaining) || 999) > 0);
     if (runOutRisks.length > 0) {
-      const names = runOutRisks.map(r => products.find(p => p.id === r.productId)?.name).filter(Boolean).slice(0, 3).join(', ');
+      const names = runOutRisks.map(r => (products || []).find(p => p && p.id === r.productId)?.name).filter(Boolean).slice(0, 3).join(', ');
       criticalAlerts.push(`⚠️ Sevkiyat Hızı Uyarısı: ${runOutRisks.length} kalemin (${names}${runOutRisks.length > 3 ? '...' : ''}) stoku mevcut sevkiyat temposuyla 7 günden az sürede tükenecektir. Sevkiyat aksamaması için üretimleri öne alındı.`);
     }
 
@@ -471,23 +511,31 @@ export function generateSmartProductionPlan({
     recommendations.push(`Çift vardiya (10 + 10 Saat) çalışma düzeni ile günlük üretim kapasitesi 2 katına çıkarıldı.`);
   }
 
-  const endDate = (workingDates.length > 0 ? workingDates[workingDates.length - 1] : options.startDate);
-  const startFormatted = new Date(options.startDate).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' });
-  const endFormatted = new Date(endDate).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: 'numeric' });
+  if (planItems.length === 0) {
+    reasoning.push('ℹ️ Bilgi: Seçilen kriterlere göre şu anda acil üretim ihtiyacı bulunmuyor. Tüm ürünlerin stokları emniyet seviyelerinin üzerinde ve bekleyen sipariş bulunmuyor.');
+    recommendations.push('Dilerseniz "Sadece Kesin Siparişi Olan Ürünleri Planla" filtresini kaldırabilir veya planlama süresini uzatarak ön stok üretimi planlayabilirsiniz.');
+  }
+
+  const safeStart = parseSafeDate(options.startDate);
+  const startDateStr = formatSafeISODate(safeStart);
+  const endDateStr = workingDates.length > 0 ? workingDates[workingDates.length - 1] : startDateStr;
+  const safeEnd = parseSafeDate(endDateStr);
+  const startFormatted = safeStart.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' });
+  const endFormatted = safeEnd.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: 'numeric' });
   const planName = `${startFormatted} – ${endFormatted} Üretim Planı (10s/Gün)`;
 
   return {
     planName,
-    startDate: options.startDate,
-    endDate,
+    startDate: startDateStr,
+    endDate: endDateStr,
     items: planItems,
     demands,
     summary: {
       totalPlannedM2,
-      machine1M2: machineState['1'].totalM2,
-      machine2M2: machineState['2'].totalM2,
-      machine1Days: machineState['1'].busyDays.size,
-      machine2Days: machineState['2'].busyDays.size,
+      machine1M2: machineState['1']?.totalM2 || 0,
+      machine2M2: machineState['2']?.totalM2 || 0,
+      machine1Days: machineState['1']?.busyDays.size || 0,
+      machine2Days: machineState['2']?.busyDays.size || 0,
       moldChangesSaved,
       criticalDeficitsCovered,
       reasoning,
