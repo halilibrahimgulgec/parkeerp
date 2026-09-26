@@ -1,7 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { BarChart3, TrendingUp, Package, DollarSign, Truck, AlertTriangle, ChevronLeft, ChevronRight, Table } from 'lucide-react';
-import CustomerShipmentAnalysis from '../components/CustomerShipmentAnalysis';
 import DailyShipmentStockMatrixReport from '../components/DailyShipmentStockMatrixReport';
 
 const MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
@@ -227,7 +226,7 @@ function DonutChart({ slices }: { slices: { value: number; color: string; label:
 }
 
 export default function Reports() {
-  const [activeReportTab, setActiveReportTab] = useState<'factory' | 'customer_shipments' | 'matrix'>('factory');
+  const [activeReportTab, setActiveReportTab] = useState<'factory' | 'matrix'>('factory');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [stocks, setStocks] = useState<StockItem[]>([]);
@@ -423,20 +422,6 @@ export default function Reports() {
 
         <button
           type="button"
-          onClick={() => setActiveReportTab('customer_shipments')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all cursor-pointer ${
-            activeReportTab === 'customer_shipments'
-              ? 'bg-blue-600 text-white shadow-sm'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-          }`}
-        >
-          <Truck size={18} />
-          <span>Müşteri Sevk Analizi & İrsaliye Raporu</span>
-          <span className="text-[11px] font-normal opacity-80 hidden sm:inline">(Tarih Aralıklı)</span>
-        </button>
-
-        <button
-          type="button"
           onClick={() => setActiveReportTab('matrix')}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all cursor-pointer ${
             activeReportTab === 'matrix'
@@ -454,8 +439,6 @@ export default function Reports() {
 
       {activeReportTab === 'matrix' ? (
         <DailyShipmentStockMatrixReport />
-      ) : activeReportTab === 'customer_shipments' ? (
-        <CustomerShipmentAnalysis />
       ) : loading ? (
         <div className="flex items-center justify-center py-24">
           <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
