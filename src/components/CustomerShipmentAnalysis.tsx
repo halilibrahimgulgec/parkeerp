@@ -4,7 +4,7 @@ import { Customer, Site, Product } from '../types';
 import {
   Filter, Printer, RefreshCw, X, Search, Phone, MapPin,
   Layers, TrendingUp, Package, Boxes, Truck, Scale,
-  Building2, ChevronDown
+  Building2, ChevronDown, Users
 } from 'lucide-react';
 
 const getLocalDateStr = (d = new Date()) => {
@@ -21,7 +21,7 @@ export function getEffectiveUnit(item: any, products: Product[]): 'm2' | 'metre'
   return (item.unit || prod?.unit || 'm2') as any;
 }
 
-export type PrintScope = 'all' | 'products' | 'sites' | 'shipments';
+export type PrintScope = 'all' | 'products' | 'customers' | 'sites' | 'shipments';
 
 interface CustomerShipmentAnalysisProps {
   initialCustomerId?: string;
@@ -72,6 +72,9 @@ export default function CustomerShipmentAnalysis({
   const [printScope, setPrintScope] = useState<PrintScope>('all');
   const [showPrintMenu, setShowPrintMenu] = useState(false);
   const printMenuRef = useRef<HTMLDivElement>(null);
+
+  // Distribution View: 'both' | 'customer' | 'site'
+  const [distributionView, setDistributionView] = useState<'both' | 'customer' | 'site'>('both');
 
   // Synchronize when initialCustomerId changes from parent
   useEffect(() => {
@@ -334,10 +337,73 @@ export default function CustomerShipmentAnalysis({
 
     const productBreakdown = Array.from(prodMap.values()).sort((a, b) => b.total_qty - a.total_qty);
 
-    // 2. Site Breakdown
+    // 2. Customer Breakdown
+    const custMap = new Map<string, {
+      customer_id: string;
+      name: string;
+      phone?: string;
+      total_m2: number;
+      total_metre: number;
+      total_adet: number;
+      total_pallets: number;
+      shipment_count: number;
+      shipment_ids: Set<string>;
+      sites: Set<string>;
+    }>();
+
+    matched.forEach(item => {
+      const s = item.shipments;
+      const cid = s?.customer_id || 'unassigned';
+      const custObj = customers.find(c => c.id === cid);
+      const name = custObj ? custObj.name : 'Genel / Belirtilmemiş Müşteri';
+      const phone = custObj?.phone;
+      const unit = getEffectiveUnit(item, products);
+      const qty = Number(item.m2) || 0;
+      const pal = Number(item.pallets) || 0;
+      const sId = s?.id;
+
+      const siteObj = sites.find(st => st.id === s?.site_id);
+      const siteName = siteObj ? siteObj.name : (s?.site_id ? 'Şantiye' : 'Genel Saha');
+
+      if (!custMap.has(cid)) {
+        custMap.set(cid, {
+          customer_id: cid,
+          name,
+          phone,
+          total_m2: 0,
+          total_metre: 0,
+          total_adet: 0,
+          total_pallets: 0,
+          shipment_count: 0,
+          shipment_ids: new Set(),
+          sites: new Set(),
+        });
+      }
+
+      const cEntry = custMap.get(cid)!;
+      if (unit === 'm2') cEntry.total_m2 += qty;
+      else if (unit === 'metre') cEntry.total_metre += qty;
+      else if (unit === 'adet') cEntry.total_adet += qty;
+      cEntry.total_pallets += pal;
+      if (siteName) cEntry.sites.add(siteName);
+
+      if (sId && !cEntry.shipment_ids.has(sId)) {
+        cEntry.shipment_ids.add(sId);
+        cEntry.shipment_count++;
+      }
+    });
+
+    const customerBreakdown = Array.from(custMap.values()).sort((a, b) => {
+      if (b.total_m2 !== a.total_m2) return b.total_m2 - a.total_m2;
+      return b.total_metre - a.total_metre;
+    });
+
+    // 3. Site Breakdown (grouped with customer reference)
     const siteMap = new Map<string, {
       site_id: string;
       name: string;
+      customer_id?: string;
+      customer_name: string;
       total_m2: number;
       total_metre: number;
       total_adet: number;
@@ -351,15 +417,22 @@ export default function CustomerShipmentAnalysis({
       const sid = s?.site_id || 'unassigned';
       const siteObj = sites.find(st => st.id === sid);
       const name = siteObj ? siteObj.name : 'Genel / Belirtilmemiş Şantiye';
+      const cid = s?.customer_id || siteObj?.customer_id;
+      const custObj = customers.find(c => c.id === cid);
+      const customer_name = custObj ? custObj.name : '-';
       const unit = getEffectiveUnit(item, products);
       const qty = Number(item.m2) || 0;
       const pal = Number(item.pallets) || 0;
       const sId = s?.id;
 
-      if (!siteMap.has(sid)) {
-        siteMap.set(sid, {
+      const groupKey = `${sid}__${cid || 'nocust'}`;
+
+      if (!siteMap.has(groupKey)) {
+        siteMap.set(groupKey, {
           site_id: sid,
           name,
+          customer_id: cid,
+          customer_name,
           total_m2: 0,
           total_metre: 0,
           total_adet: 0,
@@ -369,7 +442,7 @@ export default function CustomerShipmentAnalysis({
         });
       }
 
-      const sEntry = siteMap.get(sid)!;
+      const sEntry = siteMap.get(groupKey)!;
       if (unit === 'm2') sEntry.total_m2 += qty;
       else if (unit === 'metre') sEntry.total_metre += qty;
       else if (unit === 'adet') sEntry.total_adet += qty;
@@ -381,9 +454,12 @@ export default function CustomerShipmentAnalysis({
       }
     });
 
-    const siteBreakdown = Array.from(siteMap.values()).sort((a, b) => b.total_m2 - a.total_m2);
+    const siteBreakdown = Array.from(siteMap.values()).sort((a, b) => {
+      if (b.total_m2 !== a.total_m2) return b.total_m2 - a.total_m2;
+      return b.total_metre - a.total_metre;
+    });
 
-    // 3. Chronological Shipment List
+    // 4. Chronological Shipment List
     const shipMap = new Map<string, {
       shipment: any;
       items: any[];
@@ -421,10 +497,11 @@ export default function CustomerShipmentAnalysis({
       totalShipments: uniqueShipments.size,
       totalNetWeightKg,
       productBreakdown,
+      customerBreakdown,
       siteBreakdown,
       shipmentList,
     };
-  }, [shipmentItems, queryCustomerId, querySiteId, queryProductId, queryUnit, queryStartDate, queryEndDate, querySearch, products, sites]);
+  }, [shipmentItems, queryCustomerId, querySiteId, queryProductId, queryUnit, queryStartDate, queryEndDate, querySearch, products, sites, customers]);
 
   const selectedCustomerObj = useMemo(() => {
     return customers.find(c => c.id === queryCustomerId);
@@ -535,7 +612,20 @@ export default function CustomerShipmentAnalysis({
                       <div className="text-[10px] text-slate-400 font-normal">Yalnızca sevk edilen ürünler tablosu</div>
                     </div>
                   </button>
-                  {analysisResults.siteBreakdown.length > 1 && (
+                  {analysisResults.customerBreakdown.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => handlePrint('customers')}
+                      className="w-full text-left px-3.5 py-2.5 hover:bg-purple-50 flex items-center gap-2.5 text-slate-800 font-semibold transition-colors cursor-pointer"
+                    >
+                      <Users size={15} className="text-purple-600" />
+                      <div>
+                        <div className="font-bold text-purple-900">👥 Sadece Müşteri Bazında Dağılım</div>
+                        <div className="text-[10px] text-slate-400 font-normal">Müşterilere göre sevk özet tablosu</div>
+                      </div>
+                    </button>
+                  )}
+                  {analysisResults.siteBreakdown.length > 0 && (
                     <button
                       type="button"
                       onClick={() => handlePrint('sites')}
@@ -760,6 +850,8 @@ export default function CustomerShipmentAnalysis({
             <h2 className="text-sm font-bold text-blue-900 uppercase mt-0.5">
               {printScope === 'products'
                 ? '📦 MÜŞTERİ SEVK EKSTRESİ — ÜRÜN BAZINDA SEVK KIRILIMI RAPORU'
+                : printScope === 'customers'
+                ? '👥 MÜŞTERİ SEVK EKSTRESİ — MÜŞTERİ BAZINDA DAĞILIM RAPORU'
                 : printScope === 'sites'
                 ? '🏗️ MÜŞTERİ SEVK EKSTRESİ — ŞANTİYE BAZINDA DAĞILIM RAPORU'
                 : printScope === 'shipments'
@@ -1003,18 +1095,238 @@ export default function CustomerShipmentAnalysis({
         </div>
       </div>
 
-      {/* ── 2. SITE BREAKDOWN TABLE ── */}
-      {analysisResults.siteBreakdown.length > 1 && (
+      {/* ── DISTRIBUTION VIEW MODE SELECTOR (MÜŞTERİ / ŞANTİYE / TÜMÜ) ── */}
+      <div className="flex items-center justify-between flex-wrap gap-2 no-print bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
+        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 pl-2">
+          <Layers size={14} className="text-slate-500" />
+          <span>Dağılım Raporu:</span>
+        </div>
+        <div className="flex items-center gap-1 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setDistributionView('both')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              distributionView === 'both'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            🔄 Tümü (Müşteri & Şantiye)
+          </button>
+          <button
+            type="button"
+            onClick={() => setDistributionView('customer')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+              distributionView === 'customer'
+                ? 'bg-purple-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            <Users size={13} />
+            <span>Müşteri Bazında ({analysisResults.customerBreakdown.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setDistributionView('site')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+              distributionView === 'site'
+                ? 'bg-amber-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            <Building2 size={13} />
+            <span>Şantiye Bazında ({analysisResults.siteBreakdown.length})</span>
+          </button>
+        </div>
+      </div>
+
+      {/* ── 2A. CUSTOMER BREAKDOWN TABLE ── */}
+      {(distributionView === 'both' || distributionView === 'customer') && analysisResults.customerBreakdown.length > 0 && (
+        <div className={`bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden print-clean ${
+          printScope !== 'all' && printScope !== 'customers' ? 'print-hidden' : ''
+        }`}>
+          <div className="p-4 bg-slate-50/70 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <Users size={16} className="text-purple-700 no-print" />
+              <h3 className="font-bold text-slate-900 text-sm">Müşteri / Cari Bazında Dağılım</h3>
+              {queryCustomerId && (
+                <span className="text-[11px] font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-200 no-print">
+                  Filtreli
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2.5">
+              {queryCustomerId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQueryCustomerId('');
+                    setQuerySiteId('');
+                  }}
+                  className="px-2.5 py-1 text-xs font-semibold text-slate-600 hover:text-purple-700 bg-white hover:bg-purple-50 border border-slate-200 rounded-lg shadow-xs transition-colors cursor-pointer no-print flex items-center gap-1"
+                >
+                  <X size={12} />
+                  <span>Tüm Carileri Göster</span>
+                </button>
+              )}
+              <span className="text-xs text-purple-700 font-semibold bg-purple-50 px-2.5 py-1 rounded-lg border border-purple-100">
+                {analysisResults.customerBreakdown.length} Müşteri / Cari
+              </span>
+              <button
+                type="button"
+                onClick={() => handlePrint('customers')}
+                className="flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-slate-100 text-slate-700 hover:text-purple-700 border border-slate-200 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer no-print"
+                title="Sadece bu müşteri tablosunu yazdır veya PDF olarak kaydet"
+              >
+                <Printer size={13} className="text-purple-600" />
+                <span>Bu Bölümü Yazdır</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left">
+              <thead>
+                <tr className="bg-slate-50/50 border-b border-slate-200 text-slate-600 font-bold">
+                  <th className="px-4 py-3">Müşteri / Cari Ünvanı</th>
+                  <th className="px-3 py-3">Sevk Giden Şantiyeler</th>
+                  <th className="px-3 py-3 text-right">Sevk (m²)</th>
+                  <th className="px-3 py-3 text-right">Sevk (Metre)</th>
+                  <th className="px-3 py-3 text-right">Sevk (Adet)</th>
+                  <th className="px-3 py-3 text-right">Palet Sayısı</th>
+                  <th className="px-3 py-3 text-right">Sefer Adedi</th>
+                  <th className="px-4 py-3 min-w-[130px] no-print">Dağılım Payı</th>
+                  <th className="px-3 py-3 text-center no-print">İşlem</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {analysisResults.customerBreakdown.map((c, idx) => {
+                  const baseTotal = analysisResults.totalM2 > 0
+                    ? analysisResults.totalM2
+                    : analysisResults.totalMetre > 0
+                    ? analysisResults.totalMetre
+                    : analysisResults.totalAdet;
+                  const compareVal = analysisResults.totalM2 > 0
+                    ? c.total_m2
+                    : analysisResults.totalMetre > 0
+                    ? c.total_metre
+                    : c.total_adet;
+                  const sharePct = baseTotal > 0 ? Math.round((compareVal / baseTotal) * 100) : 0;
+                  const isSelected = queryCustomerId === c.customer_id;
+                  const siteList = Array.from(c.sites);
+
+                  return (
+                    <tr key={idx} className="hover:bg-slate-50/60 transition-colors">
+                      <td className="px-4 py-3">
+                        <div className="font-bold text-slate-900">{c.name}</div>
+                        {c.phone && (
+                          <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1 mt-0.5">
+                            <Phone size={10} />
+                            <span>{c.phone}</span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex flex-wrap gap-1 max-w-xs">
+                          {siteList.length > 0 ? (
+                            siteList.map((stName, sIdx) => (
+                              <span
+                                key={sIdx}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-medium"
+                              >
+                                <MapPin size={9} className="text-slate-400" />
+                                {stName}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-slate-400">-</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono font-bold text-slate-800">
+                        {c.total_m2 > 0 ? `${c.total_m2.toLocaleString('tr-TR')} m²` : '-'}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono font-semibold text-slate-700">
+                        {c.total_metre > 0 ? `${c.total_metre.toLocaleString('tr-TR')} m` : '-'}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono text-slate-700">
+                        {c.total_adet > 0 ? `${c.total_adet.toLocaleString('tr-TR')} adet` : '-'}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono text-slate-600">
+                        {c.total_pallets > 0 ? `${c.total_pallets.toLocaleString('tr-TR')} Palet` : '-'}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono font-bold text-purple-700">
+                        {c.shipment_count} Sefer
+                      </td>
+                      <td className="px-4 py-3 no-print">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-purple-500 rounded-full"
+                              style={{ width: `${Math.min(sharePct, 100)}%` }}
+                            />
+                          </div>
+                          <span className="text-[11px] font-semibold text-purple-700 min-w-[32px] text-right">
+                            %{sharePct}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 text-center no-print">
+                        {isSelected ? (
+                          <span className="inline-flex items-center px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-lg text-xs font-bold border border-emerald-200">
+                            Seçili
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setQueryCustomerId(c.customer_id);
+                              setQuerySiteId('');
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                            title="Bu carinin tüm şantiye ve irsaliyelerini filtrele"
+                          >
+                            <Search size={11} />
+                            <span>İncele</span>
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── 2B. SITE BREAKDOWN TABLE ── */}
+      {(distributionView === 'both' || distributionView === 'site') && analysisResults.siteBreakdown.length > 0 && (
         <div className={`bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden print-clean ${
           printScope !== 'all' && printScope !== 'sites' ? 'print-hidden' : ''
         }`}>
-          <div className="p-4 bg-slate-50/70 border-b border-slate-200 flex items-center justify-between">
+          <div className="p-4 bg-slate-50/70 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
-              <Building2 size={16} className="text-slate-700 no-print" />
+              <Building2 size={16} className="text-amber-700 no-print" />
               <h3 className="font-bold text-slate-900 text-sm">Şantiye Bazında Dağılım</h3>
+              {querySiteId && (
+                <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200 no-print">
+                  Filtreli
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2.5">
-              <span className="text-xs text-slate-500 font-medium">
+              {querySiteId && (
+                <button
+                  type="button"
+                  onClick={() => setQuerySiteId('')}
+                  className="px-2.5 py-1 text-xs font-semibold text-slate-600 hover:text-amber-700 bg-white hover:bg-amber-50 border border-slate-200 rounded-lg shadow-xs transition-colors cursor-pointer no-print flex items-center gap-1"
+                >
+                  <X size={12} />
+                  <span>Tüm Şantiyeleri Göster</span>
+                </button>
+              )}
+              <span className="text-xs text-amber-700 font-semibold bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-100">
                 {analysisResults.siteBreakdown.length} Şantiye
               </span>
               <button
@@ -1034,36 +1346,90 @@ export default function CustomerShipmentAnalysis({
               <thead>
                 <tr className="bg-slate-50/50 border-b border-slate-200 text-slate-600 font-bold">
                   <th className="px-4 py-3">Şantiye Adı</th>
+                  <th className="px-3 py-3">Müşteri / Cari</th>
                   <th className="px-3 py-3 text-right">Sevk (m²)</th>
                   <th className="px-3 py-3 text-right">Sevk (Metre)</th>
                   <th className="px-3 py-3 text-right">Sevk (Adet)</th>
                   <th className="px-3 py-3 text-right">Palet Sayısı</th>
                   <th className="px-3 py-3 text-right">Sefer Adedi</th>
+                  <th className="px-4 py-3 min-w-[130px] no-print">Dağılım Payı</th>
+                  <th className="px-3 py-3 text-center no-print">İşlem</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {analysisResults.siteBreakdown.map((st, idx) => (
-                  <tr key={idx} className="hover:bg-slate-50/60">
-                    <td className="px-4 py-3 font-bold text-slate-900">
-                      {st.name}
-                    </td>
-                    <td className="px-3 py-3 text-right font-mono font-bold text-slate-800">
-                      {st.total_m2 > 0 ? `${st.total_m2.toLocaleString('tr-TR')} m²` : '-'}
-                    </td>
-                    <td className="px-3 py-3 text-right font-mono font-semibold text-slate-700">
-                      {st.total_metre > 0 ? `${st.total_metre.toLocaleString('tr-TR')} m` : '-'}
-                    </td>
-                    <td className="px-3 py-3 text-right font-mono text-slate-700">
-                      {st.total_adet > 0 ? `${st.total_adet.toLocaleString('tr-TR')} adet` : '-'}
-                    </td>
-                    <td className="px-3 py-3 text-right font-mono text-slate-600">
-                      {st.total_pallets.toLocaleString('tr-TR')}
-                    </td>
-                    <td className="px-3 py-3 text-right font-mono font-semibold text-blue-700">
-                      {st.shipment_count} Sefer
-                    </td>
-                  </tr>
-                ))}
+                {analysisResults.siteBreakdown.map((st, idx) => {
+                  const baseTotal = analysisResults.totalM2 > 0
+                    ? analysisResults.totalM2
+                    : analysisResults.totalMetre > 0
+                    ? analysisResults.totalMetre
+                    : analysisResults.totalAdet;
+                  const compareVal = analysisResults.totalM2 > 0
+                    ? st.total_m2
+                    : analysisResults.totalMetre > 0
+                    ? st.total_metre
+                    : st.total_adet;
+                  const sharePct = baseTotal > 0 ? Math.round((compareVal / baseTotal) * 100) : 0;
+                  const isSiteSelected = querySiteId === st.site_id && st.site_id !== 'unassigned';
+
+                  return (
+                    <tr key={idx} className="hover:bg-slate-50/60 transition-colors">
+                      <td className="px-4 py-3 font-bold text-slate-900">
+                        {st.name}
+                      </td>
+                      <td className="px-3 py-3 font-semibold text-slate-700">
+                        {st.customer_name}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono font-bold text-slate-800">
+                        {st.total_m2 > 0 ? `${st.total_m2.toLocaleString('tr-TR')} m²` : '-'}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono font-semibold text-slate-700">
+                        {st.total_metre > 0 ? `${st.total_metre.toLocaleString('tr-TR')} m` : '-'}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono text-slate-700">
+                        {st.total_adet > 0 ? `${st.total_adet.toLocaleString('tr-TR')} adet` : '-'}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono text-slate-600">
+                        {st.total_pallets.toLocaleString('tr-TR')}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono font-bold text-amber-700">
+                        {st.shipment_count} Sefer
+                      </td>
+                      <td className="px-4 py-3 no-print">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-amber-500 rounded-full"
+                              style={{ width: `${Math.min(sharePct, 100)}%` }}
+                            />
+                          </div>
+                          <span className="text-[11px] font-semibold text-amber-700 min-w-[32px] text-right">
+                            %{sharePct}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 text-center no-print">
+                        {isSiteSelected ? (
+                          <span className="inline-flex items-center px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-lg text-xs font-bold border border-emerald-200">
+                            Seçili
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (st.customer_id) setQueryCustomerId(st.customer_id);
+                              if (st.site_id && st.site_id !== 'unassigned') setQuerySiteId(st.site_id);
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                            title="Bu şantiyeyi filtrele"
+                          >
+                            <Search size={11} />
+                            <span>İncele</span>
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
