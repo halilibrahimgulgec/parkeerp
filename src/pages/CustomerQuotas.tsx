@@ -26,6 +26,27 @@ export function getEffectiveUnit(item: any, products: Product[]): 'm2' | 'metre'
   return (item.unit || prod?.unit || 'm2') as any;
 }
 
+export function getQuotaUnitPrice(q: any): number {
+  if (q?.unit_price !== undefined && q?.unit_price !== null && Number(q.unit_price) > 0) {
+    return Number(q.unit_price);
+  }
+  // Check localStorage for offline / unmigrated fallback
+  try {
+    const local = JSON.parse(localStorage.getItem('parke_quota_unit_prices') || '{}');
+    if (q?.id && local[q.id] && Number(local[q.id]) > 0) return Number(local[q.id]);
+  } catch (e) {}
+
+  // Check notes for [FİYAT: 195 ₺] or [FIYAT: 195] pattern
+  if (q?.notes) {
+    const match = q.notes.match(/\[F[Iİ]YAT:\s*([0-9.,]+)\s*₺?\]/i);
+    if (match && match[1]) {
+      const parsed = parseFloat(match[1].replace(',', '.'));
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+  }
+  return 0;
+}
+
 interface QuotaFormData {
   customer_id: string;
   site_id: string;
@@ -33,6 +54,7 @@ interface QuotaFormData {
   target_quantity: number;
   unit: 'm2' | 'metre' | 'adet';
   alert_threshold_pct: number;
+  unit_price: number;
   start_date: string;
   end_date: string;
   notes: string;
@@ -46,6 +68,7 @@ const EMPTY_FORM: QuotaFormData = {
   target_quantity: 1000,
   unit: 'm2',
   alert_threshold_pct: 85,
+  unit_price: 0,
   start_date: getLocalDateStr(new Date()),
   end_date: '',
   notes: '',
@@ -134,7 +157,13 @@ export default function CustomerQuotas() {
         `).eq('shipments.status', 'completed').limit(50000)
       ]);
 
-      if (quotasRes.data) setQuotas(quotasRes.data);
+      if (quotasRes.data) {
+        const enrichedQuotas = quotasRes.data.map((q: any) => ({
+          ...q,
+          unit_price: getQuotaUnitPrice(q),
+        }));
+        setQuotas(enrichedQuotas);
+      }
       if (custRes.data) setCustomers(custRes.data);
       if (sitesRes.data) setSites(sitesRes.data);
       if (prodRes.data) setProducts(prodRes.data);
@@ -274,12 +303,16 @@ export default function CustomerQuotas() {
       ...EMPTY_FORM,
       customer_id: customers[0]?.id || '',
       start_date: getLocalDateStr(new Date()),
+      unit_price: 0,
     });
     setShowModal(true);
   };
 
   const handleOpenEdit = (q: CustomerQuota) => {
     setEditingQuota(q);
+    const existingPrice = getQuotaUnitPrice(q);
+    // Strip [FİYAT: xxx ₺] from notes for clean editing display
+    const cleanNotes = (q.notes || '').replace(/\[F[Iİ]YAT:\s*[0-9.,]+\s*₺?\]/gi, '').trim();
     setForm({
       customer_id: q.customer_id,
       site_id: q.site_id || '',
@@ -287,9 +320,10 @@ export default function CustomerQuotas() {
       target_quantity: q.target_quantity,
       unit: q.unit,
       alert_threshold_pct: q.alert_threshold_pct || 85,
+      unit_price: existingPrice,
       start_date: q.start_date || '2026-01-01',
       end_date: q.end_date || '',
-      notes: q.notes || '',
+      notes: cleanNotes,
       is_active: q.is_active ?? true,
     });
     setShowModal(true);
@@ -308,6 +342,12 @@ export default function CustomerQuotas() {
 
     setSaving(true);
     try {
+      // Append [FİYAT: X ₺] to notes for zero-loss fallback across DB instances
+      let finalNotes = form.notes.trim();
+      if (form.unit_price > 0) {
+        finalNotes = finalNotes ? `${finalNotes} [FİYAT: ${form.unit_price} ₺]` : `[FİYAT: ${form.unit_price} ₺]`;
+      }
+
       const payload: any = {
         customer_id: form.customer_id,
         site_id: form.site_id || null,
@@ -315,24 +355,63 @@ export default function CustomerQuotas() {
         target_quantity: form.target_quantity,
         unit: form.unit,
         alert_threshold_pct: form.alert_threshold_pct,
+        unit_price: form.unit_price,
         start_date: form.start_date,
         end_date: form.end_date || null,
-        notes: form.notes,
+        notes: finalNotes,
         is_active: form.is_active,
         updated_at: new Date().toISOString(),
       };
 
+      let savedId = editingQuota?.id;
+
       if (editingQuota) {
-        const { error } = await supabase
+        let { error } = await supabase
           .from('customer_quotas')
           .update(payload)
           .eq('id', editingQuota.id);
+        
+        // Resilient fallback if column unit_price does not exist yet on remote table
+        if (error && (error.message?.includes('unit_price') || error.message?.includes('column "unit_price"'))) {
+          const { unit_price, ...restPayload } = payload;
+          const retryRes = await supabase
+            .from('customer_quotas')
+            .update(restPayload)
+            .eq('id', editingQuota.id);
+          error = retryRes.error;
+        }
         if (error) throw error;
       } else {
-        const { error } = await supabase
+        let { data, error } = await supabase
           .from('customer_quotas')
-          .insert([payload]);
+          .insert([payload])
+          .select()
+          .single();
+        
+        if (error && (error.message?.includes('unit_price') || error.message?.includes('column "unit_price"'))) {
+          const { unit_price, ...restPayload } = payload;
+          const retryRes = await supabase
+            .from('customer_quotas')
+            .insert([restPayload])
+            .select()
+            .single();
+          error = retryRes.error;
+          if (retryRes.data) savedId = retryRes.data.id;
+        } else if (data) {
+          savedId = data.id;
+        }
         if (error) throw error;
+      }
+
+      // Persist in localStorage for instant offline access and fallback
+      if (savedId) {
+        try {
+          const local = JSON.parse(localStorage.getItem('parke_quota_unit_prices') || '{}');
+          local[savedId] = form.unit_price || 0;
+          localStorage.setItem('parke_quota_unit_prices', JSON.stringify(local));
+        } catch (e) {
+          console.error('LocalStorage write error:', e);
+        }
       }
 
       setShowModal(false);
@@ -806,6 +885,11 @@ export default function CustomerQuotas() {
                   <span className="text-[11px] font-bold block mt-0.5 text-amber-800">
                     Doluluk: %{singlePrintQuota.completion_pct || 0} {singlePrintQuota.is_active === false ? '(Kapalı)' : ''}
                   </span>
+                  {singlePrintQuota.unit_price && singlePrintQuota.unit_price > 0 ? (
+                    <span className="text-[11px] font-bold block mt-0.5 text-emerald-800 font-mono">
+                      🏷️ Anlaşma Fiyatı: {Number(singlePrintQuota.unit_price).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺/{singlePrintQuota.unit === 'metre' ? 'm' : singlePrintQuota.unit === 'adet' ? 'Adet' : 'm²'}
+                    </span>
+                  ) : null}
                 </div>
               </div>
 
@@ -874,6 +958,7 @@ export default function CustomerQuotas() {
                   <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-600 font-bold">
                     <th className="px-4 py-3.5">Müşteri / Şantiye</th>
                     <th className="px-3 py-3.5">Kapsam / Ürün</th>
+                    <th className="px-3 py-3.5 text-right">Anlaşma Fiyatı</th>
                     <th className="px-3 py-3.5 text-center">Başlangıç Tarihi</th>
                     <th className="px-3 py-3.5 text-right">Hedef Kota</th>
                     <th className="px-3 py-3.5 text-right">Sevk Edilen</th>
@@ -886,7 +971,7 @@ export default function CustomerQuotas() {
                 <tbody className="divide-y divide-slate-100">
                   {filteredQuotas.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="py-12 text-center text-slate-400">
+                      <td colSpan={10} className="py-12 text-center text-slate-400">
                         <Target size={36} className="mx-auto text-slate-300 mb-2 opacity-60" />
                         Henüz tanımlı kota veya kriterlere uygun kayıt bulunamadı.
                       </td>
@@ -929,6 +1014,17 @@ export default function CustomerQuotas() {
                                 <Layers size={10} />
                                 Tüm Ürünler ({q.unit})
                               </span>
+                            )}
+                          </td>
+
+                          <td className="px-3 py-3.5 text-right font-mono">
+                            {q.unit_price && q.unit_price > 0 ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-xs">
+                                <span>🏷️</span>
+                                {Number(q.unit_price).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 text-xs italic">Standart Liste</span>
                             )}
                           </td>
 
@@ -1202,6 +1298,30 @@ export default function CustomerQuotas() {
                   <option value="adet">Adet</option>
                 </select>
               </div>
+            </div>
+
+            <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-200 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+                  <span>🏷️</span>
+                  <span>Sözleşme / Anlaşma Birim Satış Fiyatı (₺ / {form.unit === 'metre' ? 'Metre' : form.unit === 'adet' ? 'Adet' : 'm²'})</span>
+                </label>
+                <span className="text-[10px] bg-emerald-200 text-emerald-900 font-extrabold px-2 py-0.5 rounded-full border border-emerald-300">
+                  1. Öncelik
+                </span>
+              </div>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={form.unit_price}
+                onChange={e => setForm({ ...form, unit_price: Number(e.target.value) })}
+                className="w-full border border-emerald-300 rounded-xl px-3 py-2 text-xs font-bold font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                placeholder="0.00"
+              />
+              <p className="text-[11px] text-emerald-800 leading-tight">
+                💡 Bu müşteriye sevkiyat girilirken kantar ekranında satış fiyatı <strong>otomatik olarak</strong> bu değerle dolar. (Boş veya 0 bırakılırsa fabrika standart liste fiyatı geçerli olur).
+              </p>
             </div>
 
             <div className="grid grid-cols-2 gap-3 bg-amber-50/50 p-3 rounded-xl border border-amber-100">

@@ -27,6 +27,7 @@ function ProductFormComp({ initial, onSave, onClose }: { initial?: Product; onSa
     unit: initial?.unit || 'm2',
     m2_per_pallet: initial?.m2_per_pallet || 10,
     min_stock_alert: initial?.min_stock_alert || 100,
+    unit_price: initial?.unit_price ?? 0,
     is_active: initial?.is_active ?? true,
   });
   const [saving, setSaving] = useState(false);
@@ -36,11 +37,41 @@ function ProductFormComp({ initial, onSave, onClose }: { initial?: Product; onSa
     e.preventDefault();
     setSaving(true); setError('');
     let err;
+    let savedId = initial?.id;
+
     if (initial) {
-      ({ error: err } = await supabase.from('products').update(form).eq('id', initial.id));
+      const res = await supabase.from('products').update(form).eq('id', initial.id);
+      err = res.error;
+      // Resilient fallback if column unit_price does not exist in DB yet
+      if (err && (err.message?.includes('unit_price') || err.message?.includes('column "unit_price"'))) {
+        const { unit_price, ...rest } = form;
+        const retryRes = await supabase.from('products').update(rest).eq('id', initial.id);
+        err = retryRes.error;
+      }
     } else {
-      ({ error: err } = await supabase.from('products').insert(form));
+      const res = await supabase.from('products').insert(form).select().single();
+      err = res.error;
+      if (err && (err.message?.includes('unit_price') || err.message?.includes('column "unit_price"'))) {
+        const { unit_price, ...rest } = form;
+        const retryRes = await supabase.from('products').insert(rest).select().single();
+        err = retryRes.error;
+        if (retryRes.data) savedId = retryRes.data.id;
+      } else if (res.data) {
+        savedId = res.data.id;
+      }
     }
+
+    // Persist to localStorage for immediate resilience across devices/sessions
+    if (!err && savedId) {
+      try {
+        const localPrices = JSON.parse(localStorage.getItem('parke_product_list_prices') || '{}');
+        localPrices[savedId] = Number(form.unit_price) || 0;
+        localStorage.setItem('parke_product_list_prices', JSON.stringify(localPrices));
+      } catch (e) {
+        console.error('LocalStorage write error:', e);
+      }
+    }
+
     setSaving(false);
     if (err) { setError(err.message); return; }
     onSave();
@@ -78,6 +109,22 @@ function ProductFormComp({ initial, onSave, onClose }: { initial?: Product; onSa
         <InputField label={`Palet Başına Miktar (${form.unit === 'metre' ? 'Metre' : form.unit === 'adet' ? 'Adet' : 'm²'})`} type="number" value={form.m2_per_pallet} onChange={(e: any) => setForm(f => ({ ...f, m2_per_pallet: Number(e.target.value) }))} required />
         <InputField label={`Min. Stok Uyarı (${form.unit === 'metre' ? 'Metre' : form.unit === 'adet' ? 'Adet' : 'm²'})`} type="number" value={form.min_stock_alert} onChange={(e: any) => setForm(f => ({ ...f, min_stock_alert: Number(e.target.value) }))} />
       </div>
+
+      <div className="bg-amber-50/60 border border-amber-200/80 rounded-xl p-3.5 space-y-1.5">
+        <InputField 
+          label={`Standart Fabrika Liste Satış Fiyatı (₺ / ${form.unit === 'metre' ? 'Metre' : form.unit === 'adet' ? 'Adet' : 'm²'})`} 
+          type="number" 
+          step="0.01" 
+          min="0" 
+          value={form.unit_price} 
+          onChange={(e: any) => setForm(f => ({ ...f, unit_price: Number(e.target.value) }))} 
+          placeholder="0.00" 
+        />
+        <p className="text-[11px] text-amber-800 flex items-center gap-1">
+          <span>📋</span> Müşteriye ait özel sözleşme/kota fiyatı bulunmuyorsa, kantar sevkiyatında otomatik olarak bu birim fiyat uygulanır.
+        </p>
+      </div>
+
       <div className="flex items-center gap-2">
         <input type="checkbox" id="is_active" checked={form.is_active} onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} className="rounded" />
         <label htmlFor="is_active" className="text-sm text-slate-700">Aktif Ürün</label>
@@ -372,7 +419,19 @@ export default function Definitions() {
       supabase.from('customers').select('*').order('name'),
       supabase.from('raw_materials').select('*').order('name'),
     ]);
-    setProducts(prodRes.data || []);
+
+    const localPrices = (() => {
+      try { return JSON.parse(localStorage.getItem('parke_product_list_prices') || '{}'); } catch { return {}; }
+    })();
+
+    const mergedProducts = (prodRes.data || []).map((p: any) => ({
+      ...p,
+      unit_price: (p.unit_price !== undefined && p.unit_price !== null && Number(p.unit_price) > 0)
+        ? Number(p.unit_price)
+        : (Number(localPrices[p.id]) || 0)
+    }));
+
+    setProducts(mergedProducts);
     setCustomers(custRes.data || []);
     setRawMaterials(rawRes.data || []);
     setLoading(false);
@@ -426,14 +485,14 @@ export default function Definitions() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-slate-500 bg-slate-50 border-b border-slate-100">
-                {['Ürün Adı', 'Tip', 'Kalınlık', 'Renk', 'Birim', 'Miktar/Palet', 'Min. Stok', 'Durum', ''].map((h, i) => (
+                {['Ürün Adı', 'Tip', 'Kalınlık', 'Renk', 'Birim', 'Miktar/Palet', 'Min. Stok', 'Liste Fiyatı (₺)', 'Durum', ''].map((h, i) => (
                   <th key={i} className="px-4 py-3 font-medium text-xs uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
               {products.length === 0 ? (
-                <tr><td colSpan={9} className="text-center py-12 text-slate-400">Henüz ürün tanımı yok.</td></tr>
+                <tr><td colSpan={10} className="text-center py-12 text-slate-400">Henüz ürün tanımı yok.</td></tr>
               ) : products.map(p => (
                 <tr key={p.id} className="hover:bg-slate-50/50 transition-colors">
                   <td className="px-4 py-3 font-medium text-slate-800">{p.name}</td>
@@ -448,6 +507,16 @@ export default function Definitions() {
                   </td>
                   <td className="px-4 py-3 text-slate-600">
                     {p.min_stock_alert} {p.unit === 'metre' ? 'Metre' : p.unit === 'adet' ? 'Adet' : 'm²'}
+                  </td>
+                  <td className="px-4 py-3 font-semibold">
+                    {p.unit_price && p.unit_price > 0 ? (
+                      <span className="text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 text-xs inline-flex items-center gap-1 font-mono font-bold">
+                        <span>🏷️</span>
+                        {Number(p.unit_price).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺
+                      </span>
+                    ) : (
+                      <span className="text-slate-400 text-xs italic">Tanımsız</span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${p.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>

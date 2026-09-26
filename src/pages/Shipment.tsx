@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Shipment, Customer, Site, Product } from '../types';
 import Modal from '../components/Modal';
-import { Plus, Truck, Search, Filter, AlertCircle, Trash2, Eye, Pencil, PackageX, Target, ShoppingBag, Lock, Camera, Image, Loader2, Sparkles, X, Check } from 'lucide-react';
+import { Plus, Truck, Search, Filter, AlertCircle, Trash2, Eye, Pencil, PackageX, Target, ShoppingBag, Lock, Camera, Image, Loader2, Sparkles, X, Check, RotateCcw } from 'lucide-react';
 import { scanWaybillImageForShipment, ParsedShipmentOCRData, smartMatchProduct } from '../utils/aiVisionOCREngine';
 
 const getLocalDateString = () => {
@@ -12,6 +12,25 @@ const getLocalDateString = () => {
   const localDate = new Date(now.getTime() - (offset * 60 * 1000));
   return localDate.toISOString().split('T')[0];
 };
+
+export function getQuotaUnitPrice(q: any): number {
+  if (q?.unit_price !== undefined && q?.unit_price !== null && Number(q.unit_price) > 0) {
+    return Number(q.unit_price);
+  }
+  try {
+    const local = JSON.parse(localStorage.getItem('parke_quota_unit_prices') || '{}');
+    if (q?.id && local[q.id] && Number(local[q.id]) > 0) return Number(local[q.id]);
+  } catch (e) {}
+
+  if (q?.notes) {
+    const match = q.notes.match(/\[F[Iİ]YAT:\s*([0-9.,]+)\s*₺?\]/i);
+    if (match && match[1]) {
+      const parsed = parseFloat(match[1].replace(',', '.'));
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+  }
+  return 0;
+}
 
 export function getSupplierInfo(shipment: any): { 
   isExternal: boolean; 
@@ -149,6 +168,8 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
   });
   const [sites, setSites] = useState<Site[]>([]);
   const [customerQuotas, setCustomerQuotas] = useState<any[]>([]);
+  const [lastShipmentPriceMap, setLastShipmentPriceMap] = useState<Record<string, number>>({});
+  const [isPriceManuallyOverridden, setIsPriceManuallyOverridden] = useState<boolean>(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
@@ -290,6 +311,7 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
             const pct = Math.round((shipped / Number(quota.target_quantity)) * 100);
             return {
               ...quota,
+              unit_price: getQuotaUnitPrice(quota),
               shipped,
               remaining,
               pct,
@@ -297,9 +319,33 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
           });
           setCustomerQuotas(calculated);
         });
+
+      // Fetch recent shipments to get last price memory (Priority 3)
+      supabase.from('shipments')
+        .select('id, sale_price_per_m2, shipment_items(product_id)')
+        .eq('customer_id', form.customer_id)
+        .eq('status', 'completed')
+        .gt('sale_price_per_m2', 0)
+        .order('shipment_date', { ascending: false })
+        .limit(25)
+        .then(({ data: pastShips }) => {
+          const map: Record<string, number> = {};
+          if (pastShips) {
+            for (const s of pastShips) {
+              const items = s.shipment_items || [];
+              for (const it of items) {
+                if (it.product_id && !map[it.product_id] && Number(s.sale_price_per_m2) > 0) {
+                  map[it.product_id] = Number(s.sale_price_per_m2);
+                }
+              }
+            }
+          }
+          setLastShipmentPriceMap(map);
+        });
     } else {
       setSites([]);
       setCustomerQuotas([]);
+      setLastShipmentPriceMap({});
     }
   }, [form.customer_id, initial]);
 
@@ -337,6 +383,9 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
   }, [products, initial]);
 
   const setItem = (idx: number, field: string, value: any) => {
+    if (idx === 0 && field === 'product_id') {
+      setIsPriceManuallyOverridden(false);
+    }
     setForm(f => {
       const items = [...f.items];
       items[idx] = { ...items[idx], [field]: value };
@@ -358,6 +407,109 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
 
   const addItem = () => setForm(f => ({ ...f, items: [...f.items, { product_id: '', pallets: 0, pallet_type: f.items[f.items.length - 1]?.pallet_type || 'sevkiyat', m2: 0, unit: 'm2' }] }));
   const removeItem = (idx: number) => setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
+
+  const primaryProductId = form.items[0]?.product_id || '';
+  const primaryUnit = form.items[0]?.unit || 'm2';
+  const primaryUnitLabel = primaryUnit === 'metre' ? 'Metre' : primaryUnit === 'adet' ? 'Adet' : 'm²';
+
+  // ── UNIFIED TIERED SMART PRICING ENGINE ──
+  const smartPriceSuggestion = useMemo(() => {
+    if (!form.customer_id || !primaryProductId) {
+      return { price: 0, source: 'none' as const, label: 'Fiyat Tanımsız', detail: '' };
+    }
+
+    // 1. Quota / Sözleşme Fiyatı (Priority 1)
+    if (customerQuotas.length > 0) {
+      // a) Site + Product exact quota
+      const siteAndProdQuota = customerQuotas.find(q =>
+        q.is_active !== false &&
+        q.product_id === primaryProductId &&
+        form.site_id && q.site_id === form.site_id &&
+        (Number(q.unit_price) > 0)
+      );
+      if (siteAndProdQuota) {
+        return {
+          price: Number(siteAndProdQuota.unit_price),
+          source: 'quota' as const,
+          label: 'Sözleşme / Kota Fiyatı',
+          detail: `${siteAndProdQuota.sites?.name || ''} şantiyesine özel kota anlaşması`
+        };
+      }
+
+      // b) Product quota
+      const prodQuota = customerQuotas.find(q =>
+        q.is_active !== false &&
+        q.product_id === primaryProductId &&
+        (Number(q.unit_price) > 0)
+      );
+      if (prodQuota) {
+        return {
+          price: Number(prodQuota.unit_price),
+          source: 'quota' as const,
+          label: 'Sözleşme / Kota Fiyatı',
+          detail: 'Müşteri ürün taahhüt anlaşması'
+        };
+      }
+
+      // c) General customer quota
+      const generalQuota = customerQuotas.find(q =>
+        q.is_active !== false &&
+        !q.product_id &&
+        (Number(q.unit_price) > 0)
+      );
+      if (generalQuota) {
+        return {
+          price: Number(generalQuota.unit_price),
+          source: 'quota' as const,
+          label: 'Sözleşme / Kota Fiyatı',
+          detail: 'Müşteri genel taahhüt anlaşması'
+        };
+      }
+    }
+
+    // 2. Fabrika Standart Liste Fiyatı (Priority 2)
+    const prod = products.find(p => p.id === primaryProductId);
+    if (prod?.unit_price && Number(prod.unit_price) > 0) {
+      return {
+        price: Number(prod.unit_price),
+        source: 'product_list' as const,
+        label: 'Fabrika Liste Fiyatı',
+        detail: `${prod.name} fabrika liste fiyatı`
+      };
+    }
+
+    // 3. Son Sevk Fiyatı / Hafıza (Priority 3)
+    if (lastShipmentPriceMap[primaryProductId] && lastShipmentPriceMap[primaryProductId] > 0) {
+      return {
+        price: Number(lastShipmentPriceMap[primaryProductId]),
+        source: 'last_shipment' as const,
+        label: 'Son Sevk Fiyatı',
+        detail: 'Bu müşteriye yapılan en son sevk fiyatı'
+      };
+    }
+
+    return { price: 0, source: 'none' as const, label: 'Fiyat Tanımsız', detail: '' };
+  }, [form.customer_id, form.site_id, primaryProductId, customerQuotas, products, lastShipmentPriceMap]);
+
+  // Auto-fill price for new shipments if user hasn't typed a custom override
+  useEffect(() => {
+    if (!initial && !isPriceManuallyOverridden && smartPriceSuggestion.price > 0) {
+      setForm(f => ({ ...f, sale_price_per_m2: smartPriceSuggestion.price }));
+    }
+  }, [smartPriceSuggestion, initial, isPriceManuallyOverridden]);
+
+  const smartPriceInfo = useMemo(() => {
+    if (isPriceManuallyOverridden && form.sale_price_per_m2 !== smartPriceSuggestion.price) {
+      return { source: 'manual', label: 'Özel Manuel Fiyat' };
+    }
+    if (form.sale_price_per_m2 > 0 && form.sale_price_per_m2 === smartPriceSuggestion.price) {
+      return { source: smartPriceSuggestion.source, label: smartPriceSuggestion.label };
+    }
+    if (form.sale_price_per_m2 > 0) {
+      return { source: 'manual', label: 'Özel Fiyat' };
+    }
+    return { source: 'none', label: 'Fiyatsız' };
+  }, [form.sale_price_per_m2, smartPriceSuggestion, isPriceManuallyOverridden]);
 
   const totalM2 = form.items.reduce((s, i) => s + i.m2, 0);
   const netWeight = Math.max(form.gross_weight - form.tare_weight, 0);
@@ -611,7 +763,12 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Müşteri *</label>
-          <select value={form.customer_id} onChange={e => setForm(f => ({ ...f, customer_id: e.target.value, site_id: '' }))}
+          <select 
+            value={form.customer_id} 
+            onChange={e => {
+              setIsPriceManuallyOverridden(false);
+              setForm(f => ({ ...f, customer_id: e.target.value, site_id: '' }));
+            }}
             className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400" required>
             <option value="">Müşteri seçin...</option>
             {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -689,9 +846,14 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
               return (
                 <div key={q.id} className="bg-white/90 rounded-lg p-2.5 border border-amber-100/80 shadow-xs space-y-1 text-xs">
                   <div className="flex items-center justify-between">
-                    <span className="font-bold text-slate-800">
-                      {q.products?.name ? `${q.products.name} (${q.products.thickness})` : 'Tüm Ürünler (Genel)'}
-                      {q.sites?.name && <span className="text-slate-500 font-normal ml-1">• {q.sites.name}</span>}
+                    <span className="font-bold text-slate-800 flex items-center gap-2 flex-wrap">
+                      <span>{q.products?.name ? `${q.products.name} (${q.products.thickness})` : 'Tüm Ürünler (Genel)'}</span>
+                      {q.sites?.name && <span className="text-slate-500 font-normal">• {q.sites.name}</span>}
+                      {q.unit_price && q.unit_price > 0 && (
+                        <span className="text-emerald-800 bg-emerald-100 font-mono font-bold text-[10px] px-1.5 py-0.5 rounded border border-emerald-300">
+                          🏷️ {Number(q.unit_price).toLocaleString('tr-TR')} ₺/{q.unit}
+                        </span>
+                      )}
                     </span>
                     <div className="flex items-center gap-1.5">
                       <span className={`font-bold text-[11px] px-2 py-0.5 rounded-full ${
@@ -879,18 +1041,113 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Satış Fiyatı (₺/m²)</label>
-          <input type="number" min="0" step="0.01" value={form.sale_price_per_m2}
-            onChange={e => setForm(f => ({ ...f, sale_price_per_m2: Number(e.target.value) }))}
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      <div className="bg-slate-50/70 border border-slate-200 rounded-2xl p-4 space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+            <span>💰</span> Satış Fiyatlandırması & Lojistik
+          </span>
+          {/* Smart Price Source Badge */}
+          {smartPriceInfo.source === 'quota' && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 shadow-2xs">
+              <span>🏷️</span> Sözleşme / Kota Fiyatı Uygulandı
+            </span>
+          )}
+          {smartPriceInfo.source === 'product_list' && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-900 border border-blue-300 shadow-2xs">
+              <span>📋</span> Fabrika Liste Fiyatı Uygulandı
+            </span>
+          )}
+          {smartPriceInfo.source === 'last_shipment' && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-purple-100 text-purple-900 border border-purple-300 shadow-2xs">
+              <span>⏱️</span> Son Sevk Fiyatı Uygulandı
+            </span>
+          )}
+          {smartPriceInfo.source === 'manual' && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
+              <span>✏️</span> Özel Manuel Fiyat
+            </span>
+          )}
         </div>
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Lojistik Gideri (₺)</label>
-          <input type="number" min="0" step="0.01" value={form.logistics_cost}
-            onChange={e => setForm(f => ({ ...f, logistics_cost: Number(e.target.value) }))}
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-semibold text-slate-700">
+                Satış Birim Fiyatı (₺ / {primaryUnitLabel})
+              </label>
+              {isPriceManuallyOverridden && smartPriceSuggestion.price > 0 && smartPriceSuggestion.price !== form.sale_price_per_m2 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForm(f => ({ ...f, sale_price_per_m2: smartPriceSuggestion.price }));
+                    setIsPriceManuallyOverridden(false);
+                  }}
+                  className="text-[11px] font-bold text-blue-600 hover:text-blue-800 underline flex items-center gap-1 cursor-pointer"
+                  title="Önerilen fiyata dön"
+                >
+                  <RotateCcw size={11} /> Önerilen {smartPriceSuggestion.price.toLocaleString('tr-TR')} ₺ Yap
+                </button>
+              )}
+            </div>
+            <div className="relative">
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.sale_price_per_m2}
+                onChange={e => {
+                  setForm(f => ({ ...f, sale_price_per_m2: Number(e.target.value) }));
+                  setIsPriceManuallyOverridden(true);
+                }}
+                className={`w-full border rounded-xl px-3 py-2 text-sm font-bold font-mono focus:outline-none focus:ring-2 bg-white ${
+                  isPriceManuallyOverridden
+                    ? 'border-amber-300 focus:ring-amber-400'
+                    : smartPriceInfo.source === 'quota'
+                    ? 'border-emerald-300 focus:ring-emerald-400'
+                    : smartPriceInfo.source === 'product_list'
+                    ? 'border-blue-300 focus:ring-blue-400'
+                    : 'border-slate-200 focus:ring-blue-400'
+                }`}
+                placeholder="0.00"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 pointer-events-none">
+                ₺ / {primaryUnitLabel}
+              </span>
+            </div>
+            {smartPriceSuggestion.price > 0 ? (
+              <p className="text-[11px] text-slate-500 mt-1 flex items-center gap-1">
+                <span>💡</span> Akıllı Öneri: <strong className="text-slate-700">{smartPriceSuggestion.label}</strong> ({smartPriceSuggestion.price.toLocaleString('tr-TR')} ₺)
+                {smartPriceSuggestion.detail && <span className="text-slate-400 font-normal">— {smartPriceSuggestion.detail}</span>}
+              </p>
+            ) : (
+              <p className="text-[11px] text-slate-400 mt-1 italic">
+                Bu ürün ve müşteri için tanımlı sözleşme veya fabrika liste fiyatı yok.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-semibold text-slate-700">Lojistik Gideri (₺)</label>
+            </div>
+            <div className="relative">
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.logistics_cost}
+                onChange={e => setForm(f => ({ ...f, logistics_cost: Number(e.target.value) }))}
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold font-mono focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                placeholder="0.00"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 pointer-events-none">
+                ₺
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Araç başına nakliye / lojistik gideri
+            </p>
+          </div>
         </div>
       </div>
 
@@ -1140,7 +1397,16 @@ export default function ShipmentPage() {
         supabase.from('shipments').select('*, customers(*), sites(*), shipment_items(*, products(*)), external_purchases(*)').order('shipment_date', { ascending: false }).order('created_at', { ascending: false }),
       ]);
       setCustomers(custRes.data || []);
-      setProducts(prodRes.data || []);
+      const localPrices = (() => {
+        try { return JSON.parse(localStorage.getItem('parke_product_list_prices') || '{}'); } catch { return {}; }
+      })();
+      const enrichedProducts = (prodRes.data || []).map((p: any) => ({
+        ...p,
+        unit_price: (p.unit_price !== undefined && p.unit_price !== null && Number(p.unit_price) > 0)
+          ? Number(p.unit_price)
+          : (Number(localPrices[p.id]) || 0)
+      }));
+      setProducts(enrichedProducts);
       if (shipRes.error) {
         // Fallback without external_purchases if relation is not in PostgREST cache
         const fallbackRes = await supabase.from('shipments').select('*, customers(*), sites(*), shipment_items(*, products(*))').order('shipment_date', { ascending: false }).order('created_at', { ascending: false });
@@ -1307,8 +1573,12 @@ export default function ShipmentPage() {
                           ))}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-slate-600 font-mono text-xs">
-                        ₺{Number(s.sale_price_per_m2 || 0).toLocaleString('tr-TR')} / {qInfo.priceUnit}
+                      <td className="px-4 py-3 text-slate-700 font-mono text-xs font-semibold">
+                        {s.sale_price_per_m2 && Number(s.sale_price_per_m2) > 0 ? (
+                          <span>₺{Number(s.sale_price_per_m2).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / {qInfo.priceUnit}</span>
+                        ) : (
+                          <span className="text-slate-400 font-normal italic">Fiyatsız</span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${s.status === 'completed' ? 'bg-green-100 text-green-700' : s.status === 'cancelled' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>

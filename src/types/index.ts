@@ -26,6 +26,7 @@ export interface Product {
   unit: string;
   m2_per_pallet: number;
   min_stock_alert: number;
+  unit_price?: number;
   is_active: boolean;
   created_at: string;
 }
@@ -216,6 +217,7 @@ export interface CustomerQuota {
   target_quantity: number;
   unit: 'm2' | 'metre' | 'adet';
   alert_threshold_pct: number;
+  unit_price?: number;
   start_date: string;
   end_date?: string | null;
   notes?: string;
