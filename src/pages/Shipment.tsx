@@ -86,6 +86,22 @@ export function getSupplierInfo(shipment: any): {
   return { isExternal: false, supplierName: '' };
 }
 
+export function parseItemPricesFromNotes(notes?: string): Record<string, number> {
+  if (!notes) return {};
+  const match = notes.match(/\[KALEM_F[Iİ]YATLAR:\s*([^\]]+)\]/i);
+  if (!match || !match[1]) return {};
+  const map: Record<string, number> = {};
+  const parts = match[1].split(';');
+  for (const part of parts) {
+    const [pid, priceStr] = part.split(':');
+    if (pid && priceStr) {
+      const p = parseFloat(priceStr.replace(',', '.'));
+      if (!isNaN(p) && p > 0) map[pid.trim()] = p;
+    }
+  }
+  return map;
+}
+
 interface ShipmentFormData {
   invoice_no: string;
   customer_id: string;
@@ -107,6 +123,8 @@ interface ShipmentFormData {
     pallet_type: 'tahta' | 'sevkiyat' | 'uretim' | 'dokme';
     m2: number; 
     unit: string;
+    unit_price: number;
+    is_custom_price?: boolean;
   }[];
 }
 
@@ -125,7 +143,7 @@ const getEmptyForm = (): ShipmentFormData => ({
   notes: '',
   is_external: false,
   supplier_name: '',
-  items: [{ product_id: '', pallets: 0, pallet_type: 'sevkiyat', m2: 0, unit: 'm2' }],
+  items: [{ product_id: '', pallets: 0, pallet_type: 'sevkiyat', m2: 0, unit: 'm2', unit_price: 0, is_custom_price: false }],
 });
 
 function ShipmentForm({ customers, products, initial, prefilledData, onSave, onClose }: {
@@ -322,20 +340,25 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
 
       // Fetch recent shipments to get last price memory (Priority 3)
       supabase.from('shipments')
-        .select('id, sale_price_per_m2, shipment_items(product_id)')
+        .select('id, sale_price_per_m2, notes, shipment_items(product_id, unit_price)')
         .eq('customer_id', form.customer_id)
         .eq('status', 'completed')
-        .gt('sale_price_per_m2', 0)
         .order('shipment_date', { ascending: false })
-        .limit(25)
+        .limit(30)
         .then(({ data: pastShips }) => {
           const map: Record<string, number> = {};
           if (pastShips) {
             for (const s of pastShips) {
-              const items = s.shipment_items || [];
+              const notesPrices = parseItemPricesFromNotes(s.notes);
+              const items = (s as any).shipment_items || [];
               for (const it of items) {
-                if (it.product_id && !map[it.product_id] && Number(s.sale_price_per_m2) > 0) {
-                  map[it.product_id] = Number(s.sale_price_per_m2);
+                if (it.product_id && !map[it.product_id]) {
+                  const itemPrice = (Number(it.unit_price) > 0 ? Number(it.unit_price) : 0) ||
+                                    notesPrices[it.product_id] ||
+                                    (Number(s.sale_price_per_m2) > 0 ? Number(s.sale_price_per_m2) : 0);
+                  if (itemPrice > 0) {
+                    map[it.product_id] = itemPrice;
+                  }
                 }
               }
             }
@@ -353,7 +376,7 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
     const fetchStock = async () => {
       const [stockRes, initialItemsRes] = await Promise.all([
         supabase.from('v_product_stock').select('*'),
-        initial ? supabase.from('shipment_items').select('product_id, m2, pallets, unit, pallet_type').eq('shipment_id', initial.id) : Promise.resolve({ data: [] }),
+        initial ? supabase.from('shipment_items').select('product_id, m2, pallets, unit, pallet_type, unit_price').eq('shipment_id', initial.id) : Promise.resolve({ data: [] }),
       ]);
       const map: Record<string, number> = {};
       for (const p of products) {
@@ -365,15 +388,29 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
           map[row.product_id] = (map[row.product_id] || 0) + (row.m2 || 0);
         }
         if (initial) {
+          const notesPrices = parseItemPricesFromNotes(initial.notes);
+          let localSavedPrices: Record<string, number> = {};
+          try {
+            const allSaved = JSON.parse(localStorage.getItem('parke_shipment_item_prices') || '{}');
+            localSavedPrices = allSaved[initial.id] || {};
+          } catch {}
+
           setForm(f => ({
             ...f,
-            items: initialItemsRes.data.map((x: any) => ({
-              product_id: x.product_id,
-              pallets: Number(x.pallets) || 0,
-              pallet_type: (x.pallet_type || 'sevkiyat') as any,
-              m2: Number(x.m2) || 0,
-              unit: x.unit || 'm2',
-            }))
+            items: initialItemsRes.data.map((x: any) => {
+              const itemPrice = Number(x.unit_price) > 0
+                ? Number(x.unit_price)
+                : (notesPrices[x.product_id] || localSavedPrices[x.product_id] || initial.sale_price_per_m2 || 0);
+              return {
+                product_id: x.product_id,
+                pallets: Number(x.pallets) || 0,
+                pallet_type: (x.pallet_type || 'sevkiyat') as any,
+                m2: Number(x.m2) || 0,
+                unit: x.unit || 'm2',
+                unit_price: itemPrice,
+                is_custom_price: true,
+              };
+            })
           }));
         }
       }
@@ -382,39 +419,9 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
     fetchStock();
   }, [products, initial]);
 
-  const setItem = (idx: number, field: string, value: any) => {
-    if (idx === 0 && field === 'product_id') {
-      setIsPriceManuallyOverridden(false);
-    }
-    setForm(f => {
-      const items = [...f.items];
-      items[idx] = { ...items[idx], [field]: value };
-      if (field === 'pallet_type' && value === 'dokme') {
-        items[idx].pallets = 0;
-      }
-      if (field === 'pallets' || field === 'product_id') {
-        const p = products.find(x => x.id === (field === 'product_id' ? value : items[idx].product_id));
-        if (p) {
-          items[idx].m2 = items[idx].pallets * p.m2_per_pallet;
-          if (field === 'product_id' && p.unit) {
-            items[idx].unit = p.unit;
-          }
-        }
-      }
-      return { ...f, items };
-    });
-  };
-
-  const addItem = () => setForm(f => ({ ...f, items: [...f.items, { product_id: '', pallets: 0, pallet_type: f.items[f.items.length - 1]?.pallet_type || 'sevkiyat', m2: 0, unit: 'm2' }] }));
-  const removeItem = (idx: number) => setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
-
-  const primaryProductId = form.items[0]?.product_id || '';
-  const primaryUnit = form.items[0]?.unit || 'm2';
-  const primaryUnitLabel = primaryUnit === 'metre' ? 'Metre' : primaryUnit === 'adet' ? 'Adet' : 'm²';
-
-  // ── UNIFIED TIERED SMART PRICING ENGINE ──
-  const smartPriceSuggestion = useMemo(() => {
-    if (!form.customer_id || !primaryProductId) {
+  // ── UNIFIED TIERED SMART PRICING RESOLUTION FUNCTION ──
+  const resolveSmartPriceForItem = (productId: string) => {
+    if (!form.customer_id || !productId) {
       return { price: 0, source: 'none' as const, label: 'Fiyat Tanımsız', detail: '' };
     }
 
@@ -423,7 +430,7 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
       // a) Site + Product exact quota
       const siteAndProdQuota = customerQuotas.find(q =>
         q.is_active !== false &&
-        q.product_id === primaryProductId &&
+        q.product_id === productId &&
         form.site_id && q.site_id === form.site_id &&
         (Number(q.unit_price) > 0)
       );
@@ -432,14 +439,14 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
           price: Number(siteAndProdQuota.unit_price),
           source: 'quota' as const,
           label: 'Sözleşme / Kota Fiyatı',
-          detail: `${siteAndProdQuota.sites?.name || ''} şantiyesine özel kota anlaşması`
+          detail: `${siteAndProdQuota.sites?.name || ''} şantiye kotası`
         };
       }
 
       // b) Product quota
       const prodQuota = customerQuotas.find(q =>
         q.is_active !== false &&
-        q.product_id === primaryProductId &&
+        q.product_id === productId &&
         (Number(q.unit_price) > 0)
       );
       if (prodQuota) {
@@ -468,7 +475,7 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
     }
 
     // 2. Fabrika Standart Liste Fiyatı (Priority 2)
-    const prod = products.find(p => p.id === primaryProductId);
+    const prod = products.find(p => p.id === productId);
     if (prod?.unit_price && Number(prod.unit_price) > 0) {
       return {
         price: Number(prod.unit_price),
@@ -479,9 +486,9 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
     }
 
     // 3. Son Sevk Fiyatı / Hafıza (Priority 3)
-    if (lastShipmentPriceMap[primaryProductId] && lastShipmentPriceMap[primaryProductId] > 0) {
+    if (lastShipmentPriceMap[productId] && lastShipmentPriceMap[productId] > 0) {
       return {
-        price: Number(lastShipmentPriceMap[primaryProductId]),
+        price: Number(lastShipmentPriceMap[productId]),
         source: 'last_shipment' as const,
         label: 'Son Sevk Fiyatı',
         detail: 'Bu müşteriye yapılan en son sevk fiyatı'
@@ -489,30 +496,79 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
     }
 
     return { price: 0, source: 'none' as const, label: 'Fiyat Tanımsız', detail: '' };
-  }, [form.customer_id, form.site_id, primaryProductId, customerQuotas, products, lastShipmentPriceMap]);
+  };
 
-  // Auto-fill price for new shipments if user hasn't typed a custom override
+  // Auto-resolve prices for un-overridden items when customer, site or quotas change
   useEffect(() => {
-    if (!initial && !isPriceManuallyOverridden && smartPriceSuggestion.price > 0) {
-      setForm(f => ({ ...f, sale_price_per_m2: smartPriceSuggestion.price }));
-    }
-  }, [smartPriceSuggestion, initial, isPriceManuallyOverridden]);
+    if (initial) return;
+    setForm(f => {
+      let changed = false;
+      const newItems = f.items.map(item => {
+        if (!item.product_id || item.is_custom_price) return item;
+        const sp = resolveSmartPriceForItem(item.product_id);
+        if (sp.price > 0 && sp.price !== item.unit_price) {
+          changed = true;
+          return { ...item, unit_price: sp.price };
+        }
+        return item;
+      });
+      return changed ? { ...f, items: newItems } : f;
+    });
+  }, [form.customer_id, form.site_id, customerQuotas, products, lastShipmentPriceMap, initial]);
 
-  const smartPriceInfo = useMemo(() => {
-    if (isPriceManuallyOverridden && form.sale_price_per_m2 !== smartPriceSuggestion.price) {
-      return { source: 'manual', label: 'Özel Manuel Fiyat' };
-    }
-    if (form.sale_price_per_m2 > 0 && form.sale_price_per_m2 === smartPriceSuggestion.price) {
-      return { source: smartPriceSuggestion.source, label: smartPriceSuggestion.label };
-    }
-    if (form.sale_price_per_m2 > 0) {
-      return { source: 'manual', label: 'Özel Fiyat' };
-    }
-    return { source: 'none', label: 'Fiyatsız' };
-  }, [form.sale_price_per_m2, smartPriceSuggestion, isPriceManuallyOverridden]);
+  const setItem = (idx: number, field: string, value: any) => {
+    setForm(f => {
+      const items = [...f.items];
+      const cur = { ...items[idx], [field]: value };
+
+      if (field === 'pallet_type' && value === 'dokme') {
+        cur.pallets = 0;
+      }
+      if (field === 'pallets' || field === 'product_id') {
+        const p = products.find(x => x.id === (field === 'product_id' ? value : cur.product_id));
+        if (p) {
+          cur.m2 = cur.pallets * p.m2_per_pallet;
+          if (field === 'product_id' && p.unit) {
+            cur.unit = p.unit;
+          }
+        }
+      }
+      if (field === 'product_id') {
+        const sp = resolveSmartPriceForItem(value);
+        cur.unit_price = sp.price > 0 ? sp.price : 0;
+        cur.is_custom_price = false;
+      }
+      if (field === 'unit_price') {
+        cur.unit_price = Number(value);
+        cur.is_custom_price = true;
+      }
+      items[idx] = cur;
+      return { ...f, items };
+    });
+  };
+
+  const revertItemPrice = (idx: number) => {
+    const item = form.items[idx];
+    if (!item?.product_id) return;
+    const sp = resolveSmartPriceForItem(item.product_id);
+    setForm(f => {
+      const items = [...f.items];
+      items[idx] = { ...items[idx], unit_price: sp.price, is_custom_price: false };
+      return { ...f, items };
+    });
+  };
+
+  const addItem = () => setForm(f => ({
+    ...f,
+    items: [...f.items, { product_id: '', pallets: 0, pallet_type: f.items[f.items.length - 1]?.pallet_type || 'sevkiyat', m2: 0, unit: 'm2', unit_price: 0, is_custom_price: false }]
+  }));
+  const removeItem = (idx: number) => setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
 
   const totalM2 = form.items.reduce((s, i) => s + i.m2, 0);
+  const totalRevenue = form.items.reduce((s, i) => s + ((Number(i.m2) || 0) * (Number(i.unit_price) || 0)), 0);
+  const weightedAveragePrice = totalM2 > 0 ? Math.round((totalRevenue / totalM2) * 100) / 100 : (form.items[0]?.unit_price || 0);
   const netWeight = Math.max(form.gross_weight - form.tare_weight, 0);
+  const netRevenue = totalRevenue - (Number(form.logistics_cost) || 0);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -555,6 +611,16 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
 
     setSaving(true); setError('');
 
+    const itemPriceTags = form.items.filter(i => i.product_id && i.unit_price > 0).map(i => `${i.product_id}:${i.unit_price}`).join(';');
+    let updatedNotes = form.notes;
+    if (form.is_external && form.supplier_name.trim() && !updatedNotes.includes('Tedarikçi:')) {
+      updatedNotes = `Doğrudan Transit Sevk (Tedarikçi: ${form.supplier_name.trim()}) ${updatedNotes ? '— ' + updatedNotes : ''}`;
+    }
+    if (itemPriceTags) {
+      updatedNotes = updatedNotes.replace(/\[KALEM_F[Iİ]YATLAR:[^\]]*\]/gi, '').trim();
+      updatedNotes = updatedNotes ? `${updatedNotes} [KALEM_FİYATLAR: ${itemPriceTags}]` : `[KALEM_FİYATLAR: ${itemPriceTags}]`;
+    }
+
     const shipPayload = {
       invoice_no: form.invoice_no,
       customer_id: form.customer_id,
@@ -564,14 +630,12 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
       driver_phone: form.driver_phone,
       gross_weight: form.gross_weight,
       tare_weight: form.tare_weight,
-      sale_price_per_m2: form.sale_price_per_m2,
+      sale_price_per_m2: weightedAveragePrice,
       logistics_cost: form.logistics_cost,
       total_m2: totalM2,
       shipment_date: form.shipment_date,
       supplier_name: form.is_external ? (form.supplier_name.trim() || 'Dış Tedarikçi') : null,
-      notes: form.is_external && form.supplier_name.trim() && !form.notes.includes('Tedarikçi:')
-        ? `Doğrudan Transit Sevk (Tedarikçi: ${form.supplier_name.trim()}) ${form.notes ? '— ' + form.notes : ''}`
-        : form.notes,
+      notes: updatedNotes,
     };
 
     if (initial) {
@@ -580,15 +644,31 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
 
       // Update shipment items (Delete and re-insert)
       await supabase.from('shipment_items').delete().eq('shipment_id', initial.id);
-      const itemsToInsert = form.items.filter(i => i.product_id).map(i => ({
+      const itemsToInsertWithPrice = form.items.filter(i => i.product_id).map(i => ({
         shipment_id: initial.id,
         product_id: i.product_id,
         pallets: i.pallets,
         pallet_type: i.pallet_type,
         m2: i.m2,
         unit: i.unit,
+        unit_price: Number(i.unit_price) || 0,
+        total_price: (Number(i.unit_price) || 0) * (Number(i.m2) || 0),
       }));
-      const { error: itemsErr } = await supabase.from('shipment_items').insert(itemsToInsert);
+
+      let { error: itemsErr } = await supabase.from('shipment_items').insert(itemsToInsertWithPrice);
+      if (itemsErr) {
+        // Fallback without unit_price/total_price if remote columns not yet migrated
+        const itemsPlain = form.items.filter(i => i.product_id).map(i => ({
+          shipment_id: initial.id,
+          product_id: i.product_id,
+          pallets: i.pallets,
+          pallet_type: i.pallet_type,
+          m2: i.m2,
+          unit: i.unit,
+        }));
+        const fallbackRes = await supabase.from('shipment_items').insert(itemsPlain);
+        itemsErr = fallbackRes.error;
+      }
       if (itemsErr) { setError(itemsErr.message); setSaving(false); return; }
 
       // Update pallet transactions (Delete and re-insert)
@@ -616,23 +696,48 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
         const { error: transErr } = await supabase.from('pallet_transactions').insert(palletTransactions);
         if (transErr) { setError(transErr.message); setSaving(false); return; }
       }
+
+      // Store local item prices cache
+      try {
+        const localPricesMap = JSON.parse(localStorage.getItem('parke_shipment_item_prices') || '{}');
+        const thisShipMap: Record<string, number> = {};
+        form.items.forEach(i => {
+          if (i.product_id) thisShipMap[i.product_id] = Number(i.unit_price) || 0;
+        });
+        localPricesMap[initial.id] = thisShipMap;
+        localStorage.setItem('parke_shipment_item_prices', JSON.stringify(localPricesMap));
+      } catch {}
     } else {
       const { data: shipData, error: shipErr } = await supabase.from('shipments').insert({
         ...shipPayload, status: 'completed', created_by: user?.id,
       }).select().single();
       if (shipErr) { setError(shipErr.message); setSaving(false); return; }
 
-      const itemsToInsert = form.items.filter(i => i.product_id).map(i => ({
+      const itemsToInsertWithPrice = form.items.filter(i => i.product_id).map(i => ({
         shipment_id: shipData.id,
         product_id: i.product_id,
         pallets: i.pallets,
         pallet_type: i.pallet_type,
         m2: i.m2,
         unit: i.unit,
+        unit_price: Number(i.unit_price) || 0,
+        total_price: (Number(i.unit_price) || 0) * (Number(i.m2) || 0),
       }));
-      const { error: itemsErr } = await supabase.from('shipment_items').insert(itemsToInsert);
+
+      let { error: itemsErr } = await supabase.from('shipment_items').insert(itemsToInsertWithPrice);
       if (itemsErr) {
-        // CLEANUP: Delete the created shipment row if items insertion fails
+        const itemsPlain = form.items.filter(i => i.product_id).map(i => ({
+          shipment_id: shipData.id,
+          product_id: i.product_id,
+          pallets: i.pallets,
+          pallet_type: i.pallet_type,
+          m2: i.m2,
+          unit: i.unit,
+        }));
+        const fallbackRes = await supabase.from('shipment_items').insert(itemsPlain);
+        itemsErr = fallbackRes.error;
+      }
+      if (itemsErr) {
         await supabase.from('shipments').delete().eq('id', shipData.id);
         setError(itemsErr.message);
         setSaving(false);
@@ -666,6 +771,17 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
           return;
         }
       }
+
+      // Store local item prices cache
+      try {
+        const localPricesMap = JSON.parse(localStorage.getItem('parke_shipment_item_prices') || '{}');
+        const thisShipMap: Record<string, number> = {};
+        form.items.forEach(i => {
+          if (i.product_id) thisShipMap[i.product_id] = Number(i.unit_price) || 0;
+        });
+        localPricesMap[shipData.id] = thisShipMap;
+        localStorage.setItem('parke_shipment_item_prices', JSON.stringify(localPricesMap));
+      } catch {}
     }
 
     setSaving(false);
@@ -957,9 +1073,12 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
 
       <div className="border border-slate-200 rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-slate-700">Yüklenen Ürünler</h3>
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700">Yüklenen Ürünler</h3>
+            <p className="text-[11px] text-slate-400">Her ürünün birim fiyatı ve satır tutarı ayrı ayrı hesaplanır</p>
+          </div>
           <button type="button" onClick={addItem}
-            className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1">
+            className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 font-semibold cursor-pointer">
             <Plus size={14} /> Kalem Ekle
           </button>
         </div>
@@ -968,168 +1087,185 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
             const stock = item.product_id ? (stockMap[item.product_id] ?? 0) : null;
             const unitLabel = item.unit === 'm2' ? 'm²' : item.unit === 'adet' ? 'Adet' : item.unit === 'metre' ? 'Metre' : item.unit;
             const stockExceeded = stock !== null && item.m2 > 0 && item.unit === 'm2' && item.m2 > stock;
+            const sp = resolveSmartPriceForItem(item.product_id);
+            const isOverridden = item.is_custom_price && item.unit_price !== sp.price;
+            const lineTotal = (Number(item.m2) || 0) * (Number(item.unit_price) || 0);
+
             return (
-            <div key={idx} className="space-y-1">
-            <div className="grid grid-cols-12 gap-2 items-end">
-              <div className="col-span-3">
-                {idx === 0 && <label className="block text-xs font-medium text-slate-500 mb-1">Ürün</label>}
-                <select value={item.product_id} onChange={e => setItem(idx, 'product_id', e.target.value)}
-                  className="w-full border border-slate-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-                  <option value="">Seçin...</option>
-                  {products.map(p => {
-                    const s = stockMap[p.id] ?? 0;
-                    return <option key={p.id} value={p.id}>{p.name} ({p.thickness}/{p.color}){s <= 0 ? ' — Stok yok' : ` — ${s.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`}</option>;
-                  })}
-                </select>
+              <div key={idx} className="bg-slate-50/70 border border-slate-200/90 rounded-xl p-3 space-y-2">
+                <div className="grid grid-cols-12 gap-2 items-end">
+                  <div className="col-span-12 sm:col-span-3">
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Ürün</label>
+                    <select value={item.product_id} onChange={e => setItem(idx, 'product_id', e.target.value)}
+                      className="w-full border border-slate-200 bg-white rounded-lg px-2.5 py-2 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 font-medium">
+                      <option value="">Ürün Seçiniz...</option>
+                      {products.map(p => {
+                        const s = stockMap[p.id] ?? 0;
+                        return <option key={p.id} value={p.id}>{p.name} ({p.thickness}/{p.color}){s <= 0 ? ' — Stok yok' : ` — ${s.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`}</option>;
+                      })}
+                    </select>
+                  </div>
+                  <div className="col-span-3 sm:col-span-1">
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Palet</label>
+                    <input type="number" min="0" value={item.pallets}
+                      onChange={e => setItem(idx, 'pallets', Number(e.target.value))}
+                      disabled={item.pallet_type === 'dokme'}
+                      className="w-full border border-slate-200 bg-white rounded-lg px-2 py-2 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-slate-100 disabled:text-slate-400 text-center font-semibold" />
+                  </div>
+                  <div className="col-span-5 sm:col-span-2">
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Palet Tipi</label>
+                    <select value={item.pallet_type} onChange={e => setItem(idx, 'pallet_type', e.target.value as any)}
+                      className="w-full border border-slate-200 bg-white rounded-lg px-2 py-2 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+                      <option value="sevkiyat">Sevkiyat Paleti</option>
+                      <option value="tahta">Tahta Palet</option>
+                      <option value="uretim">Üretim Paleti</option>
+                      <option value="dokme">Dökme (Paletsiz)</option>
+                    </select>
+                  </div>
+                  <div className="col-span-4 sm:col-span-1">
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Birim</label>
+                    <select value={item.unit} onChange={e => setItem(idx, 'unit', e.target.value)}
+                      className="w-full border border-slate-200 bg-white rounded-lg px-1.5 py-2 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 font-semibold text-center">
+                      <option value="m2">m²</option>
+                      <option value="adet">Adet</option>
+                      <option value="metre">Metre</option>
+                    </select>
+                  </div>
+                  <div className="col-span-5 sm:col-span-2">
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Miktar ({unitLabel})</label>
+                    <input type="number" min="0" step="0.01" value={item.m2}
+                      onChange={e => setItem(idx, 'm2', Number(e.target.value))}
+                      className={`w-full border rounded-lg px-2.5 py-2 text-xs sm:text-sm font-bold font-mono focus:outline-none focus:ring-2 ${stockExceeded ? 'border-red-400 focus:ring-red-400 bg-red-50 text-red-700' : 'border-slate-200 bg-white focus:ring-blue-400'}`} />
+                  </div>
+                  <div className="col-span-5 sm:col-span-2">
+                    <label className="block text-xs font-medium text-slate-600 mb-1">
+                      Birim Fiyat (₺/{unitLabel})
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={item.unit_price}
+                        onChange={e => setItem(idx, 'unit_price', Number(e.target.value))}
+                        placeholder="0.00"
+                        className={`w-full border rounded-lg px-2.5 py-2 text-xs sm:text-sm font-bold font-mono focus:outline-none focus:ring-2 bg-white ${
+                          isOverridden
+                            ? 'border-amber-300 focus:ring-amber-400 text-amber-900'
+                            : sp.source === 'quota'
+                            ? 'border-emerald-300 focus:ring-emerald-400 text-emerald-900'
+                            : sp.source === 'product_list'
+                            ? 'border-blue-300 focus:ring-blue-400 text-blue-900'
+                            : sp.source === 'last_shipment'
+                            ? 'border-purple-300 focus:ring-purple-400 text-purple-900'
+                            : 'border-slate-200 focus:ring-blue-400'
+                        }`}
+                      />
+                    </div>
+                  </div>
+                  <div className="col-span-2 sm:col-span-1 flex justify-center pb-1">
+                    {form.items.length > 1 && (
+                      <button type="button" onClick={() => removeItem(idx)}
+                        className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer" title="Kalemi Sil">
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Row Sub-bar: Badges, Satır Tutarı & Stock Info */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-200/60 text-xs">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* Smart Price Badge */}
+                    {isOverridden ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                        <span>✏️</span> Özel Fiyat ({item.unit_price} ₺)
+                      </span>
+                    ) : sp.source === 'quota' ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300" title={sp.detail}>
+                        <span>🏷️</span> Sözleşme / Kota Fiyatı ({sp.price} ₺)
+                      </span>
+                    ) : sp.source === 'product_list' ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-blue-100 text-blue-900 border border-blue-300" title={sp.detail}>
+                        <span>📋</span> Fabrika Liste Fiyatı ({sp.price} ₺)
+                      </span>
+                    ) : sp.source === 'last_shipment' ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-purple-100 text-purple-900 border border-purple-300" title={sp.detail}>
+                        <span>⏱️</span> Son Sevk Fiyatı ({sp.price} ₺)
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-slate-400 italic">Fiyat tanımsız</span>
+                    )}
+
+                    {/* Revert button if overridden */}
+                    {isOverridden && sp.price > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => revertItemPrice(idx)}
+                        className="text-[11px] font-bold text-blue-600 hover:text-blue-800 underline flex items-center gap-1 cursor-pointer"
+                        title="Önerilen akıllı fiyata dön"
+                      >
+                        <RotateCcw size={11} /> Önerilen {sp.price} ₺ Yap
+                      </button>
+                    )}
+
+                    {/* Stock info */}
+                    {stock !== null && item.product_id && (
+                      <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${stockExceeded ? 'text-red-600 font-bold' : 'text-slate-500'}`}>
+                        {stockExceeded ? <PackageX size={12} /> : null}
+                        {stockExceeded
+                          ? `⚠️ Stok aşıldı! (Mevcut: ${stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²)`
+                          : `• Stok: ${stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Line item total */}
+                  <div className="font-mono text-xs font-semibold text-slate-700 bg-white px-2.5 py-0.5 rounded-lg border border-slate-200 shadow-2xs">
+                    <span className="text-slate-400 font-normal mr-1.5">Satır Tutarı:</span>
+                    <strong className="text-blue-700 text-sm">₺{lineTotal.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                  </div>
+                </div>
               </div>
-              <div className="col-span-2">
-                {idx === 0 && <label className="block text-xs font-medium text-slate-500 mb-1">Palet</label>}
-                <input type="number" min="0" value={item.pallets}
-                  onChange={e => setItem(idx, 'pallets', Number(e.target.value))}
-                  disabled={item.pallet_type === 'dokme'}
-                  className="w-full border border-slate-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-slate-100 disabled:text-slate-400" />
-              </div>
-              <div className="col-span-2">
-                {idx === 0 && <label className="block text-xs font-medium text-slate-500 mb-1">Palet Tipi</label>}
-                <select value={item.pallet_type} onChange={e => setItem(idx, 'pallet_type', e.target.value as any)}
-                  className="w-full border border-slate-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-                  <option value="sevkiyat">Sevkiyat Paleti</option>
-                  <option value="tahta">Tahta Palet</option>
-                  <option value="uretim">Üretim Paleti</option>
-                  <option value="dokme">Dökme (Paletsiz)</option>
-                </select>
-              </div>
-              <div className="col-span-2">
-                {idx === 0 && <label className="block text-xs font-medium text-slate-500 mb-1">Birim</label>}
-                <select value={item.unit} onChange={e => setItem(idx, 'unit', e.target.value)}
-                  className="w-full border border-slate-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-                  <option value="m2">m²</option>
-                  <option value="adet">Adet</option>
-                  <option value="metre">Metre</option>
-                </select>
-              </div>
-              <div className="col-span-2">
-                {idx === 0 && <label className="block text-xs font-medium text-slate-500 mb-1">Miktar ({unitLabel})</label>}
-                <input type="number" min="0" step="0.01" value={item.m2}
-                  onChange={e => setItem(idx, 'm2', Number(e.target.value))}
-                  className={`w-full border rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 ${stockExceeded ? 'border-red-400 focus:ring-red-400 bg-red-50' : 'border-slate-200 focus:ring-blue-400'}`} />
-              </div>
-              <div className="col-span-1 flex justify-center">
-                {form.items.length > 1 && (
-                  <button type="button" onClick={() => removeItem(idx)}
-                    className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
-                    <Trash2 size={14} />
-                  </button>
-                )}
-              </div>
-            </div>
-            {stock !== null && item.product_id && (
-              <div className={`flex items-center gap-1.5 text-xs px-1 ${stockExceeded ? 'text-red-600' : 'text-slate-400'}`}>
-                {stockExceeded ? <PackageX size={12} /> : null}
-                {stockExceeded
-                  ? `Stok aşıldı! Mevcut: ${stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`
-                  : `Mevcut stok: ${stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`}
-              </div>
-            )}
-            </div>
-          ); })}
+            );
+          })}
         </div>
-        <div className="mt-3 pt-3 border-t border-slate-100 flex justify-end">
-          <div className="text-sm font-semibold text-blue-700">
-            Toplam: {totalM2.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} (karma birim)
+        <div className="mt-3 pt-3 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-xs text-slate-500">
+            Toplam <strong className="text-slate-800">{form.items.length}</strong> kalem ürün
+          </div>
+          <div className="text-sm font-bold text-blue-800 font-mono">
+            Toplam Sevk Miktarı: {totalM2.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}
           </div>
         </div>
       </div>
 
-      <div className="bg-slate-50/70 border border-slate-200 rounded-2xl p-4 space-y-3">
+      {/* ── FINANCIAL & LOGISTICS SUMMARY CARD ── */}
+      <div className="bg-gradient-to-r from-slate-50 to-blue-50/50 border border-slate-200 rounded-2xl p-4 space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-            <span>💰</span> Satış Fiyatlandırması & Lojistik
+            <span>💰</span> Sevkiyat Finansmanı & Lojistik
           </span>
-          {/* Smart Price Source Badge */}
-          {smartPriceInfo.source === 'quota' && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 shadow-2xs">
-              <span>🏷️</span> Sözleşme / Kota Fiyatı Uygulandı
-            </span>
-          )}
-          {smartPriceInfo.source === 'product_list' && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-900 border border-blue-300 shadow-2xs">
-              <span>📋</span> Fabrika Liste Fiyatı Uygulandı
-            </span>
-          )}
-          {smartPriceInfo.source === 'last_shipment' && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-purple-100 text-purple-900 border border-purple-300 shadow-2xs">
-              <span>⏱️</span> Son Sevk Fiyatı Uygulandı
-            </span>
-          )}
-          {smartPriceInfo.source === 'manual' && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
-              <span>✏️</span> Özel Manuel Fiyat
-            </span>
-          )}
+          <span className="text-[11px] text-slate-500">
+            Tüm ürün kalemlerinin fiyatları baz alınarak anlık hesaplanır
+          </span>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="block text-xs font-semibold text-slate-700">
-                Satış Birim Fiyatı (₺ / {primaryUnitLabel})
-              </label>
-              {isPriceManuallyOverridden && smartPriceSuggestion.price > 0 && smartPriceSuggestion.price !== form.sale_price_per_m2 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setForm(f => ({ ...f, sale_price_per_m2: smartPriceSuggestion.price }));
-                    setIsPriceManuallyOverridden(false);
-                  }}
-                  className="text-[11px] font-bold text-blue-600 hover:text-blue-800 underline flex items-center gap-1 cursor-pointer"
-                  title="Önerilen fiyata dön"
-                >
-                  <RotateCcw size={11} /> Önerilen {smartPriceSuggestion.price.toLocaleString('tr-TR')} ₺ Yap
-                </button>
-              )}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* Toplam Mal Tutarı (Ciro) */}
+          <div className="bg-white rounded-xl p-3 border border-slate-200/80 shadow-2xs">
+            <span className="text-[11px] font-semibold text-slate-500 block mb-0.5">Toplam Ürün Tutarı (Ciro)</span>
+            <div className="text-lg font-black text-blue-700 font-mono">
+              ₺{totalRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
-            <div className="relative">
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.sale_price_per_m2}
-                onChange={e => {
-                  setForm(f => ({ ...f, sale_price_per_m2: Number(e.target.value) }));
-                  setIsPriceManuallyOverridden(true);
-                }}
-                className={`w-full border rounded-xl px-3 py-2 text-sm font-bold font-mono focus:outline-none focus:ring-2 bg-white ${
-                  isPriceManuallyOverridden
-                    ? 'border-amber-300 focus:ring-amber-400'
-                    : smartPriceInfo.source === 'quota'
-                    ? 'border-emerald-300 focus:ring-emerald-400'
-                    : smartPriceInfo.source === 'product_list'
-                    ? 'border-blue-300 focus:ring-blue-400'
-                    : 'border-slate-200 focus:ring-blue-400'
-                }`}
-                placeholder="0.00"
-              />
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 pointer-events-none">
-                ₺ / {primaryUnitLabel}
-              </span>
-            </div>
-            {smartPriceSuggestion.price > 0 ? (
-              <p className="text-[11px] text-slate-500 mt-1 flex items-center gap-1">
-                <span>💡</span> Akıllı Öneri: <strong className="text-slate-700">{smartPriceSuggestion.label}</strong> ({smartPriceSuggestion.price.toLocaleString('tr-TR')} ₺)
-                {smartPriceSuggestion.detail && <span className="text-slate-400 font-normal">— {smartPriceSuggestion.detail}</span>}
-              </p>
-            ) : (
-              <p className="text-[11px] text-slate-400 mt-1 italic">
-                Bu ürün ve müşteri için tanımlı sözleşme veya fabrika liste fiyatı yok.
-              </p>
-            )}
+            <p className="text-[10px] text-slate-400 mt-0.5">
+              Ort. {totalM2 > 0 ? (totalRevenue / totalM2).toLocaleString('tr-TR', { maximumFractionDigits: 2 }) : 0} ₺ / birim
+            </p>
           </div>
 
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="block text-xs font-semibold text-slate-700">Lojistik Gideri (₺)</label>
-            </div>
+          {/* Lojistik Gideri */}
+          <div className="bg-white rounded-xl p-3 border border-slate-200/80 shadow-2xs">
+            <label className="text-[11px] font-semibold text-slate-700 block mb-1">Lojistik / Nakliye Gideri (₺)</label>
             <div className="relative">
               <input
                 type="number"
@@ -1137,15 +1273,24 @@ function ShipmentForm({ customers, products, initial, prefilledData, onSave, onC
                 step="0.01"
                 value={form.logistics_cost}
                 onChange={e => setForm(f => ({ ...f, logistics_cost: Number(e.target.value) }))}
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold font-mono focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm font-bold font-mono focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
                 placeholder="0.00"
               />
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 pointer-events-none">
+              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 pointer-events-none">
                 ₺
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 mt-1">
-              Araç başına nakliye / lojistik gideri
+            <p className="text-[10px] text-slate-400 mt-1">Araç sefer maliyeti</p>
+          </div>
+
+          {/* Net Sevk Geliri */}
+          <div className="bg-white rounded-xl p-3 border border-slate-200/80 shadow-2xs">
+            <span className="text-[11px] font-semibold text-slate-500 block mb-0.5">Net Gelir (Ciro - Lojistik)</span>
+            <div className={`text-lg font-black font-mono ${netRevenue >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+              ₺{netRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <p className="text-[10px] text-slate-400 mt-0.5">
+              Tahmini net kazanç
             </p>
           </div>
         </div>
@@ -1265,8 +1410,30 @@ function ShipmentDetail({ shipment, onClose }: { shipment: Shipment; onClose: ()
       .then(({ data }) => setItems(data || []));
   }, [shipment.id]);
 
+  const notesPrices = parseItemPricesFromNotes(shipment.notes);
+  let localSavedPrices: Record<string, number> = {};
+  try {
+    const allSaved = JSON.parse(localStorage.getItem('parke_shipment_item_prices') || '{}');
+    localSavedPrices = allSaved[shipment.id] || {};
+  } catch {}
+
+  const getItemUnitPrice = (it: any) => {
+    if (it.unit_price && Number(it.unit_price) > 0) return Number(it.unit_price);
+    if (notesPrices[it.product_id]) return notesPrices[it.product_id];
+    if (localSavedPrices[it.product_id]) return localSavedPrices[it.product_id];
+    return Number(shipment.sale_price_per_m2) || 0;
+  };
+
+  const calculatedItemsTotal = items.reduce((sum, it) => {
+    const p = getItemUnitPrice(it);
+    return sum + (p * (Number(it.m2) || 0));
+  }, 0);
+
+  const totalRevenue = calculatedItemsTotal > 0 ? calculatedItemsTotal : (shipment.sale_price_per_m2 * (shipment.total_m2 || 0));
+  const logisticsCost = Number(shipment.logistics_cost) || 0;
+  const netRevenue = totalRevenue - logisticsCost;
+
   const qInfo = getShipmentDisplayQuantity({ ...shipment, shipment_items: items });
-  const totalRevenue = shipment.sale_price_per_m2 * (shipment.total_m2 || 0);
   const supInfo = getSupplierInfo(shipment);
 
   return (
@@ -1321,10 +1488,11 @@ function ShipmentDetail({ shipment, onClose }: { shipment: Shipment; onClose: ()
         <table className="w-full text-sm">
           <thead className="bg-slate-50">
             <tr>
-              <th className="px-4 py-2 text-left font-medium text-slate-600">Ürün</th>
-              <th className="px-4 py-2 text-left font-medium text-slate-600">Palet Tipi</th>
-              <th className="px-4 py-2 text-right font-medium text-slate-600">Palet Sayısı</th>
-              <th className="px-4 py-2 text-right font-medium text-slate-600">Miktar</th>
+              <th className="px-3 py-2 text-left font-medium text-slate-600">Ürün</th>
+              <th className="px-3 py-2 text-left font-medium text-slate-600">Palet</th>
+              <th className="px-3 py-2 text-right font-medium text-slate-600">Miktar</th>
+              <th className="px-3 py-2 text-right font-medium text-slate-600">Birim Fiyat</th>
+              <th className="px-3 py-2 text-right font-medium text-slate-600">Satır Tutarı</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -1335,14 +1503,25 @@ function ShipmentDetail({ shipment, onClose }: { shipment: Shipment; onClose: ()
                 : (prodUnit === 'adet' || item.unit === 'adet')
                 ? 'Adet'
                 : 'm²';
+              const price = getItemUnitPrice(item);
+              const lineTotal = price * (Number(item.m2) || 0);
 
               return (
                 <tr key={item.id}>
-                  <td className="px-4 py-2 font-medium text-slate-800">{item.products?.name} ({item.products?.thickness}/{item.products?.color})</td>
-                  <td className="px-4 py-2 text-slate-600 text-xs">{PALLET_LABELS[item.pallet_type] || 'Sevkiyat Paleti'}</td>
-                  <td className="px-4 py-2 text-right">{item.pallet_type === 'dokme' ? '-' : `${item.pallets} adet`}</td>
-                  <td className="px-4 py-2 text-right font-bold text-slate-900">
+                  <td className="px-3 py-2 font-medium text-slate-800">
+                    {item.products?.name} ({item.products?.thickness}/{item.products?.color})
+                  </td>
+                  <td className="px-3 py-2 text-slate-600 text-xs">
+                    {item.pallet_type === 'dokme' ? 'Dökme' : `${item.pallets} ${PALLET_LABELS[item.pallet_type] || 'Sevkiyat'}`}
+                  </td>
+                  <td className="px-3 py-2 text-right font-semibold text-slate-900">
                     {item.m2} {effectiveUnit}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono font-medium text-slate-700">
+                    {price > 0 ? `₺${price.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono font-bold text-blue-700">
+                    {lineTotal > 0 ? `₺${lineTotal.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
                   </td>
                 </tr>
               );
@@ -1351,10 +1530,21 @@ function ShipmentDetail({ shipment, onClose }: { shipment: Shipment; onClose: ()
         </table>
       </div>
 
-      <div className="bg-blue-50 rounded-xl p-4 text-sm grid grid-cols-3 gap-4">
-        <div><p className="text-slate-500">Satış Fiyatı</p><p className="font-bold text-slate-900">₺{shipment.sale_price_per_m2} / {qInfo.priceUnit}</p></div>
-        <div><p className="text-slate-500">Lojistik</p><p className="font-bold text-slate-900">₺{shipment.logistics_cost}</p></div>
-        <div><p className="text-slate-500">Tahmini Ciro</p><p className="font-bold text-blue-700">₺{totalRevenue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}</p></div>
+      <div className="bg-blue-50/70 border border-blue-100 rounded-xl p-4 text-sm grid grid-cols-3 gap-4">
+        <div>
+          <p className="text-slate-500 text-xs font-medium">Toplam Ürün Bedeli (Ciro)</p>
+          <p className="font-black text-blue-700 text-base font-mono">₺{totalRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+        </div>
+        <div>
+          <p className="text-slate-500 text-xs font-medium">Lojistik Gideri</p>
+          <p className="font-bold text-slate-900 text-base font-mono">₺{logisticsCost.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+        </div>
+        <div>
+          <p className="text-slate-500 text-xs font-medium">Net Gelir</p>
+          <p className={`font-black text-base font-mono ${netRevenue >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+            ₺{netRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </p>
+        </div>
       </div>
 
       {/* Not / Açıklama */}

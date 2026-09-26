@@ -88,6 +88,8 @@ export interface ShipmentItem {
   pallet_type?: string;
   m2: number;
   unit: string;
+  unit_price?: number;
+  total_price?: number;
   products?: Product;
 }
 
