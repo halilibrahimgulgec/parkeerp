@@ -58,7 +58,7 @@ function AppContent() {
   if (!user || pendingApproval) return <LoginPage />;
 
   const PAGE_MAP: Record<Page, JSX.Element> = {
-    dashboard: <Dashboard />,
+    dashboard: <Dashboard onNavigate={setCurrentPage} />,
     production: <Production />,
     production_planning: <ProductionPlanning />,
     purchases: <Purchases />,

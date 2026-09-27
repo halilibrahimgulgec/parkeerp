@@ -1,8 +1,9 @@
+import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import {
   LayoutDashboard, Factory, Truck, DollarSign, Package,
   BarChart3, LogOut, ChevronRight, ShieldCheck, Users, Boxes,
-  UserCheck, Target, ShoppingBag, Sparkles, X
+  UserCheck, Target, ShoppingBag, Sparkles, X, Search
 } from 'lucide-react';
 
 type Page = 'dashboard' | 'production' | 'production_planning' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking';
@@ -25,26 +26,90 @@ const ROLE_COLORS: Record<string, string> = {
   weighbridge: 'bg-green-100 text-green-800',
 };
 
+interface NavItem {
+  id: Page;
+  label: string;
+  icon: any;
+  access: boolean;
+  badge?: string;
+  badgeColor?: string;
+}
+
+interface NavGroup {
+  title: string;
+  items: NavItem[];
+}
+
 export default function Sidebar({ currentPage, onNavigate, onCloseMobile }: SidebarProps) {
   const { profile, signOut, isAdmin, isFieldManager, isWeighbridge } = useAuth();
+  const [searchQuery, setSearchQuery] = useState('');
 
-  const navItems = [
-    { id: 'dashboard' as Page, label: 'Dashboard', icon: LayoutDashboard, access: true },
-    { id: 'production' as Page, label: 'Üretim Girişi', icon: Factory, access: isFieldManager() },
-    { id: 'production_planning' as Page, label: 'Üretim Planlama & AI', icon: Sparkles, access: isFieldManager() || isAdmin() },
-    { id: 'purchases' as Page, label: 'Dış Alım & Transit', icon: ShoppingBag, access: isFieldManager() || isWeighbridge() || isAdmin() },
-    { id: 'shipment' as Page, label: 'Sevkiyat / Kantar', icon: Truck, access: isWeighbridge() },
-    { id: 'customer_quotas' as Page, label: 'Müşteri Kotaları & Sevk', icon: Target, access: isWeighbridge() },
-    { id: 'pallet_tracking' as Page, label: 'Palet Takibi', icon: Boxes, access: true },
-    { id: 'labor_tracking' as Page, label: 'İşçilik & Puantaj', icon: UserCheck, access: isAdmin() || isFieldManager() },
-    { id: 'costs' as Page, label: 'Maliyet Giderleri', icon: DollarSign, access: isAdmin() },
-    { id: 'definitions' as Page, label: 'Tanımlamalar', icon: Package, access: isAdmin() },
-    { id: 'reports' as Page, label: 'Raporlar', icon: BarChart3, access: true },
-    { id: 'admin_users' as Page, label: 'Kullanıcılar', icon: Users, access: isAdmin() },
+  // 4 Temel Mantıksal Operasyonel Grup
+  const navGroups: NavGroup[] = [
+    {
+      title: '📊 KOKPİT & MASTER RAPORLAR',
+      items: [
+        { id: 'dashboard', label: 'Genel Bakış (Dashboard)', icon: LayoutDashboard, access: true },
+        { 
+          id: 'reports', 
+          label: 'Master Raporlar', 
+          icon: BarChart3, 
+          access: true,
+          badge: '2 Rapor',
+          badgeColor: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+        },
+      ],
+    },
+    {
+      title: '🏭 ÜRETİM & PLANLAMA',
+      items: [
+        { id: 'production', label: 'Günlük Üretim Girişi', icon: Factory, access: isFieldManager() },
+        { 
+          id: 'production_planning', 
+          label: 'Üretim Planlama & AI', 
+          icon: Sparkles, 
+          access: isFieldManager() || isAdmin(),
+          badge: 'AI',
+          badgeColor: 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
+        },
+      ],
+    },
+    {
+      title: '🚚 SEVKİYAT & TİCARET',
+      items: [
+        { 
+          id: 'shipment', 
+          label: 'Sevkiyat & Kantar', 
+          icon: Truck, 
+          access: isWeighbridge(),
+          badge: 'Kantar',
+          badgeColor: 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+        },
+        { id: 'customer_quotas', label: 'Müşteri Kotaları & Sevk', icon: Target, access: isWeighbridge() },
+        { id: 'purchases', label: 'Dış Alım & Transit', icon: ShoppingBag, access: isFieldManager() || isWeighbridge() || isAdmin() },
+        { id: 'pallet_tracking', label: 'Palet Takibi & Zimmet', icon: Boxes, access: true },
+      ],
+    },
+    {
+      title: '⚙️ FABRİKA YÖNETİMİ & AYARLAR',
+      items: [
+        { id: 'costs', label: 'Maliyet Giderleri', icon: DollarSign, access: isAdmin() },
+        { id: 'labor_tracking', label: 'İşçilik & Puantaj', icon: UserCheck, access: isAdmin() || isFieldManager() },
+        { id: 'definitions', label: 'Tanımlamalar', icon: Package, access: isAdmin() },
+        { id: 'admin_users', label: 'Kullanıcılar & Yetkiler', icon: Users, access: isAdmin() },
+      ],
+    },
   ];
 
+  const handleItemClick = (pageId: Page) => {
+    onNavigate(pageId);
+    if (onCloseMobile) onCloseMobile();
+  };
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+
   return (
-    <aside className="w-full h-full flex flex-col bg-slate-900 text-white overflow-hidden select-none">
+    <aside className="w-full h-full flex flex-col bg-slate-900 text-white overflow-hidden select-none border-r border-slate-800">
       {/* Header */}
       <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
@@ -52,7 +117,7 @@ export default function Sidebar({ currentPage, onNavigate, onCloseMobile }: Side
             <Factory size={20} className="text-white" />
           </div>
           <div>
-            <h1 className="font-bold text-base sm:text-lg leading-tight text-white">Parke ERP</h1>
+            <h1 className="font-bold text-base sm:text-lg leading-tight text-white tracking-tight">Parke ERP</h1>
             <p className="text-slate-400 text-[11px]">Fabrika Yönetim Sistemi</p>
           </div>
         </div>
@@ -67,26 +132,92 @@ export default function Sidebar({ currentPage, onNavigate, onCloseMobile }: Side
         )}
       </div>
 
-      {/* Scrollable Navigation Menu */}
-      <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto overscroll-contain scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
-        {navItems.map(item => {
-          if (!item.access) return null;
-          const Icon = item.icon;
-          const isActive = currentPage === item.id;
-          return (
+      {/* Hızlı Menü Filtre Arama Barı */}
+      <div className="px-3 pt-3 pb-1 shrink-0">
+        <div className="relative">
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Modül veya sayfa ara..."
+            className="w-full bg-slate-800/80 border border-slate-700/60 rounded-xl pl-8 pr-7 py-1.5 text-xs text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 transition-all"
+          />
+          {searchQuery && (
             <button
-              key={item.id}
-              onClick={() => onNavigate(item.id)}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all group cursor-pointer ${
-                isActive
-                  ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/25'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
             >
-              <Icon size={18} />
-              <span className="flex-1 text-left">{item.label}</span>
-              {isActive && <ChevronRight size={14} />}
+              <X size={13} />
             </button>
+          )}
+        </div>
+      </div>
+
+      {/* Scrollable Navigation Groups */}
+      <nav className="flex-1 px-3 py-2 space-y-4 overflow-y-auto overscroll-contain scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+        {navGroups.map((group, groupIdx) => {
+          // Bu grupta kullanıcının erişebildiği ve arama filtresine uyan elemanlar
+          const accessibleItems = group.items.filter(item => {
+            if (!item.access) return false;
+            if (!normalizedQuery) return true;
+            return item.label.toLowerCase().includes(normalizedQuery) ||
+                   item.id.toLowerCase().includes(normalizedQuery) ||
+                   (item.badge && item.badge.toLowerCase().includes(normalizedQuery));
+          });
+
+          // Eğer bu grupta gösterilecek hiçbir öğe yoksa grubu gizle
+          if (accessibleItems.length === 0) return null;
+
+          return (
+            <div key={groupIdx} className="space-y-1">
+              {/* Grup Başlığı */}
+              <div className="px-2 pt-1 pb-1">
+                <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase select-none">
+                  {group.title}
+                </span>
+              </div>
+
+              {/* Grup Öğeleri */}
+              <div className="space-y-0.5">
+                {accessibleItems.map(item => {
+                  const Icon = item.icon;
+                  const isActive = currentPage === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => handleItemClick(item.id)}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all group cursor-pointer ${
+                        isActive
+                          ? 'bg-amber-500 text-white font-semibold shadow-md shadow-amber-500/25'
+                          : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <Icon 
+                          size={17} 
+                          className={`shrink-0 ${isActive ? 'text-white' : 'text-slate-400 group-hover:text-amber-400'} transition-colors`} 
+                        />
+                        <span className="truncate text-left">{item.label}</span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0 ml-1">
+                        {item.badge && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold tracking-wide ${
+                            isActive 
+                              ? 'bg-white/20 text-white' 
+                              : (item.badgeColor || 'bg-slate-800 text-slate-300')
+                          }`}>
+                            {item.badge}
+                          </span>
+                        )}
+                        {isActive && <ChevronRight size={13} className="text-white/80" />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           );
         })}
       </nav>

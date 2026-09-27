@@ -2,9 +2,16 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import {
   Factory, Truck, AlertTriangle, TrendingUp, Package,
-  DollarSign, BarChart2, Calendar, Printer, Search, Target
+  DollarSign, BarChart2, Calendar, Printer, Search, Target,
+  ArrowRight, FileSpreadsheet
 } from 'lucide-react';
 import { getShipmentDisplayQuantity } from './Shipment';
+
+type Page = 'dashboard' | 'production' | 'production_planning' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking';
+
+interface DashboardProps {
+  onNavigate?: (page: Page) => void;
+}
 
 interface KPI {
   productionDisplay: string;
@@ -111,7 +118,7 @@ function KPICard({ title, value, sub, icon: Icon, color }: { title: string; valu
   );
 }
 
-export default function Dashboard() {
+export default function Dashboard({ onNavigate }: DashboardProps = {}) {
   const [kpi, setKpi] = useState<KPI>({
     productionDisplay: '0 m²',
     productionSub: 'Net üretim (fire düşülmüş)',
@@ -329,7 +336,7 @@ export default function Dashboard() {
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6">
       <div className="no-print space-y-6">
-        <div className="mb-8 flex items-center justify-between">
+        <div className="mb-6 flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
             <p className="text-slate-500 text-sm mt-1">
@@ -338,6 +345,65 @@ export default function Dashboard() {
             </p>
           </div>
         </div>
+
+        {/* ── 3 BÜYÜK HIZLI OPERASYONEL İŞLEM BUTONU ── */}
+        {onNavigate && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <button
+              onClick={() => onNavigate('shipment')}
+              className="group text-left bg-gradient-to-br from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 text-white rounded-2xl p-5 shadow-md shadow-blue-500/15 transition-all hover:shadow-lg hover:shadow-blue-500/25 hover:-translate-y-0.5 cursor-pointer relative overflow-hidden flex flex-col justify-between"
+            >
+              <div className="flex items-start justify-between">
+                <div className="w-11 h-11 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center text-white shadow-xs">
+                  <Truck size={22} />
+                </div>
+                <span className="inline-flex items-center text-xs font-semibold bg-white/20 px-2.5 py-1 rounded-full text-white group-hover:bg-white group-hover:text-blue-700 transition-colors">
+                  Kantar Çıkışı <ArrowRight size={13} className="ml-1 group-hover:translate-x-0.5 transition-transform" />
+                </span>
+              </div>
+              <div className="mt-4">
+                <h3 className="font-bold text-lg text-white">Yeni Sevkiyat & Kantar</h3>
+                <p className="text-xs text-blue-100 mt-0.5">Otomatik fiyat, plaka hafızası ve fiş yazdırma</p>
+              </div>
+            </button>
+
+            <button
+              onClick={() => onNavigate('production')}
+              className="group text-left bg-gradient-to-br from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white rounded-2xl p-5 shadow-md shadow-amber-500/15 transition-all hover:shadow-lg hover:shadow-amber-500/25 hover:-translate-y-0.5 cursor-pointer relative overflow-hidden flex flex-col justify-between"
+            >
+              <div className="flex items-start justify-between">
+                <div className="w-11 h-11 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center text-white shadow-xs">
+                  <Factory size={22} />
+                </div>
+                <span className="inline-flex items-center text-xs font-semibold bg-white/20 px-2.5 py-1 rounded-full text-white group-hover:bg-white group-hover:text-amber-700 transition-colors">
+                  Üretim Girişi <ArrowRight size={13} className="ml-1 group-hover:translate-x-0.5 transition-transform" />
+                </span>
+              </div>
+              <div className="mt-4">
+                <h3 className="font-bold text-lg text-white">Günlük Üretim Gir</h3>
+                <p className="text-xs text-amber-100 mt-0.5">Pres baskı, vardiya ve palet/m² kayıtları</p>
+              </div>
+            </button>
+
+            <button
+              onClick={() => onNavigate('reports')}
+              className="group text-left bg-gradient-to-br from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white rounded-2xl p-5 shadow-md shadow-emerald-500/15 transition-all hover:shadow-lg hover:shadow-emerald-500/25 hover:-translate-y-0.5 cursor-pointer relative overflow-hidden flex flex-col justify-between"
+            >
+              <div className="flex items-start justify-between">
+                <div className="w-11 h-11 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center text-white shadow-xs">
+                  <FileSpreadsheet size={22} />
+                </div>
+                <span className="inline-flex items-center text-xs font-semibold bg-white/20 px-2.5 py-1 rounded-full text-white group-hover:bg-white group-hover:text-emerald-700 transition-colors">
+                  2 Master Rapor <ArrowRight size={13} className="ml-1 group-hover:translate-x-0.5 transition-transform" />
+                </span>
+              </div>
+              <div className="mt-4">
+                <h3 className="font-bold text-lg text-white">Yönetici İcmali & Sevk Matrisi</h3>
+                <p className="text-xs text-emerald-100 mt-0.5">Şantiye bakiyeleri, kotalar ve finansal röntgen</p>
+              </div>
+            </button>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <KPICard
@@ -383,9 +449,19 @@ export default function Dashboard() {
                   <p className="text-xs text-slate-500">Tanımlanan kotaya yaklaşan veya kotası dolan müşteriler</p>
                 </div>
               </div>
-              <span className="text-xs font-bold px-3 py-1 rounded-full bg-amber-200/70 text-amber-900 border border-amber-300 self-start sm:self-auto">
-                {quotaAlerts.length} Müşteri Uyarısı
-              </span>
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                <span className="text-xs font-bold px-3 py-1 rounded-full bg-amber-200/70 text-amber-900 border border-amber-300">
+                  {quotaAlerts.length} Müşteri Uyarısı
+                </span>
+                {onNavigate && (
+                  <button
+                    onClick={() => onNavigate('customer_quotas')}
+                    className="text-xs font-semibold px-2.5 py-1 bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-full transition-colors cursor-pointer"
+                  >
+                    Kotaları İncele ➔
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
@@ -551,9 +627,19 @@ export default function Dashboard() {
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <TrendingUp size={18} className="text-slate-600" />
-          <h2 className="font-semibold text-slate-900">Son Sevkiyatlar</h2>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <TrendingUp size={18} className="text-slate-600" />
+            <h2 className="font-semibold text-slate-900">Son Sevkiyatlar</h2>
+          </div>
+          {onNavigate && (
+            <button
+              onClick={() => onNavigate('shipment')}
+              className="text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors cursor-pointer"
+            >
+              Tüm Sevkiyatları Gör <ArrowRight size={13} />
+            </button>
+          )}
         </div>
         {recentShipments.length === 0 ? (
           <p className="text-slate-400 text-sm py-8 text-center">Henüz sevkiyat kaydı bulunmuyor.</p>
