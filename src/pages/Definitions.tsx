@@ -182,10 +182,10 @@ function CustomerFormComp({ initial, onSave, onClose }: { initial?: Customer; on
 
   const addSite = async () => {
     if (!activeCustomerId || !siteForm.name) return;
-    await supabase.from('sites').insert({ ...siteForm, customer_id: activeCustomerId });
+    await supabase.from('sites').insert({ ...siteForm, customer_id: activeCustomerId, is_active: true });
     setSiteForm({ name: '', address: '', contact_person: '', contact_phone: '' });
     setShowSiteForm(false);
-    supabase.from('sites').select('*').eq('customer_id', activeCustomerId).then(({ data }) => setSites(data || []));
+    supabase.from('sites').select('*').eq('customer_id', activeCustomerId).order('name').then(({ data }) => setSites(data || []));
   };
 
   const isNewlySaved = !initial && !!savedCustomer;
