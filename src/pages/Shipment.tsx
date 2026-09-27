@@ -30,6 +30,7 @@ import {
   ArrowRight,
   Calendar,
   FileText,
+  ArrowUp,
 } from 'lucide-react';
 import { scanWaybillImageForShipment, ParsedShipmentOCRData, smartMatchProduct } from '../utils/aiVisionOCREngine';
 
@@ -2602,6 +2603,35 @@ export default function ShipmentPage() {
   const [search, setSearch] = useState('');
   const [filterDate, setFilterDate] = useState('');
 
+  // Scroll to Top & Table Scrolling State
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+
+  const handleTableScroll = () => {
+    if (tableContainerRef.current) {
+      setShowScrollTop(tableContainerRef.current.scrollTop > 150);
+    }
+  };
+
+  const scrollToTop = () => {
+    if (tableContainerRef.current) {
+      tableContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    const handleWinScroll = () => {
+      if (window.scrollY > 250) {
+        setShowScrollTop(true);
+      } else if (tableContainerRef.current && tableContainerRef.current.scrollTop <= 150) {
+        setShowScrollTop(false);
+      }
+    };
+    window.addEventListener('scroll', handleWinScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleWinScroll);
+  }, []);
+
   const load = async () => {
     setLoading(true);
     let shipList: Shipment[] = [];
@@ -2817,8 +2847,8 @@ export default function ShipmentPage() {
       </div>
 
       {/* ── SHIPMENTS TABLE & SEARCH ── */}
-      <div className="bg-white rounded-2xl shadow-xs border border-slate-100 overflow-hidden">
-        <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row items-center gap-3 bg-slate-50/50">
+      <div className="bg-white rounded-2xl shadow-xs border border-slate-100 overflow-hidden relative">
+        <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-50/70">
           <div className="flex-1 relative w-full sm:w-auto">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
@@ -2829,7 +2859,10 @@ export default function ShipmentPage() {
               className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
             />
           </div>
-          <div className="flex items-center gap-2 w-full sm:w-auto justify-between">
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-between flex-wrap">
+            <span className="text-xs font-bold text-slate-600 bg-slate-100 px-2.5 py-1.5 rounded-xl border border-slate-200">
+              {filtered.length} İrsaliye
+            </span>
             <div className="flex items-center gap-1.5">
               <Filter size={15} className="text-slate-400" />
               <input
@@ -2848,6 +2881,17 @@ export default function ShipmentPage() {
                 Temizle
               </button>
             )}
+            {showScrollTop && (
+              <button
+                type="button"
+                onClick={scrollToTop}
+                className="flex items-center gap-1 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-xl text-xs font-bold transition-all border border-blue-200 shadow-2xs cursor-pointer animate-in fade-in"
+                title="Tablonun en başına çık"
+              >
+                <ArrowUp size={13} />
+                <span className="hidden sm:inline">Yukarı Çık</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -2856,19 +2900,28 @@ export default function ShipmentPage() {
             <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 font-bold uppercase tracking-wider">
-                  <th className="px-3.5 py-3">İrsaliye</th>
-                  <th className="px-3 py-3">Tarih</th>
-                  <th className="px-3.5 py-3">Müşteri / Şantiye</th>
-                  <th className="px-3 py-3">Araç / Sürücü</th>
-                  <th className="px-3 py-3 text-right">Net Tonaj</th>
-                  <th className="px-3.5 py-3">Sevk Edilen Ürünler</th>
-                  <th className="px-3 py-3 text-right">Birim Fiyat</th>
-                  <th className="px-3 py-3 text-center">Durum</th>
-                  <th className="px-3 py-3 text-center w-28">İşlem</th>
+          <>
+            <div
+              ref={tableContainerRef}
+              onScroll={handleTableScroll}
+              className="overflow-x-auto overflow-y-auto max-h-[620px] custom-scrollbar border-b border-slate-100 relative"
+              style={{
+                scrollbarWidth: 'thin',
+                scrollbarColor: '#94a3b8 #f1f5f9',
+              }}
+            >
+            <table className="w-full text-xs text-left border-collapse relative">
+              <thead className="sticky top-0 z-20 shadow-xs">
+                <tr className="bg-slate-100 border-b border-slate-200 text-slate-700 font-bold uppercase tracking-wider text-[11px]">
+                  <th className="px-3.5 py-3 sticky top-0 bg-slate-100/95 backdrop-blur-xs">İrsaliye</th>
+                  <th className="px-3 py-3 sticky top-0 bg-slate-100/95 backdrop-blur-xs">Tarih</th>
+                  <th className="px-3.5 py-3 sticky top-0 bg-slate-100/95 backdrop-blur-xs">Müşteri / Şantiye</th>
+                  <th className="px-3 py-3 sticky top-0 bg-slate-100/95 backdrop-blur-xs">Araç / Sürücü</th>
+                  <th className="px-3 py-3 text-right sticky top-0 bg-slate-100/95 backdrop-blur-xs">Net Tonaj</th>
+                  <th className="px-3.5 py-3 sticky top-0 bg-slate-100/95 backdrop-blur-xs">Sevk Edilen Ürünler</th>
+                  <th className="px-3 py-3 text-right sticky top-0 bg-slate-100/95 backdrop-blur-xs">Birim Fiyat</th>
+                  <th className="px-3 py-3 text-center sticky top-0 bg-slate-100/95 backdrop-blur-xs">Durum</th>
+                  <th className="px-3 py-3 text-center w-28 sticky top-0 bg-slate-100/95 backdrop-blur-xs">İşlem</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -3012,7 +3065,28 @@ export default function ShipmentPage() {
               </tbody>
             </table>
           </div>
-        )}
+
+          {/* Table Footer Bar with Record Count & Quick Scroll */}
+          <div className="p-3 bg-slate-50/90 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600 font-medium">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-slate-800">{filtered.length} İrsaliye Kaydı</span>
+              <span className="text-slate-400">|</span>
+              <span className="text-slate-500">Kantar & Sevkiyat Çıkış Kütüğü</span>
+            </div>
+            {filtered.length > 5 && (
+              <button
+                type="button"
+                onClick={scrollToTop}
+                className="flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-slate-100 text-blue-700 font-bold rounded-lg border border-slate-200 transition-colors shadow-2xs cursor-pointer"
+                title="Listenin en başına dön"
+              >
+                <ArrowUp size={13} />
+                <span>En Başa Çık</span>
+              </button>
+            )}
+          </div>
+        </>
+      )}
       </div>
 
       {/* ── CREATE / EDIT SHIPMENT MODAL ── */}
@@ -3104,6 +3178,38 @@ export default function ShipmentPage() {
           onClose={() => setSavedSuccessShipment(null)}
         />
       )}
+
+      {/* ── FLOATING QUICK SCROLL TO TOP BUTTON ── */}
+      {showScrollTop && (
+        <button
+          type="button"
+          onClick={scrollToTop}
+          className="fixed bottom-6 right-6 z-40 flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-2xl hover:shadow-blue-500/50 transition-all duration-300 transform hover:-translate-y-1 active:scale-95 cursor-pointer font-bold text-xs animate-in fade-in zoom-in-90 border-2 border-white"
+          title="Listenin en başına çık"
+        >
+          <ArrowUp size={16} className="animate-bounce" />
+          <span>Yukarı Çık</span>
+        </button>
+      )}
+
+      {/* ── CUSTOM SCROLLBAR STYLES ── */}
+      <style>{`
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 8px;
+          height: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: #f8fafc;
+          border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: #94a3b8;
+          border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: #64748b;
+        }
+      `}</style>
     </div>
   );
 }
