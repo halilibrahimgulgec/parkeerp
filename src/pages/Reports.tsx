@@ -257,8 +257,8 @@ export default function Reports() {
   const [loading, setLoading] = useState(true);
 
   // Production and Shipment Metrics
-  const [productionMetrics, setProductionMetrics] = useState({ totalM2: 0, totalMetre: 0, totalAdet: 0 });
-  const [shipmentMetrics, setShipmentMetrics] = useState({ totalM2: 0, totalMetre: 0, totalAdet: 0, totalTonnage: 0, shipmentCount: 0 });
+  const [productionMetrics, setProductionMetrics] = useState({ totalM2: 0, totalMetre: 0, totalAdet: 0, totalPallets: 0, totalVolume: 0 });
+  const [shipmentMetrics, setShipmentMetrics] = useState({ totalM2: 0, totalMetre: 0, totalAdet: 0, totalVolume: 0, totalTonnage: 0, shipmentCount: 0 });
 
   // Customer Quotas & Open Balance
   const [quotas, setQuotas] = useState<QuotaDetailItem[]>([]);
@@ -314,7 +314,7 @@ export default function Reports() {
         const [prodMonthRes, shipMonthRes, stocksRes, costsRes, shipmentsRes, quotasRes, allShipmentItemsRes] = await Promise.all([
           supabase
             .from('production_entries')
-            .select('product_id, net_m2, date, products(unit)')
+            .select('product_id, net_m2, total_pallets, date, products(unit)')
             .gte('date', startDate)
             .lte('date', endDate),
           supabase
@@ -349,16 +349,19 @@ export default function Reports() {
         let pM2 = 0;
         let pMetre = 0;
         let pAdet = 0;
+        let pPallets = 0;
         const productMap: Record<string, number> = {};
         (prodMonthRes.data || []).forEach((r: any) => {
           const qty = Number(r.net_m2) || 0;
           productMap[r.product_id] = (productMap[r.product_id] || 0) + qty;
+          pPallets += Number(r.total_pallets) || 0;
           const u = r.products?.unit;
           if (u === 'metre') pMetre += qty;
           else if (u === 'adet') pAdet += qty;
           else pM2 += qty;
         });
-        setProductionMetrics({ totalM2: pM2, totalMetre: pMetre, totalAdet: pAdet });
+        const pTotalVol = pM2 + pMetre + pAdet;
+        setProductionMetrics({ totalM2: pM2, totalMetre: pMetre, totalAdet: pAdet, totalPallets: pPallets, totalVolume: pTotalVol });
 
         // 2. Shipment Items Map for Stock Table
         const shipMap: Record<string, number> = {};
@@ -398,7 +401,7 @@ export default function Reports() {
         });
         setCostBreakdown(cd);
 
-        const uc = pM2 > 0 ? cd.total / pM2 : 0;
+        const uc = pTotalVol > 0 ? cd.total / pTotalVol : pM2 > 0 ? cd.total / pM2 : 0;
         setUnitCost(uc);
 
         // 5. Profit Items & Shipments
@@ -453,10 +456,12 @@ export default function Reports() {
         });
         setProfitItems(profItems);
 
+        const sTotalVol = sM2 + sMetre + sAdet;
         setShipmentMetrics({
           totalM2: sM2,
           totalMetre: sMetre,
           totalAdet: sAdet,
+          totalVolume: sTotalVol,
           totalTonnage: sTonnage,
           shipmentCount: shipData.length,
         });
@@ -785,24 +790,60 @@ export default function Reports() {
                   <div className="w-10 h-10 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center font-bold">
                     <Package size={20} />
                   </div>
-                  <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                    Üretim
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {productionMetrics.totalPallets > 0 && (
+                      <span className="text-[11px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
+                        {productionMetrics.totalPallets.toLocaleString('tr-TR')} Palet
+                      </span>
+                    )}
+                    <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                      Üretim
+                    </span>
+                  </div>
                 </div>
-                <p className="text-2xl font-black text-slate-900 tracking-tight">
-                  {productionMetrics.totalM2.toLocaleString('tr-TR', { maximumFractionDigits: 0 })}{' '}
-                  <span className="text-base font-bold text-slate-500">m²</span>
+
+                {/* Ana Toplam: Parke + Bordür Genel Hacim */}
+                <div className="flex items-baseline justify-between gap-1 flex-wrap">
+                  <p className="text-2xl font-black text-slate-900 tracking-tight">
+                    {productionMetrics.totalVolume.toLocaleString('tr-TR', { maximumFractionDigits: 0 })}{' '}
+                    <span className="text-base font-bold text-slate-500">
+                      {productionMetrics.totalMetre > 0 ? 'm² + m' : 'm²'}
+                    </span>
+                  </p>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5 font-medium">
+                  Toplam Üretim Miktarı {productionMetrics.totalMetre > 0 ? '(Parke + Bordür)' : ''}
                 </p>
-                <p className="text-xs text-slate-500 mt-0.5 font-medium">Toplam Üretim Miktarı</p>
+
+                {/* Alt Kırılım Rozetleri: Parke / Bordür / Adet */}
+                <div className="mt-3 pt-2.5 border-t border-slate-100 flex flex-wrap items-center gap-1.5 text-xs">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-50 text-amber-900 font-bold border border-amber-200/70 text-[11px]">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                    Parke: {productionMetrics.totalM2.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} m²
+                  </span>
+                  {productionMetrics.totalMetre > 0 && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-100 text-slate-800 font-bold border border-slate-200 text-[11px]">
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                      Bordür: {productionMetrics.totalMetre.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} m
+                    </span>
+                  )}
+                  {productionMetrics.totalAdet > 0 && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-purple-50 text-purple-800 font-bold border border-purple-200 text-[11px]">
+                      <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                      Adet: {productionMetrics.totalAdet.toLocaleString('tr-TR', { maximumFractionDigits: 0 })}
+                    </span>
+                  )}
+                </div>
               </div>
+
               <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
                 <div>
                   <span className="text-slate-400">Birim Maliyet: </span>
-                  <span className="font-bold text-slate-800">₺{unitCost.toFixed(2)}/m²</span>
+                  <span className="font-bold text-slate-800">₺{unitCost.toFixed(2)}/{productionMetrics.totalMetre > 0 ? 'birim' : 'm²'}</span>
                 </div>
-                {productionMetrics.totalMetre > 0 && (
-                  <span className="font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
-                    {productionMetrics.totalMetre.toLocaleString('tr-TR')} m
+                {productionMetrics.totalPallets > 0 && (
+                  <span className="font-semibold text-slate-500">
+                    Toplam {productionMetrics.totalPallets.toLocaleString('tr-TR')} Palet
                   </span>
                 )}
               </div>
@@ -816,20 +857,45 @@ export default function Reports() {
                   <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center font-bold">
                     <Truck size={20} />
                   </div>
-                  <span className="text-[11px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
-                    Sevkiyat
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {shipmentMetrics.totalTonnage > 0 && (
+                      <span className="text-[11px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
+                        {shipmentMetrics.totalTonnage.toFixed(1)} Ton
+                      </span>
+                    )}
+                    <span className="text-[11px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
+                      Sevkiyat
+                    </span>
+                  </div>
                 </div>
+
                 <p className="text-2xl font-black text-slate-900 tracking-tight">
-                  {shipmentMetrics.totalM2.toLocaleString('tr-TR', { maximumFractionDigits: 0 })}{' '}
-                  <span className="text-base font-bold text-slate-500">m²</span>
+                  {(shipmentMetrics.totalVolume > 0 ? shipmentMetrics.totalVolume : shipmentMetrics.totalM2).toLocaleString('tr-TR', { maximumFractionDigits: 0 })}{' '}
+                  <span className="text-base font-bold text-slate-500">
+                    {shipmentMetrics.totalMetre > 0 ? 'm² + m' : 'm²'}
+                  </span>
                 </p>
-                <p className="text-xs text-slate-500 mt-0.5 font-medium">Toplam Sevk Edilen</p>
+                <p className="text-xs text-slate-500 mt-0.5 font-medium">
+                  Toplam Sevk Edilen {shipmentMetrics.totalMetre > 0 ? '(Parke + Bordür)' : ''}
+                </p>
+
+                {shipmentMetrics.totalMetre > 0 && (
+                  <div className="mt-3 pt-2.5 border-t border-slate-100 flex flex-wrap items-center gap-1.5 text-xs">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-blue-50 text-blue-900 font-bold border border-blue-200/70 text-[11px]">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                      Parke: {shipmentMetrics.totalM2.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} m²
+                    </span>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-100 text-slate-800 font-bold border border-slate-200 text-[11px]">
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                      Bordür: {shipmentMetrics.totalMetre.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} m
+                    </span>
+                  </div>
+                )}
               </div>
               <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
                 <span className="font-bold text-slate-700">{shipmentMetrics.shipmentCount} Sefer / İrsaliye</span>
                 <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded">
-                  {shipmentMetrics.totalTonnage > 0 ? `${shipmentMetrics.totalTonnage.toFixed(1)} Ton` : '-'}
+                  {shipmentMetrics.totalTonnage > 0 ? `${shipmentMetrics.totalTonnage.toFixed(1)} Ton` : `${shipmentMetrics.shipmentCount} İrsaliye`}
                 </span>
               </div>
             </div>
