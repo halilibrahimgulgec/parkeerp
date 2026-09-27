@@ -59,7 +59,7 @@ function AppContent() {
 
   const PAGE_MAP: Record<Page, JSX.Element> = {
     dashboard: <Dashboard onNavigate={setCurrentPage} />,
-    production: <Production />,
+    production: <Production onNavigate={setCurrentPage} />,
     production_planning: <ProductionPlanning />,
     purchases: <Purchases />,
     shipment: <ShipmentPage />,

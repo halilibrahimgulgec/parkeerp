@@ -6,8 +6,15 @@ import Modal from '../components/Modal';
 import {
   Plus, Factory, Search, Filter, Calendar, CreditCard as Edit2,
   AlertCircle, Trash2, Sparkles, Download, Layers, Package,
-  ChevronDown, ChevronUp, RotateCcw, Printer, CheckCircle2, TrendingUp, X, Target
+  ChevronDown, ChevronUp, RotateCcw, Printer, CheckCircle2, TrendingUp, X, Target,
+  BookOpen, ArrowRight, Check
 } from 'lucide-react';
+
+export const generateDefaultLot = (dateStr: string, machine: string, shift: string) => {
+  const cleanDate = (dateStr || new Date().toISOString().split('T')[0]).replace(/-/g, '');
+  const shiftChar = shift === 'Gece' ? 'GEC' : 'GUN';
+  return `LOT-${cleanDate}-M${machine}-${shiftChar}`;
+};
 
 interface ProductionFormData {
   date: string;
@@ -30,14 +37,14 @@ const EMPTY_FORM: ProductionFormData = {
   total_pallets: 0,
   total_m2: 0,
   waste_m2: 0,
-  lot_number: '',
+  lot_number: generateDefaultLot(new Date().toISOString().split('T')[0], '1', 'Gündüz'),
   notes: '',
   plan_item_id: null,
 };
 
 function ProductionForm({ products, onSave, onClose, initial }: {
   products: Product[];
-  onSave: () => void;
+  onSave: (savedInfo?: any) => void;
   onClose: () => void;
   initial?: ProductionEntry;
 }) {
@@ -57,6 +64,7 @@ function ProductionForm({ products, onSave, onClose, initial }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [matchedPlanItem, setMatchedPlanItem] = useState<any | null>(null);
+  const [bomItems, setBomItems] = useState<any[]>([]);
 
   // Auto detect active scheduled plan item for date + machine + shift
   useEffect(() => {
@@ -74,23 +82,89 @@ function ProductionForm({ products, onSave, onClose, initial }: {
       );
   }, [form.date, form.machine_no, form.shift]);
 
+  // Load Reçete (BOM) items for the selected product
+  useEffect(() => {
+    if (!form.product_id) {
+      setBomItems([]);
+      return;
+    }
+    supabase
+      .from('bom_items')
+      .select('*, raw_materials(*)')
+      .eq('product_id', form.product_id)
+      .then(({ data }) => setBomItems(data || []))
+      .catch(() => setBomItems([]));
+  }, [form.product_id]);
+
   const selectedProduct = products.find(p => p.id === form.product_id);
 
   const handleProductChange = (productId: string) => {
     const p = products.find(x => x.id === productId);
-    const m2 = p ? form.total_pallets * p.m2_per_pallet : 0;
+    let m2 = form.total_m2;
+    if (p && form.total_pallets > 0) {
+      m2 = parseFloat((form.total_pallets * p.m2_per_pallet).toFixed(2));
+    }
     setForm(f => ({ ...f, product_id: productId, total_m2: m2 }));
   };
 
   const handlePalletsChange = (pallets: number) => {
-    const m2 = selectedProduct ? pallets * selectedProduct.m2_per_pallet : 0;
+    const m2 = selectedProduct ? parseFloat((pallets * selectedProduct.m2_per_pallet).toFixed(2)) : 0;
     setForm(f => ({ ...f, total_pallets: pallets, total_m2: m2 }));
+  };
+
+  const handleM2Change = (m2Val: number) => {
+    const pallets = (selectedProduct && selectedProduct.m2_per_pallet > 0)
+      ? Math.round(m2Val / selectedProduct.m2_per_pallet)
+      : form.total_pallets;
+    setForm(f => ({ ...f, total_m2: m2Val, total_pallets: pallets }));
+  };
+
+  const handleQuickWaste = (pct: number) => {
+    const waste = parseFloat(((form.total_m2 * pct) / 100).toFixed(2));
+    setForm(f => ({ ...f, waste_m2: waste }));
+  };
+
+  const handleDateChange = (newDate: string) => {
+    setForm(f => {
+      const isAutoLot = !initial && (!f.lot_number || f.lot_number.startsWith('LOT-'));
+      return {
+        ...f,
+        date: newDate,
+        lot_number: isAutoLot ? generateDefaultLot(newDate, f.machine_no, f.shift) : f.lot_number,
+      };
+    });
+  };
+
+  const handleShiftChange = (newShift: 'Gündüz' | 'Gece') => {
+    setForm(f => {
+      const isAutoLot = !initial && (!f.lot_number || f.lot_number.startsWith('LOT-'));
+      return {
+        ...f,
+        shift: newShift,
+        lot_number: isAutoLot ? generateDefaultLot(f.date, f.machine_no, newShift) : f.lot_number,
+      };
+    });
+  };
+
+  const handleMachineChange = (newMachine: string) => {
+    setForm(f => {
+      const isAutoLot = !initial && (!f.lot_number || f.lot_number.startsWith('LOT-'));
+      return {
+        ...f,
+        machine_no: newMachine,
+        lot_number: isAutoLot ? generateDefaultLot(f.date, newMachine, f.shift) : f.lot_number,
+      };
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.product_id) { setError('Ürün seçiniz.'); return; }
-    if (form.waste_m2 > form.total_m2) { setError('Fire miktarı toplam m2\'den fazla olamaz.'); return; }
+    if (!form.product_id) { setError('Lütfen üretilen ürünü seçiniz.'); return; }
+    if (form.total_pallets <= 0 && form.total_m2 <= 0) {
+      setError('Lütfen üretilen palet veya metraj miktarını giriniz.');
+      return;
+    }
+    if (form.waste_m2 > form.total_m2) { setError('Fire miktarı toplam miktardan fazla olamaz.'); return; }
     setSaving(true);
     setError('');
     const payload = { ...form, created_by: user?.id };
@@ -129,7 +203,19 @@ function ProductionForm({ products, onSave, onClose, initial }: {
       }
     }
 
-    onSave();
+    const savedInfo = {
+      productName: selectedProduct?.name || 'Ürün',
+      lotNumber: form.lot_number,
+      machineNo: form.machine_no,
+      shift: form.shift,
+      pallets: form.total_pallets,
+      netM2: Math.max(0, form.total_m2 - form.waste_m2),
+      unit: selectedProduct?.unit || 'm²',
+      date: form.date,
+      isEdit: !!initial,
+    };
+
+    onSave(savedInfo);
   };
 
   return (
@@ -152,7 +238,7 @@ function ProductionForm({ products, onSave, onClose, initial }: {
               handleProductChange(matchedPlanItem.product_id);
               setForm(f => ({ ...f, plan_item_id: matchedPlanItem.id }));
             }}
-            className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-lg shadow-xs transition-colors shrink-0"
+            className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-lg shadow-xs transition-colors shrink-0 cursor-pointer"
           >
             İş Emrini Yükle
           </button>
@@ -162,92 +248,167 @@ function ProductionForm({ products, onSave, onClose, initial }: {
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Tarih *</label>
-          <input type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400" required />
+          <input type="date" value={form.date} onChange={e => handleDateChange(e.target.value)}
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 text-sm font-medium" required />
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Vardiya *</label>
-          <select value={form.shift} onChange={e => setForm(f => ({ ...f, shift: e.target.value as any }))}
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 font-semibold">
-            <option value="Gündüz">Gündüz Vardiyası</option>
-            <option value="Gece">Gece Vardiyası</option>
+          <select value={form.shift} onChange={e => handleShiftChange(e.target.value as any)}
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 font-semibold text-sm">
+            <option value="Gündüz">☀️ Gündüz Vardiyası</option>
+            <option value="Gece">🌙 Gece Vardiyası</option>
           </select>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Makine *</label>
-          <select value={form.machine_no} onChange={e => setForm(f => ({ ...f, machine_no: e.target.value }))}
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 font-bold">
+          <label className="block text-sm font-medium text-slate-700 mb-1">Makine / Hat *</label>
+          <select value={form.machine_no} onChange={e => handleMachineChange(e.target.value)}
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 font-bold text-sm">
             <option value="1">1 Nolu Parke Makinesi (Hat 1)</option>
             <option value="2">2 Nolu Parke & Bordür Makinesi (Hat 2)</option>
           </select>
         </div>
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Lot Numarası *</label>
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-sm font-medium text-slate-700">Lot Numarası *</label>
+            <button
+              type="button"
+              onClick={() => setForm(f => ({ ...f, lot_number: generateDefaultLot(f.date, f.machine_no, f.shift) }))}
+              className="text-[11px] text-amber-600 hover:text-amber-800 font-semibold cursor-pointer"
+              title="Standart lot kodunu yeniden oluştur"
+            >
+              🔄 Otomatik Doldur
+            </button>
+          </div>
           <input type="text" value={form.lot_number} onChange={e => setForm(f => ({ ...f, lot_number: e.target.value }))}
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400"
-            placeholder="LOT-2024-001" required />
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 font-mono text-sm"
+            placeholder="LOT-20260927-M1-GUN" required />
         </div>
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-slate-700 mb-1">Ürün *</label>
+        <label className="block text-sm font-medium text-slate-700 mb-1">Üretilen Ürün *</label>
         <select value={form.product_id} onChange={e => handleProductChange(e.target.value)}
-          className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400" required>
-          <option value="">Ürün seçin...</option>
+          className="w-full border border-slate-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-amber-400 font-medium text-sm" required>
+          <option value="">Ürün seçiniz...</option>
           {products.map(p => (
             <option key={p.id} value={p.id}>
-              {p.name} — {p.product_type} / {p.thickness} / {p.color}
+              {p.name} — {p.product_type} / {p.thickness} / {p.color} ({p.unit === 'metre' ? 'Metre' : p.unit === 'adet' ? 'Adet' : 'm²'})
             </option>
           ))}
         </select>
         {selectedProduct && (
-          <p className="text-xs text-slate-400 mt-1">1 Palet = {selectedProduct.m2_per_pallet} {selectedProduct.unit === 'metre' ? 'Metre' : selectedProduct.unit === 'adet' ? 'Adet' : 'm²'}</p>
+          <div className="flex items-center justify-between mt-1 text-xs text-slate-500">
+            <span>📦 1 Palet = <strong>{selectedProduct.m2_per_pallet}</strong> {selectedProduct.unit === 'metre' ? 'Metre' : selectedProduct.unit === 'adet' ? 'Adet' : 'm²'}</span>
+            <span className="text-amber-600 font-medium">Birim: {selectedProduct.unit || 'm²'}</span>
+          </div>
         )}
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Toplam Palet *</label>
-          <input type="number" min="0" step="1" value={form.total_pallets}
+          <input type="number" min="0" step="1" value={form.total_pallets || ''}
             onChange={e => handlePalletsChange(Number(e.target.value))}
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400" required />
+            placeholder="0"
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 font-bold text-slate-900" required />
+          <p className="text-[10px] text-slate-400 mt-0.5">Palet girince m² otomatik hesaplanır</p>
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">
             Toplam {selectedProduct?.unit === 'metre' ? 'Metre' : selectedProduct?.unit === 'adet' ? 'Adet' : 'm²'}
           </label>
-          <input type="number" min="0" step="0.01" value={form.total_m2}
-            onChange={e => setForm(f => ({ ...f, total_m2: Number(e.target.value) }))}
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" />
+          <input type="number" min="0" step="0.01" value={form.total_m2 || ''}
+            onChange={e => handleM2Change(Number(e.target.value))}
+            placeholder="0.00"
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-amber-50/30 font-semibold" />
+          <p className="text-[10px] text-slate-400 mt-0.5">Metraj girince palet güncellenir</p>
         </div>
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">
-            Fire {selectedProduct?.unit === 'metre' ? 'Metre' : selectedProduct?.unit === 'adet' ? 'Adet' : 'm²'}
-          </label>
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-sm font-medium text-slate-700">
+              Fire ({selectedProduct?.unit === 'metre' ? 'm' : selectedProduct?.unit === 'adet' ? 'ad.' : 'm²'})
+            </label>
+          </div>
           <input type="number" min="0" step="0.01" value={form.waste_m2}
             onChange={e => setForm(f => ({ ...f, waste_m2: Number(e.target.value) }))}
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400" />
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 text-red-600 font-semibold" />
+          <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+            {[0, 1, 2, 3].map(pct => (
+              <button
+                key={pct}
+                type="button"
+                onClick={() => handleQuickWaste(pct)}
+                className={`text-[10px] px-1.5 py-0.5 rounded font-semibold transition-colors cursor-pointer ${
+                  form.total_m2 > 0 && form.waste_m2 === parseFloat(((form.total_m2 * pct) / 100).toFixed(2))
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                }`}
+              >
+                %{pct} Fire
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm">
-        <span className="font-semibold text-amber-800">
-          Net {selectedProduct?.unit === 'metre' ? 'Metre' : selectedProduct?.unit === 'adet' ? 'Adet' : 'm²'}: 
-        </span>{' '}
-        <span className="text-amber-700">
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-center justify-between text-sm">
+        <span className="font-semibold text-amber-900">
+          Net Üretim ({selectedProduct?.unit === 'metre' ? 'Metre' : selectedProduct?.unit === 'adet' ? 'Adet' : 'm²'}):
+        </span>
+        <span className="text-base font-bold text-amber-800">
           {Math.max(form.total_m2 - form.waste_m2, 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 })}{' '}
           {selectedProduct?.unit === 'metre' ? 'Metre' : selectedProduct?.unit === 'adet' ? 'Adet' : 'm²'}
         </span>
       </div>
 
+      {/* 🧪 Reçeteye Göre Canlı Hammadde Sarfiyat Önizlemesi */}
+      {bomItems.length > 0 && Math.max(0, form.total_m2 - form.waste_m2) > 0 && (
+        <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl p-3.5 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+              <BookOpen size={14} className="text-emerald-600" />
+              🧪 Reçeteye Göre Tahmini Hammadde Sarfiyatı (Net {Math.max(0, form.total_m2 - form.waste_m2).toLocaleString('tr-TR')} {selectedProduct?.unit || 'm²'} için):
+            </span>
+            <span className="text-[10px] bg-emerald-200 text-emerald-800 font-bold px-2 py-0.5 rounded-full">
+              {bomItems.length} Hammadde
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
+            {bomItems.map((item: any) => {
+              const netQty = Math.max(0, form.total_m2 - form.waste_m2);
+              const totalRaw = item.quantity_per_m2 * netQty;
+              const isTon = item.raw_materials?.unit === 'kg' && totalRaw >= 1000;
+              return (
+                <div key={item.id} className="bg-white/95 rounded-lg p-2 border border-emerald-100 shadow-2xs">
+                  <span className="text-[11px] font-semibold text-slate-700 block truncate">
+                    {item.raw_materials?.name || 'Hammadde'}
+                  </span>
+                  <span className="text-xs font-bold text-emerald-700">
+                    {totalRaw.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {item.raw_materials?.unit || 'kg'}
+                    {isTon && (
+                      <span className="text-[10px] text-slate-500 font-normal ml-1">
+                        ({(totalRaw / 1000).toLocaleString('tr-TR', { maximumFractionDigits: 2 })} Ton)
+                      </span>
+                    )}
+                  </span>
+                  <span className="text-[10px] text-slate-400 block mt-0.5">
+                    Birim: {item.quantity_per_m2} {item.raw_materials?.unit || 'kg'} / {selectedProduct?.unit || 'm²'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div>
         <label className="block text-sm font-medium text-slate-700 mb-1">Notlar</label>
         <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-          className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
-          rows={2} placeholder="Opsiyonel notlar..." />
+          className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none text-sm"
+          rows={2} placeholder="Opsiyonel vardiya notları..." />
       </div>
 
       {error && (
@@ -259,11 +420,11 @@ function ProductionForm({ products, onSave, onClose, initial }: {
 
       <div className="flex justify-end gap-3 pt-2">
         <button type="button" onClick={onClose}
-          className="px-4 py-2 border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors text-sm">
+          className="px-4 py-2 border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium cursor-pointer">
           İptal
         </button>
         <button type="submit" disabled={saving}
-          className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors disabled:opacity-60 flex items-center gap-2">
+          className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-bold text-sm transition-colors disabled:opacity-60 flex items-center gap-2 cursor-pointer shadow-xs">
           {saving && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
           {initial ? 'Güncelle' : 'Kaydet'}
         </button>
@@ -279,13 +440,18 @@ const getLocalDateStr = (d = new Date()) => {
   return `${year}-${month}-${day}`;
 };
 
-export default function Production() {
+interface ProductionProps {
+  onNavigate?: (page: any) => void;
+}
+
+export default function Production({ onNavigate }: ProductionProps = {}) {
   const [entries, setEntries] = useState<ProductionEntry[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editEntry, setEditEntry] = useState<ProductionEntry | undefined>();
   const [deleting, setDeleting] = useState<string | undefined>(undefined);
+  const [savedSuccessInfo, setSavedSuccessInfo] = useState<any | null>(null);
 
   // Filters
   const [search, setSearch] = useState('');
@@ -1066,10 +1232,90 @@ export default function Production() {
         >
           <ProductionForm
             products={products}
-            onSave={() => { setShowModal(false); load(); }}
+            onSave={(savedInfo) => {
+              setShowModal(false);
+              load();
+              if (savedInfo && !savedInfo.isEdit) {
+                setSavedSuccessInfo(savedInfo);
+              }
+            }}
             onClose={() => setShowModal(false)}
             initial={editEntry}
           />
+        </Modal>
+      )}
+
+      {/* Kayıt Sonrası Başarı ve Hızlı Aksiyon Modalı */}
+      {savedSuccessInfo && (
+        <Modal
+          title="Üretim Kaydı Başarılı"
+          onClose={() => setSavedSuccessInfo(null)}
+          size="md"
+        >
+          <div className="text-center py-2 space-y-4">
+            <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-sm">
+              <CheckCircle2 size={36} />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">Üretim Kaydı Sisteme İşlendi!</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Günlük fabrika sahası hazır ürün stoğuna ve vardiya istatistiklerine yansıtıldı.
+              </p>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-left space-y-2 text-xs">
+              <div className="flex justify-between border-b border-slate-200 pb-1.5">
+                <span className="text-slate-500">Üretilen Ürün:</span>
+                <span className="font-bold text-slate-800">{savedSuccessInfo.productName}</span>
+              </div>
+              <div className="flex justify-between border-b border-slate-200 pb-1.5">
+                <span className="text-slate-500">Lot Numarası:</span>
+                <span className="font-mono font-bold text-amber-700">{savedSuccessInfo.lotNumber}</span>
+              </div>
+              <div className="flex justify-between border-b border-slate-200 pb-1.5">
+                <span className="text-slate-500">Makine / Hat:</span>
+                <span className="font-semibold text-slate-700">{savedSuccessInfo.machineNo} Nolu Makine ({savedSuccessInfo.shift})</span>
+              </div>
+              <div className="flex justify-between pt-0.5">
+                <span className="text-slate-500">Toplam Miktar:</span>
+                <span className="font-bold text-emerald-700 text-sm">
+                  {savedSuccessInfo.pallets} Palet • {savedSuccessInfo.netM2.toLocaleString('tr-TR')} {savedSuccessInfo.unit}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center gap-2 pt-2">
+              <button
+                onClick={() => {
+                  setSavedSuccessInfo(null);
+                  setEditEntry(undefined);
+                  setShowModal(true);
+                }}
+                className="w-full sm:flex-1 py-2.5 px-4 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+              >
+                <Plus size={15} /> + Yeni Üretim Gir
+              </button>
+
+              {onNavigate && (
+                <button
+                  onClick={() => {
+                    setSavedSuccessInfo(null);
+                    onNavigate('shipment');
+                  }}
+                  className="w-full sm:flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                >
+                  <ArrowRight size={15} /> Sevkiyata Git
+                </button>
+              )}
+
+              <button
+                onClick={() => setSavedSuccessInfo(null)}
+                className="w-full sm:w-auto py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Kapat
+              </button>
+            </div>
+          </div>
         </Modal>
       )}
     </div>
