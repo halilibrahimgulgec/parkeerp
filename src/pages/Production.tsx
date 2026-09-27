@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { ProductionEntry, Product } from '../types';
@@ -7,7 +7,7 @@ import {
   Plus, Factory, Search, Filter, Calendar, CreditCard as Edit2,
   AlertCircle, Trash2, Sparkles, Download, Layers, Package,
   ChevronDown, ChevronUp, RotateCcw, Printer, CheckCircle2, TrendingUp, X, Target,
-  BookOpen, ArrowRight, Check
+  BookOpen, ArrowRight, Check, ArrowUp
 } from 'lucide-react';
 
 export const generateDefaultLot = (dateStr: string, machine: string, shift: string) => {
@@ -452,6 +452,35 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
   const [editEntry, setEditEntry] = useState<ProductionEntry | undefined>();
   const [deleting, setDeleting] = useState<string | undefined>(undefined);
   const [savedSuccessInfo, setSavedSuccessInfo] = useState<any | null>(null);
+
+  // Scroll to Top & Table Scrolling State
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+
+  const handleTableScroll = () => {
+    if (tableContainerRef.current) {
+      setShowScrollTop(tableContainerRef.current.scrollTop > 150);
+    }
+  };
+
+  const scrollToTop = () => {
+    if (tableContainerRef.current) {
+      tableContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    const handleWinScroll = () => {
+      if (window.scrollY > 250) {
+        setShowScrollTop(true);
+      } else if (tableContainerRef.current && tableContainerRef.current.scrollTop <= 150) {
+        setShowScrollTop(false);
+      }
+    };
+    window.addEventListener('scroll', handleWinScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleWinScroll);
+  }, []);
 
   // Filters
   const [search, setSearch] = useState('');
@@ -1145,11 +1174,24 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
             Vardiya Üretim Detay Kayıtları
             <span className="text-xs text-slate-400 font-normal">({filtered.length} Kayıt Listeleniyor)</span>
           </h3>
-          {selectedProductId !== 'all' && (
-            <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-bold">
-              Filtre: {selectedProductObj?.name}
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {selectedProductId !== 'all' && (
+              <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-bold">
+                Filtre: {selectedProductObj?.name}
+              </span>
+            )}
+            {showScrollTop && (
+              <button
+                type="button"
+                onClick={scrollToTop}
+                className="flex items-center gap-1 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 rounded-xl text-xs font-bold transition-all border border-amber-200 shadow-2xs cursor-pointer animate-in fade-in"
+                title="Tablonun en başına çık"
+              >
+                <ArrowUp size={13} />
+                <span className="hidden sm:inline">Yukarı Çık</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {loading ? (
@@ -1157,70 +1199,107 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
             <div className="w-8 h-8 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-slate-500 bg-slate-50 border-b border-slate-100">
-                  {['Tarih', 'Vardiya', 'Makine', 'Ürün', 'Palet', 'Toplam Miktar', 'Fire', 'Net Üretim', 'Lot No', ''].map((h, i) => (
-                    <th key={i} className="px-4 py-3 font-medium text-xs uppercase tracking-wider">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {filtered.length === 0 ? (
-                  <tr><td colSpan={10} className="text-center py-12 text-slate-400">Kayıt bulunamadı.</td></tr>
-                ) : filtered.map(entry => {
-                  const entryUnit = entry.products?.unit === 'metre' ? 'm' : entry.products?.unit === 'adet' ? 'ad.' : 'm²';
-                  return (
-                  <tr key={entry.id} className="hover:bg-amber-50/30 transition-colors">
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="flex items-center gap-1.5 text-slate-700">
-                        <Calendar size={13} className="text-slate-400" />
-                        {new Date(entry.date).toLocaleDateString('tr-TR')}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${entry.shift === 'Gündüz' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-700'}`}>
-                        {entry.shift}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-700 font-mono">{entry.machine_no}</td>
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-slate-800">{entry.products?.name}</div>
-                      <div className="text-xs text-slate-400">{entry.products?.thickness} / {entry.products?.color}</div>
-                    </td>
-                    <td className="px-4 py-3 text-slate-700">{entry.total_pallets}</td>
-                    <td className="px-4 py-3 text-slate-700 font-medium">
-                      {entry.total_m2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {entryUnit}
-                    </td>
-                    <td className="px-4 py-3 text-red-500 font-medium">
-                      {entry.waste_m2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {entryUnit}
-                    </td>
-                    <td className="px-4 py-3 font-semibold text-amber-700">
-                      {entry.net_m2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {entryUnit}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-slate-500 text-xs">{entry.lot_number}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1">
-                        <button onClick={() => { setEditEntry(entry); setShowModal(true); }}
-                          className="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer">
-                          <Edit2 size={14} />
-                        </button>
-                        <button onClick={() => handleDelete(entry)} disabled={deleting === entry.id}
-                          className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                          title="Sil">
-                          {deleting === entry.id
-                            ? <div className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
-                            : <Trash2 size={14} />}
-                        </button>
-                      </div>
-                    </td>
+          <>
+            <div
+              ref={tableContainerRef}
+              onScroll={handleTableScroll}
+              className="overflow-x-auto overflow-y-auto max-h-[600px] custom-scrollbar border-b border-slate-100 relative"
+              style={{
+                scrollbarWidth: 'thin',
+                scrollbarColor: '#d97706 #f8fafc',
+              }}
+            >
+              <table className="w-full text-sm border-collapse relative">
+                <thead className="sticky top-0 z-20 shadow-xs">
+                  <tr className="text-left text-slate-700 bg-slate-100 border-b border-slate-200 font-bold uppercase tracking-wider text-[11px]">
+                    <th className="px-4 py-3 sticky top-0 bg-slate-100/95 backdrop-blur-xs">Tarih</th>
+                    <th className="px-4 py-3 sticky top-0 bg-slate-100/95 backdrop-blur-xs">Vardiya</th>
+                    <th className="px-4 py-3 sticky top-0 bg-slate-100/95 backdrop-blur-xs font-mono">Makine</th>
+                    <th className="px-4 py-3 sticky top-0 bg-slate-100/95 backdrop-blur-xs">Ürün</th>
+                    <th className="px-4 py-3 sticky top-0 bg-slate-100/95 backdrop-blur-xs">Palet</th>
+                    <th className="px-4 py-3 sticky top-0 bg-slate-100/95 backdrop-blur-xs">Toplam Miktar</th>
+                    <th className="px-4 py-3 sticky top-0 bg-slate-100/95 backdrop-blur-xs text-red-500">Fire</th>
+                    <th className="px-4 py-3 sticky top-0 bg-slate-100/95 backdrop-blur-xs text-amber-700">Net Üretim</th>
+                    <th className="px-4 py-3 sticky top-0 bg-slate-100/95 backdrop-blur-xs">Lot No</th>
+                    <th className="px-4 py-3 sticky top-0 bg-slate-100/95 backdrop-blur-xs text-right">İşlem</th>
                   </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filtered.length === 0 ? (
+                    <tr><td colSpan={10} className="text-center py-12 text-slate-400">Kayıt bulunamadı.</td></tr>
+                  ) : filtered.map(entry => {
+                    const entryUnit = entry.products?.unit === 'metre' ? 'm' : entry.products?.unit === 'adet' ? 'ad.' : 'm²';
+                    return (
+                    <tr key={entry.id} className="hover:bg-amber-50/30 transition-colors">
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5 text-slate-700">
+                          <Calendar size={13} className="text-slate-400" />
+                          {new Date(entry.date).toLocaleDateString('tr-TR')}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${entry.shift === 'Gündüz' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-700'}`}>
+                          {entry.shift}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-slate-700 font-mono">{entry.machine_no}</td>
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-slate-800">{entry.products?.name}</div>
+                        <div className="text-xs text-slate-400">{entry.products?.thickness} / {entry.products?.color}</div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-700">{entry.total_pallets}</td>
+                      <td className="px-4 py-3 text-slate-700 font-medium">
+                        {entry.total_m2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {entryUnit}
+                      </td>
+                      <td className="px-4 py-3 text-red-500 font-medium">
+                        {entry.waste_m2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {entryUnit}
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-amber-700">
+                        {entry.net_m2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {entryUnit}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-slate-500 text-xs">{entry.lot_number}</td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button onClick={() => { setEditEntry(entry); setShowModal(true); }}
+                            className="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer">
+                            <Edit2 size={14} />
+                          </button>
+                          <button onClick={() => handleDelete(entry)} disabled={deleting === entry.id}
+                            className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                            title="Sil">
+                            {deleting === entry.id
+                              ? <div className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                              : <Trash2 size={14} />}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Table Footer Bar with Record Count & Quick Scroll */}
+            <div className="p-3 bg-slate-50/90 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600 font-medium">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-slate-800">{filtered.length} Vardiya Kaydı</span>
+                <span className="text-slate-400">|</span>
+                <span className="text-slate-500">Üretim & Fire Takip Kütüğü</span>
+              </div>
+              {filtered.length > 5 && (
+                <button
+                  type="button"
+                  onClick={scrollToTop}
+                  className="flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-slate-100 text-amber-700 font-bold rounded-lg border border-slate-200 transition-colors shadow-2xs cursor-pointer"
+                  title="Listenin en başına dön"
+                >
+                  <ArrowUp size={13} />
+                  <span>En Başa Çık</span>
+                </button>
+              )}
+            </div>
+          </>
         )}
       </div>
 
@@ -1318,6 +1397,38 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
           </div>
         </Modal>
       )}
+
+      {/* ── FLOATING QUICK SCROLL TO TOP BUTTON ── */}
+      {showScrollTop && (
+        <button
+          type="button"
+          onClick={scrollToTop}
+          className="fixed bottom-6 right-6 z-40 flex items-center gap-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-full shadow-2xl hover:shadow-amber-500/50 transition-all duration-300 transform hover:-translate-y-1 active:scale-95 cursor-pointer font-bold text-xs animate-in fade-in zoom-in-90 border-2 border-white"
+          title="Listenin en başına çık"
+        >
+          <ArrowUp size={16} className="animate-bounce" />
+          <span>Yukarı Çık</span>
+        </button>
+      )}
+
+      {/* ── CUSTOM SCROLLBAR STYLES ── */}
+      <style>{`
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 8px;
+          height: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: #f8fafc;
+          border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: #d97706;
+          border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: #b45309;
+        }
+      `}</style>
     </div>
   );
 }
