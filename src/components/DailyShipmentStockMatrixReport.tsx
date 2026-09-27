@@ -8,30 +8,21 @@ import {
   Filter, CheckSquare, Square, Users, Target, X, Search, Boxes, MapPin
 } from 'lucide-react';
 
+import {
+  calculateAllQuotas,
+  calculateCustomerQuotaMap,
+  calculateSiteQuotaMap,
+  CustomerQuotaSummary,
+  SiteQuotaSummary,
+  QuotaMetric,
+} from '../utils/quotaCalculator';
+
 const getLocalDateStr = (d = new Date()) => {
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
-
-interface QuotaMetric {
-  target: number;
-  shipped: number;
-  remaining: number;
-  unit: string;
-}
-
-interface CustomerQuotaSummary {
-  hasQuota: boolean;
-  totalTarget: number;
-  totalShipped: number;
-  totalRemaining: number;
-  completionPct: number;
-  productQuotas: Record<string, QuotaMetric>;
-  hasUnassignedProductQuota?: boolean;
-  unassignedRemaining?: number;
-}
 
 interface PalletBalanceEntry {
   customer_id: string;
@@ -366,149 +357,18 @@ export default function DailyShipmentStockMatrixReport() {
     };
   }, [cumulativeShipmentItems, dateMode, selectedDate, endDate]);
 
-  // Customer Quota & Cumulative Shipment Calculations
+  // Customer & Site Quota Calculations via standardized quotaCalculator engine
+  const calculatedQuotas = useMemo(() => {
+    return calculateAllQuotas(quotas, cumulativeShipmentItems, products);
+  }, [quotas, cumulativeShipmentItems, products]);
+
   const customerQuotaMap = useMemo(() => {
-    const map: Record<string, CustomerQuotaSummary> = {};
+    return calculateCustomerQuotaMap(calculatedQuotas, customers.map((c) => c.id));
+  }, [calculatedQuotas, customers]);
 
-    customers.forEach((cust) => {
-      const custQuotas = quotas.filter((q) => q.customer_id === cust.id);
-      if (custQuotas.length === 0) {
-        map[cust.id] = {
-          hasQuota: false,
-          totalTarget: 0,
-          totalShipped: 0,
-          totalRemaining: 0,
-          completionPct: 0,
-          productQuotas: {},
-          hasUnassignedProductQuota: false,
-          unassignedRemaining: 0,
-        };
-        return;
-      }
-
-      let totalTarget = 0;
-      let totalShipped = 0;
-      let unassignedRemaining = 0;
-      let hasUnassigned = false;
-      const productQuotas: Record<string, QuotaMetric> = {};
-
-      custQuotas.forEach((q) => {
-        const qTarget = Number(q.target_quantity) || 0;
-        totalTarget += qTarget;
-
-        // Matching items across history for this quota
-        const matching = cumulativeShipmentItems.filter((item) => {
-          const s = item.shipments;
-          if (!s) return false;
-          if (s.customer_id !== q.customer_id) return false;
-          if (q.site_id && s.site_id !== q.site_id) return false;
-          if (q.product_id && item.product_id !== q.product_id) return false;
-          if (q.start_date && s.shipment_date < q.start_date) return false;
-          if (q.end_date && s.shipment_date > q.end_date) return false;
-
-          const prod = products.find((p) => p.id === item.product_id);
-          const u = prod?.unit === 'metre' || item.unit === 'metre' ? 'metre' : prod?.unit === 'adet' || item.unit === 'adet' ? 'adet' : 'm2';
-          if (!q.product_id && u !== q.unit) return false;
-          return true;
-        });
-
-        const qShipped = matching.reduce((acc, cur) => acc + (Number(cur.m2) || 0), 0);
-        totalShipped += qShipped;
-
-        if (q.product_id) {
-          const prev = productQuotas[q.product_id];
-          const t = (prev?.target || 0) + qTarget;
-          const sh = (prev?.shipped || 0) + qShipped;
-          productQuotas[q.product_id] = {
-            target: t,
-            shipped: sh,
-            remaining: t - sh,
-            unit: q.unit || 'm²',
-          };
-        } else {
-          hasUnassigned = true;
-          unassignedRemaining += (qTarget - qShipped);
-        }
-      });
-
-      const totalRemaining = totalTarget - totalShipped;
-      const completionPct = totalTarget > 0 ? Math.round((totalShipped / totalTarget) * 100) : 0;
-
-      map[cust.id] = {
-        hasQuota: true,
-        totalTarget,
-        totalShipped,
-        totalRemaining,
-        completionPct,
-        productQuotas,
-        hasUnassignedProductQuota: hasUnassigned,
-        unassignedRemaining,
-      };
-    });
-
-    return map;
-  }, [customers, quotas, cumulativeShipmentItems, products]);
-
-  // Site Quotas Calculation: siteQuotaMap[customerId][siteKey]
   const siteQuotaMap = useMemo(() => {
-    const map: Record<string, Record<string, CustomerQuotaSummary>> = {};
-
-    customers.forEach((cust) => {
-      map[cust.id] = {};
-      const custQuotas = quotas.filter((q) => q.customer_id === cust.id);
-
-      custQuotas.forEach((q) => {
-        const siteKey = q.site_id || '__unassigned__';
-        if (!map[cust.id][siteKey]) {
-          map[cust.id][siteKey] = {
-            hasQuota: true,
-            totalTarget: 0,
-            totalShipped: 0,
-            totalRemaining: 0,
-            completionPct: 0,
-            productQuotas: {},
-          };
-        }
-        const siteSummary = map[cust.id][siteKey];
-        const qTarget = Number(q.target_quantity) || 0;
-        siteSummary.totalTarget += qTarget;
-
-        const matching = cumulativeShipmentItems.filter((item) => {
-          const s = item.shipments;
-          if (!s) return false;
-          if (s.customer_id !== q.customer_id) return false;
-          if (q.site_id && s.site_id !== q.site_id) return false;
-          if (!q.site_id && s.site_id) return false;
-          if (q.product_id && item.product_id !== q.product_id) return false;
-          if (q.start_date && s.shipment_date < q.start_date) return false;
-          if (q.end_date && s.shipment_date > q.end_date) return false;
-          return true;
-        });
-
-        const qShipped = matching.reduce((acc, cur) => acc + (Number(cur.m2) || 0), 0);
-        siteSummary.totalShipped += qShipped;
-
-        if (q.product_id) {
-          const prev = siteSummary.productQuotas[q.product_id];
-          const t = (prev?.target || 0) + qTarget;
-          const sh = (prev?.shipped || 0) + qShipped;
-          siteSummary.productQuotas[q.product_id] = {
-            target: t,
-            shipped: sh,
-            remaining: t - sh,
-            unit: q.unit || 'm²',
-          };
-        }
-      });
-
-      Object.values(map[cust.id]).forEach((sSummary) => {
-        sSummary.totalRemaining = sSummary.totalTarget - sSummary.totalShipped;
-        sSummary.completionPct = sSummary.totalTarget > 0 ? Math.round((sSummary.totalShipped / sSummary.totalTarget) * 100) : 0;
-      });
-    });
-
-    return map;
-  }, [customers, quotas, cumulativeShipmentItems]);
+    return calculateSiteQuotaMap(calculatedQuotas, customers.map((c) => c.id));
+  }, [calculatedQuotas, customers]);
 
   // Pallet Balances Map for Customer & Site
   const { customerPalletMap, sitePalletMap, grandTotalPalletBalance } = useMemo(() => {
@@ -2085,10 +1945,12 @@ export default function DailyShipmentStockMatrixReport() {
                             {qSummary?.hasQuota ? (
                               qSummary.totalRemaining > 0 ? (
                                 <span className="text-emerald-800 font-black">+{Number(qSummary.totalRemaining).toLocaleString('tr-TR')}</span>
-                              ) : qSummary.totalRemaining === 0 ? (
-                                <span className="text-blue-700 font-bold">Tamam</span>
+                              ) : qSummary.netBalance < 0 ? (
+                                <span className="text-rose-700 font-bold" title="Sözleşme kotasından fazla sevk yapıldı">
+                                  {Number(qSummary.netBalance).toLocaleString('tr-TR')}
+                                </span>
                               ) : (
-                                <span className="text-rose-700 font-black">{Number(qSummary.totalRemaining).toLocaleString('tr-TR')}</span>
+                                <span className="text-blue-700 font-bold">Tamam</span>
                               )
                             ) : (
                               <span className="text-slate-400">-</span>
@@ -2233,10 +2095,12 @@ export default function DailyShipmentStockMatrixReport() {
                                 {sQuota?.hasQuota ? (
                                   sQuota.totalRemaining > 0 ? (
                                     <span className="text-emerald-800 font-bold">+{Number(sQuota.totalRemaining).toLocaleString('tr-TR')}</span>
-                                  ) : sQuota.totalRemaining === 0 ? (
-                                    <span className="text-blue-700 font-medium">Tamam</span>
+                                  ) : sQuota.netBalance < 0 ? (
+                                    <span className="text-rose-700 font-bold" title="Kotadan fazla sevk yapıldı">
+                                      {Number(sQuota.netBalance).toLocaleString('tr-TR')}
+                                    </span>
                                   ) : (
-                                    <span className="text-rose-700 font-bold">{Number(sQuota.totalRemaining).toLocaleString('tr-TR')}</span>
+                                    <span className="text-blue-700 font-medium">Tamam</span>
                                   )
                                 ) : (
                                   <span className="text-slate-400">-</span>

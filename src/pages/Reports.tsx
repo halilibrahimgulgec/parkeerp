@@ -20,6 +20,7 @@ import {
   FileSpreadsheet,
 } from 'lucide-react';
 import DailyShipmentStockMatrixReport from '../components/DailyShipmentStockMatrixReport';
+import { calculateAllQuotas, calculateFactoryOpenOrders, CalculatedQuotaItem } from '../utils/quotaCalculator';
 
 const MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 
@@ -67,23 +68,7 @@ interface DailyShipment {
   adet: number;
 }
 
-export interface QuotaDetailItem {
-  id: string;
-  customer_id: string;
-  customer_name: string;
-  site_id?: string | null;
-  site_name?: string | null;
-  product_id?: string | null;
-  product_name?: string | null;
-  target_quantity: number;
-  shipped_quantity: number;
-  remaining_quantity: number;
-  unit: string;
-  completion_pct: number;
-  start_date?: string | null;
-  end_date?: string | null;
-  status: 'completed' | 'in_progress' | 'pending';
-}
+export type QuotaDetailItem = CalculatedQuotaItem;
 
 function BarChartScrollable({
   data,
@@ -506,48 +491,10 @@ export default function Reports() {
           .sort((a, b) => a.date.localeCompare(b.date));
         setDailyShipments(dailyArr);
 
-        // 7. Customer Quotas & Open Balance Calculations
+        // 7. Customer Quotas & Open Balance Calculations (Standart quotaCalculator Motoru)
         const activeQuotas = quotasRes.data || [];
         const allItems = allShipmentItemsRes.data || [];
-
-        const quotaList: QuotaDetailItem[] = activeQuotas.map((q: any) => {
-          const target = Number(q.target_quantity) || 0;
-          const matching = allItems.filter((item: any) => {
-            const s = item.shipments;
-            if (!s) return false;
-            if (s.customer_id !== q.customer_id) return false;
-            if (q.site_id && s.site_id !== q.site_id) return false;
-            if (q.product_id && item.product_id !== q.product_id) return false;
-            if (q.start_date && s.shipment_date < q.start_date) return false;
-            if (q.end_date && s.shipment_date > q.end_date) return false;
-            return true;
-          });
-
-          const shipped = matching.reduce((acc: number, cur: any) => acc + (Number(cur.m2) || 0), 0);
-          const remaining = Math.max(0, target - shipped);
-          const completionPct = target > 0 ? Math.min(100, Math.round((shipped / target) * 100)) : 100;
-          const status: 'completed' | 'in_progress' | 'pending' =
-            remaining <= 0 ? 'completed' : shipped > 0 ? 'in_progress' : 'pending';
-
-          return {
-            id: q.id,
-            customer_id: q.customer_id,
-            customer_name: q.customers?.name || 'Bilinmeyen Müşteri',
-            site_id: q.site_id,
-            site_name: q.sites?.name || null,
-            product_id: q.product_id,
-            product_name: q.products?.name || null,
-            target_quantity: target,
-            shipped_quantity: shipped,
-            remaining_quantity: remaining,
-            unit: q.unit || 'm²',
-            completion_pct: completionPct,
-            start_date: q.start_date,
-            end_date: q.end_date,
-            status,
-          };
-        });
-
+        const quotaList = calculateAllQuotas(activeQuotas, allItems);
         setQuotas(quotaList);
       } catch (err) {
         console.error('Rapor yükleme hatası:', err);
@@ -582,20 +529,12 @@ export default function Reports() {
   const totalShipMetre = stocks.filter((s) => s.unit === 'metre').reduce((acc, s) => acc + s.total_shipped, 0);
   const totalShipAdet = stocks.filter((s) => s.unit === 'adet').reduce((acc, s) => acc + s.total_shipped, 0);
 
-  // Quota Summary Calculations
-  const totalOpenQuotaRemainingM2 = quotas
-    .filter((q) => q.unit === 'm2' || q.unit === 'm²')
-    .reduce((acc, q) => acc + q.remaining_quantity, 0);
-
-  const totalQuotaTargetM2 = quotas
-    .filter((q) => q.unit === 'm2' || q.unit === 'm²')
-    .reduce((acc, q) => acc + q.target_quantity, 0);
-
-  const totalQuotaShippedM2 = quotas
-    .filter((q) => q.unit === 'm2' || q.unit === 'm²')
-    .reduce((acc, q) => acc + q.shipped_quantity, 0);
-
-  const uniqueQuotaCustomersCount = new Set(quotas.map((q) => q.customer_id)).size;
+  // Quota Summary Calculations (Standart quotaCalculator Motoru)
+  const factoryOpenOrders = useMemo(() => calculateFactoryOpenOrders(quotas), [quotas]);
+  const totalOpenQuotaRemainingM2 = factoryOpenOrders.totalRemainingM2;
+  const totalQuotaTargetM2 = factoryOpenOrders.totalTargetM2;
+  const totalQuotaShippedM2 = factoryOpenOrders.totalShippedM2;
+  const uniqueQuotaCustomersCount = factoryOpenOrders.activeCustomerCount;
 
   // Filtered Quotas for Modal
   const filteredQuotas = useMemo(() => {

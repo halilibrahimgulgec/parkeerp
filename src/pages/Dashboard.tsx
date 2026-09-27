@@ -6,6 +6,7 @@ import {
   ArrowRight, FileSpreadsheet
 } from 'lucide-react';
 import { getShipmentDisplayQuantity } from './Shipment';
+import { calculateAllQuotas } from '../utils/quotaCalculator';
 
 type Page = 'dashboard' | 'production' | 'production_planning' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking';
 
@@ -228,47 +229,22 @@ export default function Dashboard({ onNavigate }: DashboardProps = {}) {
       setKpi({ productionDisplay, productionSub, shipmentDisplay, shipmentSub, monthCost, lowStockCount });
 
       if (quotaRes.data && shipItemRes.data) {
-        const qAlerts: any[] = [];
-        quotaRes.data.forEach((q: any) => {
-          const matching = (shipItemRes.data || []).filter((item: any) => {
-            const s = item.shipments;
-            if (!s) return false;
-            if (s.customer_id !== q.customer_id) return false;
-            if (q.site_id && s.site_id !== q.site_id) return false;
-            if (q.product_id && item.product_id !== q.product_id) return false;
-            if (q.start_date && s.shipment_date < q.start_date) return false;
-            if (q.end_date && s.shipment_date > q.end_date) return false;
-
-            const itemProdUnit = item.products?.unit;
-            const itemUnit = (itemProdUnit === 'metre' || item.unit === 'metre')
-              ? 'metre'
-              : (itemProdUnit === 'adet' || item.unit === 'adet')
-              ? 'adet'
-              : (item.unit || 'm2');
-
-            if (!q.product_id && itemUnit !== q.unit) return false;
-            return true;
-          });
-          const shipped = matching.reduce((acc: number, cur: any) => acc + (Number(cur.m2) || 0), 0);
-          const target = Number(q.target_quantity) || 1;
-          const pct = Math.round((shipped / target) * 100);
-          const threshold = Number(q.alert_threshold_pct) || 85;
-          if (pct >= threshold) {
-            qAlerts.push({
-              id: q.id,
-              customerName: q.customers?.name || 'Müşteri',
-              siteName: q.sites?.name,
-              productName: q.products?.name,
-              target,
-              shipped,
-              remaining: target - shipped,
-              pct,
-              unit: q.unit,
-              isExceeded: pct >= 100,
-            });
-          }
-        });
-        qAlerts.sort((a, b) => b.pct - a.pct);
+        const calculated = calculateAllQuotas(quotaRes.data || [], shipItemRes.data || []);
+        const qAlerts = calculated
+          .filter((q) => q.isApproaching || q.isExceeded)
+          .map((q) => ({
+            id: q.id,
+            customerName: q.customer_name,
+            siteName: q.site_name,
+            productName: q.product_name,
+            target: q.target_quantity,
+            shipped: q.shipped_quantity,
+            remaining: q.net_balance,
+            pct: q.completion_pct,
+            unit: q.unit,
+            isExceeded: q.isExceeded,
+          }))
+          .sort((a, b) => b.pct - a.pct);
         setQuotaAlerts(qAlerts);
       }
 

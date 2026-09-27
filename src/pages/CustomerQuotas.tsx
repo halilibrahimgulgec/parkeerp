@@ -11,6 +11,7 @@ import {
   Boxes, Phone, MapPin, X, ShoppingBag, RotateCcw, Lock, CheckCircle
 } from 'lucide-react';
 import { getSupplierInfo } from './Shipment';
+import { calculateAllQuotas } from '../utils/quotaCalculator';
 
 const getLocalDateStr = (d = new Date()) => {
   const year = d.getFullYear();
@@ -196,40 +197,9 @@ export default function CustomerQuotas() {
     setActiveTab('analysis');
   };
 
-  // Compute metrics for Quotas tab
+  // Compute metrics for Quotas tab via standardized quotaCalculator engine
   const calculatedQuotas = useMemo(() => {
-    return quotas.map(quota => {
-      const matchingItems = shipmentItems.filter(item => {
-        const s = item.shipments;
-        if (!s) return false;
-        if (s.customer_id !== quota.customer_id) return false;
-        if (quota.site_id && s.site_id !== quota.site_id) return false;
-        if (quota.product_id && item.product_id !== quota.product_id) return false;
-
-        if (quota.start_date && s.shipment_date < quota.start_date) return false;
-        if (quota.end_date && s.shipment_date > quota.end_date) return false;
-
-        // Ürüne özel kota tanımlanmışsa o ürünün tüm sevkiyatları dahil edilir
-        // Genel kota ise birim eşleşmesi aranır
-        const itemUnit = getEffectiveUnit(item, products);
-        if (!quota.product_id && itemUnit !== quota.unit) return false;
-
-        return true;
-      });
-
-      const shipped_quantity = matchingItems.reduce((acc, cur) => acc + (Number(cur.m2) || 0), 0);
-      const remaining_quantity = quota.target_quantity - shipped_quantity;
-      const completion_pct = quota.target_quantity > 0
-        ? Math.round((shipped_quantity / quota.target_quantity) * 100)
-        : 0;
-
-      return {
-        ...quota,
-        shipped_quantity,
-        remaining_quantity,
-        completion_pct,
-      };
-    });
+    return calculateAllQuotas(quotas, shipmentItems, products);
   }, [quotas, shipmentItems, products]);
 
   // Filtered Quotas list
@@ -1052,9 +1022,13 @@ export default function CustomerQuotas() {
                               <span className="font-bold text-slate-700 text-sm">
                                 {remaining.toLocaleString('tr-TR')} {q.unit}
                               </span>
+                            ) : (q as any).net_balance < 0 ? (
+                              <span className="font-black text-red-600 text-xs" title="Sözleşme kotasından fazla sevk yapıldı">
+                                +{Math.abs((q as any).net_balance).toLocaleString('tr-TR')} {q.unit} Aşıldı
+                              </span>
                             ) : (
-                              <span className="font-black text-red-600 text-xs">
-                                +{Math.abs(remaining).toLocaleString('tr-TR')} {q.unit} Aşıldı
+                              <span className="font-bold text-blue-700 text-xs">
+                                Tamamlandı
                               </span>
                             )}
                           </td>
