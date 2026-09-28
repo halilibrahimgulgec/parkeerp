@@ -941,6 +941,66 @@ function ShipmentForm({
   const [form, setForm] = useState<ShipmentFormData>(() => {
     if (initial) {
       const sup = getSupplierInfo(initial);
+      const notesPrices = parseItemPricesFromNotes(initial.notes);
+      let localSavedPrices: Record<string, number> = {};
+      try {
+        const allSaved = JSON.parse(localStorage.getItem('parke_shipment_item_prices') || '{}');
+        localSavedPrices = allSaved[initial.id] || {};
+      } catch {}
+
+      const existingItems = (initial as any).shipment_items || [];
+      let initialFormItems = existingItems.map((x: any) => {
+        const itemPrice =
+          Number(x.unit_price) > 0
+            ? Number(x.unit_price)
+            : notesPrices[x.product_id] || localSavedPrices[x.product_id] || initial.sale_price_per_m2 || 0;
+        return {
+          product_id: x.product_id,
+          pallets: Number(x.pallets) || 0,
+          pallet_type: (x.pallet_type || 'sevkiyat') as any,
+          m2: Number(x.m2) || 0,
+          unit: x.unit || (products.find((p) => p.id === x.product_id)?.unit) || 'm2',
+          unit_price: itemPrice,
+          is_custom_price: itemPrice > 0,
+        };
+      });
+
+      // Akıllı Geri Kazanım: Eğer hafızada shipment_items boşsa fakat notlarda KALEM_FİYATLAR varsa
+      if (initialFormItems.length === 0 && initial.notes) {
+        const pids = Object.keys(notesPrices);
+        if (pids.length > 0) {
+          initialFormItems = pids.map((pid) => {
+            const prod = products.find((p) => p.id === pid);
+            const m2Val = Number(initial.total_m2) || 0;
+            const palletsVal = prod?.m2_per_pallet ? Math.round((m2Val / prod.m2_per_pallet) * 10) / 10 : 0;
+            return {
+              product_id: pid,
+              pallets: palletsVal,
+              pallet_type: 'sevkiyat' as any,
+              m2: m2Val,
+              unit: prod?.unit || 'm2',
+              unit_price: notesPrices[pid] || initial.sale_price_per_m2 || 0,
+              is_custom_price: true,
+            };
+          });
+        }
+      }
+
+      // Eğer hala boşsa (eski tip kayıtlarda), en azından total_m2 ve fiyatı içeren 1 düzenlenebilir kalem sun
+      if (initialFormItems.length === 0) {
+        initialFormItems = [
+          {
+            product_id: '',
+            pallets: 0,
+            pallet_type: 'sevkiyat',
+            m2: Number(initial.total_m2) || 0,
+            unit: 'm2',
+            unit_price: Number(initial.sale_price_per_m2) || 0,
+            is_custom_price: false,
+          },
+        ];
+      }
+
       return {
         invoice_no: initial.invoice_no,
         customer_id: initial.customer_id,
@@ -956,7 +1016,7 @@ function ShipmentForm({
         notes: initial.notes || '',
         is_external: sup.isExternal,
         supplier_name: sup.supplierName,
-        items: [],
+        items: initialFormItems,
       };
     }
     if (prefilledData) {
@@ -1186,25 +1246,47 @@ function ShipmentForm({
 
   useEffect(() => {
     const fetchStock = async () => {
-      const [stockRes, initialItemsRes] = await Promise.all([
-        supabase.from('v_product_stock').select('*'),
-        initial
-          ? supabase
-              .from('shipment_items')
-              .select('product_id, m2, pallets, unit, pallet_type, unit_price')
-              .eq('shipment_id', initial.id)
-          : Promise.resolve({ data: [] }),
-      ]);
+      // 1. Stok görünümü
+      const stockRes = await supabase.from('v_product_stock').select('*');
       const map: Record<string, number> = {};
       for (const p of products) {
         const stockRow = (stockRes.data || []).find((x: any) => x.product_id === p.id);
         map[p.id] = stockRow ? stockRow.current_stock : 0;
       }
-      if (initialItemsRes.data) {
-        for (const row of initialItemsRes.data) {
-          map[row.product_id] = (map[row.product_id] || 0) + (row.m2 || 0);
+      setStockMap(map);
+
+      // 2. Eğer initial varsa ve veritabanından kalemleri tazelemek gerekirse
+      if (initial) {
+        let dbItems: any[] = [];
+        try {
+          // Güvenli sorgu: Eksik sütun hatası vermemesi için '*' kullanılır
+          const res = await supabase
+            .from('shipment_items')
+            .select('*')
+            .eq('shipment_id', initial.id);
+
+          if (!res.error && res.data && res.data.length > 0) {
+            dbItems = res.data;
+          } else {
+            // Yedek sorgu
+            const fb = await supabase
+              .from('shipment_items')
+              .select('product_id, m2, pallets, unit')
+              .eq('shipment_id', initial.id);
+            if (!fb.error && fb.data && fb.data.length > 0) {
+              dbItems = fb.data;
+            }
+          }
+        } catch (err) {
+          console.warn('shipment_items yüklenirken hata:', err);
         }
-        if (initial) {
+
+        if (dbItems.length > 0) {
+          for (const row of dbItems) {
+            map[row.product_id] = (map[row.product_id] || 0) + (Number(row.m2) || 0);
+          }
+          setStockMap({ ...map });
+
           const notesPrices = parseItemPricesFromNotes(initial.notes);
           let localSavedPrices: Record<string, number> = {};
           try {
@@ -1214,7 +1296,7 @@ function ShipmentForm({
 
           setForm((f) => ({
             ...f,
-            items: initialItemsRes.data.map((x: any) => {
+            items: dbItems.map((x: any) => {
               const itemPrice =
                 Number(x.unit_price) > 0
                   ? Number(x.unit_price)
@@ -1224,15 +1306,14 @@ function ShipmentForm({
                 pallets: Number(x.pallets) || 0,
                 pallet_type: (x.pallet_type || 'sevkiyat') as any,
                 m2: Number(x.m2) || 0,
-                unit: x.unit || 'm2',
+                unit: x.unit || (products.find((p) => p.id === x.product_id)?.unit) || 'm2',
                 unit_price: itemPrice,
-                is_custom_price: true,
+                is_custom_price: itemPrice > 0,
               };
             }),
           }));
         }
       }
-      setStockMap(map);
     };
     fetchStock();
   }, [products, initial]);
@@ -3252,6 +3333,7 @@ export default function ShipmentPage() {
           size="xl"
         >
           <ShipmentForm
+            key={editShipment ? editShipment.id : 'new-shipment'}
             customers={customers}
             products={products}
             initial={editShipment}
