@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Product, Customer, Site } from '../types';
@@ -57,6 +57,9 @@ export default function DailyShipmentStockMatrixReport() {
 
   // Expand / Collapse State for Customer Child Sites
   const [expandedCustomerIds, setExpandedCustomerIds] = useState<Set<string>>(new Set());
+
+  // Scroll Container Ref for Quick Navigation
+  const matrixScrollRef = useRef<HTMLDivElement>(null);
 
   // Raw Database Data
   const [products, setProducts] = useState<Product[]>([]);
@@ -577,6 +580,24 @@ export default function DailyShipmentStockMatrixReport() {
     };
   }, [filteredCustomers, customerQuotaMap]);
 
+  // Factory Stock, Production & Net Balance Grand Totals for Footer & Excel
+  const totalFactoryStock = useMemo(() => {
+    return filteredProducts.reduce((sum, prod) => sum + (stockMap[prod.id] || 0), 0);
+  }, [filteredProducts, stockMap]);
+
+  const totalDailyProduction = useMemo(() => {
+    return filteredProducts.reduce((sum, prod) => {
+      const qty = editingProduction[prod.id] !== undefined
+        ? Number(editingProduction[prod.id]) || 0
+        : (dailyProductionMap[prod.id] || 0);
+      return sum + qty;
+    }, 0);
+  }, [filteredProducts, editingProduction, dailyProductionMap]);
+
+  const totalNetBalance = useMemo(() => {
+    return totalFactoryStock + totalDailyProduction - grandTotalShipped;
+  }, [totalFactoryStock, totalDailyProduction, grandTotalShipped]);
+
   // Save single product production entry
   const handleSaveProduction = async (productId: string) => {
     const qtyStr = editingProduction[productId];
@@ -836,9 +857,11 @@ export default function DailyShipmentStockMatrixReport() {
             <td style="padding: 8px; color: #166534;">MEVCUT DEPO STOK</td>
             ${filteredProducts.map((p) => {
               const stk = stockMap[p.id] || 0;
-              return `<td style="padding: 8px; text-align: right; color: #166534;">${stk.toLocaleString('tr-TR')}</td>`;
+              return `<td style="padding: 8px; text-align: right; color: #166534;">${stk ? stk.toLocaleString('tr-TR') : '-'}</td>`;
             }).join('')}
-            <td colspan="5" style="padding: 8px; text-align: center; color: #166534;">-</td>
+            <td colspan="3" style="padding: 8px; text-align: right; color: #166534; font-weight: bold;">TOPLAM DEPO STOĞU:</td>
+            <td style="padding: 8px; text-align: right; color: #166534; font-size: 13px; font-weight: bold;">${totalFactoryStock.toLocaleString('tr-TR')}</td>
+            <td style="padding: 8px; text-align: center; color: #166534;">-</td>
           </tr>
 
           <!-- GÜNLÜK ÜRETİM MİKTARI -->
@@ -848,7 +871,9 @@ export default function DailyShipmentStockMatrixReport() {
               const prd = editingProduction[p.id] || dailyProductionMap[p.id] || 0;
               return `<td style="padding: 8px; text-align: right; color: #92400e;">${prd ? Number(prd).toLocaleString('tr-TR') : '-'}</td>`;
             }).join('')}
-            <td colspan="5" style="padding: 8px; text-align: center; color: #92400e;">-</td>
+            <td colspan="3" style="padding: 8px; text-align: right; color: #92400e; font-weight: bold;">TOPLAM GÜNLÜK İMALAT:</td>
+            <td style="padding: 8px; text-align: right; color: #92400e; font-size: 13px; font-weight: bold;">${totalDailyProduction.toLocaleString('tr-TR')}</td>
+            <td style="padding: 8px; text-align: center; color: #92400e;">-</td>
           </tr>
 
           <!-- GÜN SONU DENGE -->
@@ -861,7 +886,9 @@ export default function DailyShipmentStockMatrixReport() {
               const balance = stk + prd - gdn;
               return `<td style="padding: 8px; text-align: right; color: #6b21a8;">${balance.toLocaleString('tr-TR')}</td>`;
             }).join('')}
-            <td colspan="5" style="padding: 8px; text-align: center; color: #6b21a8;">-</td>
+            <td colspan="3" style="padding: 8px; text-align: right; color: #6b21a8; font-weight: bold;">NET GÜN SONU BAKİYE:</td>
+            <td style="padding: 8px; text-align: right; color: #6b21a8; font-size: 13px; font-weight: bold;">${totalNetBalance.toLocaleString('tr-TR')}</td>
+            <td style="padding: 8px; text-align: center; color: #6b21a8;">-</td>
           </tr>
 
           <!-- TOPLAM AÇIK SİPARİŞ / KOTA İHTİYACI -->
@@ -1090,29 +1117,51 @@ export default function DailyShipmentStockMatrixReport() {
             max-width: none !important;
           }
 
-          .print-col-cust {
+          .print-col-cust,
+          .matrix-col-cust {
             width: 17% !important;
+            min-width: 0 !important;
+            max-width: none !important;
             padding-left: 4px !important;
             text-align: left !important;
           }
-          .print-col-daily {
+          .matrix-col-product {
+            min-width: 0 !important;
+            max-width: none !important;
+          }
+          .print-col-daily,
+          .matrix-col-daily {
             width: 5% !important;
+            min-width: 0 !important;
+            max-width: none !important;
             text-align: right !important;
           }
-          .print-col-quota {
+          .print-col-quota,
+          .matrix-col-quota {
             width: 5.5% !important;
+            min-width: 0 !important;
+            max-width: none !important;
             text-align: right !important;
           }
-          .print-col-cum {
+          .print-col-cum,
+          .matrix-col-cum {
             width: 5.5% !important;
+            min-width: 0 !important;
+            max-width: none !important;
             text-align: right !important;
           }
-          .print-col-rem {
+          .print-col-rem,
+          .matrix-col-rem {
             width: 6% !important;
+            min-width: 0 !important;
+            max-width: none !important;
             text-align: right !important;
           }
-          .print-col-pallet {
+          .print-col-pallet,
+          .matrix-col-pallet {
             width: 5% !important;
+            min-width: 0 !important;
+            max-width: none !important;
             padding-right: 4px !important;
             text-align: right !important;
           }
@@ -1127,6 +1176,41 @@ export default function DailyShipmentStockMatrixReport() {
         @media screen {
           .print-only {
             display: none !important;
+          }
+          .matrix-col-cust {
+            width: 240px !important;
+            min-width: 240px !important;
+            max-width: 240px !important;
+          }
+          .matrix-col-product {
+            width: 115px !important;
+            min-width: 115px !important;
+            max-width: 115px !important;
+          }
+          .matrix-col-daily {
+            width: 90px !important;
+            min-width: 90px !important;
+            max-width: 90px !important;
+          }
+          .matrix-col-quota {
+            width: 95px !important;
+            min-width: 95px !important;
+            max-width: 95px !important;
+          }
+          .matrix-col-cum {
+            width: 95px !important;
+            min-width: 95px !important;
+            max-width: 95px !important;
+          }
+          .matrix-col-rem {
+            width: 100px !important;
+            min-width: 100px !important;
+            max-width: 100px !important;
+          }
+          .matrix-col-pallet {
+            width: 85px !important;
+            min-width: 85px !important;
+            max-width: 85px !important;
           }
         }
       `}</style>
@@ -1632,108 +1716,151 @@ export default function DailyShipmentStockMatrixReport() {
             <p className="text-xs font-semibold">Matris verileri, stoklar ve kotalar hesaplanıyor...</p>
           </div>
         ) : (
-          <div className="matrix-scroll-wrapper overflow-x-auto max-h-[720px] relative print:overflow-visible print:max-h-none print:h-auto print:static">
-            <table className="matrix-table w-full text-xs text-left border-collapse select-text print:text-[8px] print:w-full">
-              <colgroup>
-                <col style={{ width: '17%' }} className="print-col-cust" />
-                {filteredProducts.map((prod) => (
-                  <col key={prod.id} style={{ width: `${productColWidthPct}%` }} />
-                ))}
-                <col style={{ width: '5%' }} className="print-col-daily" />
-                <col style={{ width: '5.5%' }} className="print-col-quota" />
-                <col style={{ width: '5.5%' }} className="print-col-cum" />
-                <col style={{ width: '6%' }} className="print-col-rem" />
-                <col style={{ width: '5%' }} className="print-col-pallet" />
-              </colgroup>
-              {/* ── TABLE HEADER: PRODUCTS & SUMMARY COLUMNS ── */}
-              <thead className="matrix-thead sticky top-0 z-20 bg-slate-100 shadow-xs print:static print:table-header-group">
-                <tr className="border-b border-slate-300 text-slate-700 font-bold">
-                  {/* Sticky Column A: Customer Header */}
-                  <th
-                    style={{ width: '17%' }}
-                    className="p-2.5 print-col-cust sticky left-0 z-30 bg-slate-200 min-w-[220px] border-r border-slate-300 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <Building2 size={13} className="text-slate-600 print:hidden" />
-                      <span className="print:text-[8.5px] print:font-black print:uppercase">Müşteri & Şantiyeler</span>
-                    </div>
-                  </th>
+          <div>
+            {/* Quick Scroll Navigation Toolbar */}
+            <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-slate-100 border-b border-slate-200 text-xs no-print">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-slate-700 text-xs">Tablo Navigasyonu:</span>
+                <button
+                  type="button"
+                  onClick={() => matrixScrollRef.current?.scrollTo({ left: 0, behavior: 'smooth' })}
+                  className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg shadow-xs hover:bg-slate-50 text-slate-700 font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                  title="Tabloyu en sola (müşteri isimlerine) kaydır"
+                >
+                  <ChevronLeft size={14} className="text-slate-500" />
+                  <span>Müşteriler (Sol)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (matrixScrollRef.current) {
+                      matrixScrollRef.current.scrollTo({ left: matrixScrollRef.current.scrollWidth, behavior: 'smooth' });
+                    }
+                  }}
+                  className="px-2.5 py-1 bg-blue-50 border border-blue-300 rounded-lg shadow-xs hover:bg-blue-100 text-blue-900 font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                  title="Tabloyu en sağa (toplam sütunlarına) kaydır"
+                >
+                  <span>Sağ Toplamlar</span>
+                  <ChevronRight size={14} className="text-blue-700" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (matrixScrollRef.current) {
+                      matrixScrollRef.current.scrollTo({ top: matrixScrollRef.current.scrollHeight, behavior: 'smooth' });
+                    }
+                  }}
+                  className="px-2.5 py-1 bg-emerald-50 border border-emerald-300 rounded-lg shadow-xs hover:bg-emerald-100 text-emerald-900 font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                  title="Tabloyu en alta (fabrika stok ve gün sonu toplamlarına) kaydır"
+                >
+                  <ChevronDown size={14} className="text-emerald-700" />
+                  <span>Alt Toplamlar (Fabrika/Stok)</span>
+                </button>
+              </div>
+              <div className="text-[11px] text-slate-500 hidden sm:block">
+                💡 İpucu: Sağa kaydırırken müşteri sütunu sol tarafta sabit kalır.
+              </div>
+            </div>
 
-                  {/* Product Columns */}
+            <div
+              ref={matrixScrollRef}
+              className="matrix-scroll-wrapper overflow-x-auto max-h-[750px] pb-24 relative print:overflow-visible print:max-h-none print:h-auto print:static"
+            >
+              <table className="matrix-table w-full text-xs text-left border-collapse select-text print:text-[8px] print:w-full">
+                <colgroup>
+                  <col className="matrix-col-cust print-col-cust" />
                   {filteredProducts.map((prod) => (
+                    <col key={prod.id} className="matrix-col-product" style={{ width: `${productColWidthPct}%` }} />
+                  ))}
+                  <col className="matrix-col-daily print-col-daily" />
+                  <col className="matrix-col-quota print-col-quota" />
+                  <col className="matrix-col-cum print-col-cum" />
+                  <col className="matrix-col-rem print-col-rem" />
+                  <col className="matrix-col-pallet print-col-pallet" />
+                </colgroup>
+                {/* ── TABLE HEADER: PRODUCTS & SUMMARY COLUMNS ── */}
+                <thead className="matrix-thead sticky top-0 z-20 bg-slate-100 shadow-xs print:static print:table-header-group">
+                  <tr className="border-b border-slate-300 text-slate-700 font-bold">
+                    {/* Sticky Column A: Customer Header */}
                     <th
-                      key={prod.id}
-                      style={{ width: `${productColWidthPct}%` }}
-                      className="p-2 text-right min-w-[125px] border-r border-slate-200 bg-slate-100 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[7.5px] print:text-center"
-                      title={`${prod.name} (${prod.thickness || ''} ${prod.color || ''})`}
+                      className="p-2.5 matrix-col-cust print-col-cust sticky left-0 z-30 bg-slate-200 border-r border-slate-300 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
                     >
-                      <div className="font-bold text-slate-900 text-[11px] leading-tight line-clamp-2 print:text-[7.5px] print:font-black print:leading-tight print:line-clamp-none break-words">
-                        {prod.name}
-                      </div>
-                      <div className="text-[10px] text-slate-500 font-normal flex items-center justify-end gap-1 mt-0.5 print:text-[7px] print:justify-center print:mt-0 print:font-medium">
-                        <span>{prod.thickness ? `${prod.thickness}` : ''}</span>
-                        {prod.color && <span>• {prod.color}</span>}
-                        <span className="font-semibold text-slate-700">({prod.unit || 'm²'})</span>
-                      </div>
-                      <div className="text-[9px] font-bold text-blue-700 mt-0.5 print:hidden">
-                        {matrixCellMode === 'daily' ? '📅 Günlük' : '📈 Toplam Sevk'}
+                      <div className="flex items-center gap-1.5">
+                        <Building2 size={13} className="text-slate-600 print:hidden" />
+                        <span className="print:text-[8.5px] print:font-black print:uppercase">Müşteri & Şantiyeler</span>
                       </div>
                     </th>
-                  ))}
 
-                  {/* Far Right 5 Columns: Planning, Balance & Pallet Tracking */}
-                  <th
-                    style={{ width: '5%' }}
-                    className="p-2 print-col-daily text-right min-w-[85px] bg-blue-100 text-blue-950 font-black border-l border-slate-300 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
-                  >
-                    <div className="text-[10px] uppercase print:text-[7.5px] print:leading-tight">
-                      <div>GÜNLÜK</div>
-                      <div>SEVK</div>
-                    </div>
-                    <div className="text-[9px] text-blue-700 font-normal print:hidden">Bu Gün / Aralık</div>
-                  </th>
-                  <th
-                    style={{ width: '5.5%' }}
-                    className="p-2 print-col-quota text-right min-w-[95px] bg-purple-100 text-purple-950 font-black border-l border-purple-200 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
-                  >
-                    <div className="text-[10px] uppercase print:text-[7.5px] print:leading-tight">
-                      <div>SİPARİŞ</div>
-                      <div>/ KOTA</div>
-                    </div>
-                    <div className="text-[9px] text-purple-700 font-normal print:hidden">Taahhüt</div>
-                  </th>
-                  <th
-                    style={{ width: '5.5%' }}
-                    className="p-2 print-col-cum text-right min-w-[95px] bg-amber-100 text-amber-950 font-black border-l border-amber-200 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
-                  >
-                    <div className="text-[10px] uppercase print:text-[7.5px] print:leading-tight">
-                      <div>KÜMÜLATİF</div>
-                      <div>SEVK</div>
-                    </div>
-                    <div className="text-[9px] text-amber-700 font-normal print:hidden">Tüm Çekilen</div>
-                  </th>
-                  <th
-                    style={{ width: '6%' }}
-                    className="p-2 print-col-rem text-right min-w-[100px] bg-emerald-100 text-emerald-950 font-black border-l border-emerald-200 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
-                  >
-                    <div className="text-[10px] uppercase print:text-[7.5px] print:leading-tight">
-                      <div>KALAN</div>
-                      <div>BAKİYE</div>
-                    </div>
-                    <div className="text-[9px] text-emerald-700 font-normal print:hidden">Açık İhtiyaç</div>
-                  </th>
-                  <th
-                    style={{ width: '5%' }}
-                    className="p-2 print-col-pallet text-right min-w-[90px] bg-amber-100/90 text-amber-950 font-black border-l border-amber-200 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
-                  >
-                    <div className="text-[10px] uppercase print:text-[7.5px] print:leading-tight">
-                      <div>ZİMMETLİ</div>
-                      <div>PALET</div>
-                    </div>
-                    <div className="text-[9px] text-amber-800 font-normal print:hidden">Bakiye</div>
-                  </th>
-                </tr>
-              </thead>
+                    {/* Product Columns */}
+                    {filteredProducts.map((prod) => (
+                      <th
+                        key={prod.id}
+                        style={{ width: `${productColWidthPct}%` }}
+                        className="p-2 text-right matrix-col-product border-r border-slate-200 bg-slate-100 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[7.5px] print:text-center"
+                        title={`${prod.name} (${prod.thickness || ''} ${prod.color || ''})`}
+                      >
+                        <div className="font-bold text-slate-900 text-[11px] leading-tight line-clamp-2 print:text-[7.5px] print:font-black print:leading-tight print:line-clamp-none break-words">
+                          {prod.name}
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-normal flex items-center justify-end gap-1 mt-0.5 print:text-[7px] print:justify-center print:mt-0 print:font-medium">
+                          <span>{prod.thickness ? `${prod.thickness}` : ''}</span>
+                          {prod.color && <span>• {prod.color}</span>}
+                          <span className="font-semibold text-slate-700">({prod.unit || 'm²'})</span>
+                        </div>
+                        <div className="text-[9px] font-bold text-blue-700 mt-0.5 print:hidden">
+                          {matrixCellMode === 'daily' ? '📅 Günlük' : '📈 Toplam Sevk'}
+                        </div>
+                      </th>
+                    ))}
+
+                    {/* Far Right 5 Columns: Planning, Balance & Pallet Tracking */}
+                    <th
+                      className="p-2 matrix-col-daily print-col-daily text-right bg-blue-100 text-blue-950 font-black border-l border-slate-300 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
+                    >
+                      <div className="text-[10px] uppercase print:text-[7.5px] print:leading-tight">
+                        <div>GÜNLÜK</div>
+                        <div>SEVK</div>
+                      </div>
+                      <div className="text-[9px] text-blue-700 font-normal print:hidden">Bu Gün / Aralık</div>
+                    </th>
+                    <th
+                      className="p-2 matrix-col-quota print-col-quota text-right bg-purple-100 text-purple-950 font-black border-l border-purple-200 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
+                    >
+                      <div className="text-[10px] uppercase print:text-[7.5px] print:leading-tight">
+                        <div>SİPARİŞ</div>
+                        <div>/ KOTA</div>
+                      </div>
+                      <div className="text-[9px] text-purple-700 font-normal print:hidden">Taahhüt</div>
+                    </th>
+                    <th
+                      className="p-2 matrix-col-cum print-col-cum text-right bg-amber-100 text-amber-950 font-black border-l border-amber-200 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
+                    >
+                      <div className="text-[10px] uppercase print:text-[7.5px] print:leading-tight">
+                        <div>KÜMÜLATİF</div>
+                        <div>SEVK</div>
+                      </div>
+                      <div className="text-[9px] text-amber-700 font-normal print:hidden">Tüm Çekilen</div>
+                    </th>
+                    <th
+                      className="p-2 matrix-col-rem print-col-rem text-right bg-emerald-100 text-emerald-950 font-black border-l border-emerald-200 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
+                    >
+                      <div className="text-[10px] uppercase print:text-[7.5px] print:leading-tight">
+                        <div>KALAN</div>
+                        <div>BAKİYE</div>
+                      </div>
+                      <div className="text-[9px] text-emerald-700 font-normal print:hidden">Açık İhtiyaç</div>
+                    </th>
+                    <th
+                      className="p-2 matrix-col-pallet print-col-pallet text-right bg-amber-100/90 text-amber-950 font-black border-l border-amber-200 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
+                    >
+                      <div className="text-[10px] uppercase print:text-[7.5px] print:leading-tight">
+                        <div>ZİMMETLİ</div>
+                        <div>PALET</div>
+                      </div>
+                      <div className="text-[9px] text-amber-800 font-normal print:hidden">Bakiye</div>
+                    </th>
+                  </tr>
+                </thead>
 
               {/* ── TABLE BODY: CUSTOMERS (ROWS) & CHILD SITES (SUB-ROWS) ── */}
               <tbody className="divide-y divide-slate-100">
@@ -1757,7 +1884,7 @@ export default function DailyShipmentStockMatrixReport() {
                     const custPallet = customerPalletMap[cust.id] || { total: 0, tahta: 0, sevkiyat: 0, uretim: 0 };
 
                     return (
-                      <tbody key={cust.id} className="divide-y divide-slate-100/80">
+                      <React.Fragment key={cust.id}>
                         {/* ── MAIN CUSTOMER ROW ── */}
                         <tr
                           className={`transition-colors hover:bg-slate-50 ${
@@ -1766,8 +1893,7 @@ export default function DailyShipmentStockMatrixReport() {
                         >
                           {/* Sticky Customer Name Cell with Expand/Collapse & Quota Summary */}
                           <td
-                            style={{ width: '17%' }}
-                            className="p-2 print-col-cust sticky left-0 z-10 bg-inherit border-r border-slate-200 font-bold text-slate-900 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-400"
+                            className="p-2 matrix-col-cust print-col-cust sticky left-0 z-10 bg-inherit border-r border-slate-200 font-bold text-slate-900 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-400"
                           >
                             <div className="flex items-center justify-between gap-1">
                               <div className="flex items-center gap-1.5 min-w-0">
@@ -1853,7 +1979,7 @@ export default function DailyShipmentStockMatrixReport() {
                               <td
                                 key={prod.id}
                                 style={{ width: `${productColWidthPct}%` }}
-                                className={`p-1.5 text-right font-mono border-r border-slate-100 print:p-0.5 print:min-w-0 print:border-slate-400 ${
+                                className={`p-1.5 text-right font-mono matrix-col-product border-r border-slate-100 print:p-0.5 print:min-w-0 print:border-slate-400 ${
                                   hasValue ? 'font-bold text-slate-900 bg-amber-50/20' : 'text-slate-300'
                                 }`}
                               >
@@ -1903,24 +2029,21 @@ export default function DailyShipmentStockMatrixReport() {
 
                           {/* 1. Günlük Sevk Toplamı */}
                           <td
-                            style={{ width: '5%' }}
-                            className="p-2 print-col-daily text-right font-mono font-black text-blue-900 bg-blue-50/60 border-l border-slate-200 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[8px]"
+                            className="p-2 matrix-col-daily print-col-daily text-right font-mono font-black text-blue-900 bg-blue-50/60 border-l border-slate-200 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[8px]"
                           >
                             {custDailyTotal ? Number(custDailyTotal).toLocaleString('tr-TR') : '-'}
                           </td>
 
                           {/* 2. Toplam Sipariş / Kota */}
                           <td
-                            style={{ width: '5.5%' }}
-                            className="p-2 print-col-quota text-right font-mono font-bold text-purple-900 bg-purple-50/40 border-l border-purple-100 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[8px]"
+                            className="p-2 matrix-col-quota print-col-quota text-right font-mono font-bold text-purple-900 bg-purple-50/40 border-l border-purple-100 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[8px]"
                           >
                             {qSummary?.hasQuota ? Number(qSummary.totalTarget).toLocaleString('tr-TR') : '-'}
                           </td>
 
                           {/* 3. Kümülatif Çekilen */}
                           <td
-                            style={{ width: '5.5%' }}
-                            className="p-2 print-col-cum text-right font-mono font-semibold text-amber-900 bg-amber-50/40 border-l border-amber-100 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[8px]"
+                            className="p-2 matrix-col-cum print-col-cum text-right font-mono font-semibold text-amber-900 bg-amber-50/40 border-l border-amber-100 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[8px]"
                           >
                             {qSummary?.hasQuota ? (
                               <div>
@@ -1939,8 +2062,7 @@ export default function DailyShipmentStockMatrixReport() {
 
                           {/* 4. Kalan Açık İhtiyaç Bakiyesi */}
                           <td
-                            style={{ width: '6%' }}
-                            className="p-2 print-col-rem text-right font-mono font-black bg-emerald-50/60 border-l border-emerald-100 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-400 print:text-[8px]"
+                            className="p-2 matrix-col-rem print-col-rem text-right font-mono font-black bg-emerald-50/60 border-l border-emerald-100 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-400 print:text-[8px]"
                           >
                             {qSummary?.hasQuota ? (
                               qSummary.totalRemaining > 0 ? (
@@ -1959,8 +2081,7 @@ export default function DailyShipmentStockMatrixReport() {
 
                           {/* 5. Zimmetli Palet Sayısı */}
                           <td
-                            style={{ width: '5%' }}
-                            className="p-2 print-col-pallet text-right font-mono font-bold bg-amber-50/50 border-l border-amber-100 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-400 print:text-[8px]"
+                            className="p-2 matrix-col-pallet print-col-pallet text-right font-mono font-bold bg-amber-50/50 border-l border-amber-100 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-400 print:text-[8px]"
                           >
                             {custPallet.total !== 0 ? (
                               <div title={`Tahta: ${custPallet.tahta}, Sevkiyat: ${custPallet.sevkiyat}, Üretim: ${custPallet.uretim}`}>
@@ -1996,8 +2117,7 @@ export default function DailyShipmentStockMatrixReport() {
                             >
                               {/* Site Name with indentation */}
                               <td
-                                style={{ width: '17%' }}
-                                className="p-2 pl-6 print-col-cust sticky left-0 z-10 bg-slate-100/95 border-r border-slate-200 font-medium text-slate-800 shadow-xs print:static print:left-auto print:shadow-none print:p-0.5 print:pl-3 print:min-w-0 print:border-slate-400"
+                                className="p-2 pl-6 matrix-col-cust print-col-cust sticky left-0 z-10 bg-slate-100/95 border-r border-slate-200 font-medium text-slate-800 shadow-xs print:static print:left-auto print:shadow-none print:p-0.5 print:pl-3 print:min-w-0 print:border-slate-400"
                               >
                                 <div className="flex items-center gap-1.5 text-xs print:text-[7.5px]">
                                   <span className="text-teal-600 font-bold shrink-0">↳</span>
@@ -2025,7 +2145,7 @@ export default function DailyShipmentStockMatrixReport() {
                                   <td
                                     key={prod.id}
                                     style={{ width: `${productColWidthPct}%` }}
-                                    className={`p-1.5 text-right font-mono border-r border-slate-200/80 print:p-0.5 print:min-w-0 print:border-slate-400 ${
+                                    className={`p-1.5 text-right font-mono matrix-col-product border-r border-slate-200/80 print:p-0.5 print:min-w-0 print:border-slate-400 ${
                                       hasSiteVal ? 'font-semibold text-slate-800 bg-teal-50/30' : 'text-slate-300'
                                     }`}
                                   >
@@ -2065,32 +2185,28 @@ export default function DailyShipmentStockMatrixReport() {
 
                               {/* Site Günlük Sevk */}
                               <td
-                                style={{ width: '5%' }}
-                                className="p-2 print-col-daily text-right font-mono font-bold text-teal-900 bg-teal-50/40 border-l border-slate-200 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[7.5px]"
+                                className="p-2 matrix-col-daily print-col-daily text-right font-mono font-bold text-teal-900 bg-teal-50/40 border-l border-slate-200 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[7.5px]"
                               >
                                 {siteDailyTotal ? Number(siteDailyTotal).toLocaleString('tr-TR') : '-'}
                               </td>
 
                               {/* Site Sipariş / Kota */}
                               <td
-                                style={{ width: '5.5%' }}
-                                className="p-2 print-col-quota text-right font-mono font-medium text-purple-900 bg-purple-50/30 border-l border-purple-100 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[7.5px]"
+                                className="p-2 matrix-col-quota print-col-quota text-right font-mono font-medium text-purple-900 bg-purple-50/30 border-l border-purple-100 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[7.5px]"
                               >
                                 {sQuota?.hasQuota ? Number(sQuota.totalTarget).toLocaleString('tr-TR') : '-'}
                               </td>
 
                               {/* Site Kümülatif Sevk */}
                               <td
-                                style={{ width: '5.5%' }}
-                                className="p-2 print-col-cum text-right font-mono font-medium text-amber-900 bg-amber-50/30 border-l border-amber-100 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[7.5px]"
+                                className="p-2 matrix-col-cum print-col-cum text-right font-mono font-medium text-amber-900 bg-amber-50/30 border-l border-amber-100 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[7.5px]"
                               >
                                 {siteCumTotal ? Number(siteCumTotal).toLocaleString('tr-TR') : '-'}
                               </td>
 
                               {/* Site Kalan Bakiye */}
                               <td
-                                style={{ width: '6%' }}
-                                className="p-2 print-col-rem text-right font-mono font-bold bg-emerald-50/40 border-l border-emerald-100 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[7.5px]"
+                                className="p-2 matrix-col-rem print-col-rem text-right font-mono font-bold bg-emerald-50/40 border-l border-emerald-100 print:p-0.5 print:min-w-0 print:border-slate-400 print:text-[7.5px]"
                               >
                                 {sQuota?.hasQuota ? (
                                   sQuota.totalRemaining > 0 ? (
@@ -2109,8 +2225,7 @@ export default function DailyShipmentStockMatrixReport() {
 
                               {/* Site Zimmetli Palet */}
                               <td
-                                style={{ width: '5%' }}
-                                className="p-2 print-col-pallet text-right font-mono font-medium bg-amber-50/40 border-l border-amber-100 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-400 print:text-[7.5px]"
+                                className="p-2 matrix-col-pallet print-col-pallet text-right font-mono font-medium bg-amber-50/40 border-l border-amber-100 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-400 print:text-[7.5px]"
                               >
                                 {sitePallet.total !== 0 ? (
                                   <span className="inline-block px-1 py-0.2 rounded text-[10.5px] font-bold bg-amber-100/80 text-amber-900 border border-amber-200">
@@ -2123,7 +2238,7 @@ export default function DailyShipmentStockMatrixReport() {
                             </tr>
                           );
                         })}
-                      </tbody>
+                      </React.Fragment>
                     );
                   })
                 )}
@@ -2134,17 +2249,16 @@ export default function DailyShipmentStockMatrixReport() {
                 {/* 1. TOPLAM GİDEN (KÜMÜLATİF SEVKİYAT) */}
                 <tr className="bg-blue-100/90 text-blue-950 font-black">
                   <td
-                    style={{ width: '17%' }}
-                    className="p-2 print-col-cust sticky left-0 z-10 bg-blue-200/90 border-r border-blue-300 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
+                    className="p-2 matrix-col-cust print-col-cust sticky left-0 z-10 bg-blue-200/90 border-r border-blue-300 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
                   >
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <Package size={14} className="text-blue-800 print:hidden" />
-                        <span className="print:text-[8px] print:font-black">
+                      <div className="flex items-center gap-1.5 truncate">
+                        <Package size={14} className="text-blue-800 print:hidden shrink-0" />
+                        <span className="print:text-[8px] print:font-black truncate">
                           {matrixCellMode === 'daily' ? 'TOPLAM GİDEN' : 'TOPLAM GİDEN (KÜMÜLATİF)'}
                         </span>
                       </div>
-                      <span className="text-[9.5px] text-blue-700 bg-blue-100 px-1.5 py-0.2 rounded print:hidden font-semibold">
+                      <span className="text-[9.5px] text-blue-700 bg-blue-100 px-1.5 py-0.2 rounded print:hidden font-semibold shrink-0">
                         {matrixCellMode === 'daily' ? 'Seçili Gün' : 'Genel Toplam'}
                       </span>
                     </div>
@@ -2158,7 +2272,7 @@ export default function DailyShipmentStockMatrixReport() {
                       <td
                         key={prod.id}
                         style={{ width: `${productColWidthPct}%` }}
-                        className="p-1.5 text-right font-mono font-black border-r border-blue-200 text-blue-950 text-sm print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                        className="p-1.5 text-right font-mono font-black border-r border-blue-200 text-blue-950 text-sm matrix-col-product print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
                       >
                         <div>{pVal ? Number(pVal).toLocaleString('tr-TR') : '-'}</div>
                         {matrixCellMode !== 'daily' && dailyTotal > 0 && (
@@ -2170,32 +2284,27 @@ export default function DailyShipmentStockMatrixReport() {
                     );
                   })}
                   <td
-                    style={{ width: '5%' }}
-                    className="p-2 print-col-daily text-right font-mono text-sm font-black text-blue-950 bg-blue-300/80 border-l border-blue-300 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                    className="p-2 matrix-col-daily print-col-daily text-right font-mono text-sm font-black text-blue-950 bg-blue-300/80 border-l border-blue-300 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
                   >
                     {grandTotalShipped.toLocaleString('tr-TR')}
                   </td>
                   <td
-                    style={{ width: '5.5%' }}
-                    className="p-2 print-col-quota text-right font-mono text-xs font-black text-purple-950 bg-purple-200/80 border-l border-purple-300 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                    className="p-2 matrix-col-quota print-col-quota text-right font-mono text-xs font-black text-purple-950 bg-purple-200/80 border-l border-purple-300 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
                   >
                     {totalQuotaTargetSum ? totalQuotaTargetSum.toLocaleString('tr-TR') : '-'}
                   </td>
                   <td
-                    style={{ width: '5.5%' }}
-                    className="p-2 print-col-cum text-right font-mono text-xs font-black text-amber-950 bg-amber-200/80 border-l border-amber-300 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
+                    className="p-2 matrix-col-cum print-col-cum text-right font-mono text-xs font-black text-amber-950 bg-amber-200/80 border-l border-amber-300 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
                   >
                     {grandTotalCumulativeShipped ? grandTotalCumulativeShipped.toLocaleString('tr-TR') : (totalQuotaShippedSum ? totalQuotaShippedSum.toLocaleString('tr-TR') : '-')}
                   </td>
                   <td
-                    style={{ width: '6%' }}
-                    className="p-2 print-col-rem text-right font-mono text-sm font-black text-emerald-950 bg-emerald-200/90 border-l border-emerald-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                    className="p-2 matrix-col-rem print-col-rem text-right font-mono text-sm font-black text-emerald-950 bg-emerald-200/90 border-l border-emerald-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
                   >
                     {totalQuotaRemainingSum ? totalQuotaRemainingSum.toLocaleString('tr-TR') : '-'}
                   </td>
                   <td
-                    style={{ width: '5%' }}
-                    className="p-2 print-col-pallet text-right font-mono text-sm font-black text-amber-950 bg-amber-200/90 border-l border-amber-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                    className="p-2 matrix-col-pallet print-col-pallet text-right font-mono text-sm font-black text-amber-950 bg-amber-200/90 border-l border-amber-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
                   >
                     {grandTotalPalletBalance ? grandTotalPalletBalance.toLocaleString('tr-TR') : '-'}
                   </td>
@@ -2205,12 +2314,11 @@ export default function DailyShipmentStockMatrixReport() {
                 {matrixCellMode !== 'daily' && (
                   <tr className="bg-sky-50/80 text-sky-950 font-bold">
                     <td
-                      style={{ width: '17%' }}
-                      className="p-2 print-col-cust sticky left-0 z-10 bg-sky-100/90 border-r border-sky-200 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
+                      className="p-2 matrix-col-cust print-col-cust sticky left-0 z-10 bg-sky-100/90 border-r border-sky-200 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
                     >
                       <div className="flex items-center justify-between">
-                        <span className="print:text-[8px] print:font-bold text-sky-900">GÜNLÜK SEVKİYAT</span>
-                        <span className="text-[9.5px] text-sky-700 bg-sky-200/60 px-1 py-0.2 rounded print:hidden font-normal">
+                        <span className="print:text-[8px] print:font-bold text-sky-900 truncate">GÜNLÜK SEVKİYAT</span>
+                        <span className="text-[9.5px] text-sky-700 bg-sky-200/60 px-1 py-0.2 rounded print:hidden font-normal shrink-0">
                           Bu Gün Giden
                         </span>
                       </div>
@@ -2221,24 +2329,27 @@ export default function DailyShipmentStockMatrixReport() {
                         <td
                           key={prod.id}
                           style={{ width: `${productColWidthPct}%` }}
-                          className="p-1.5 text-right font-mono font-bold border-r border-sky-100 text-sky-900 text-xs print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                          className="p-1.5 text-right font-mono font-bold border-r border-sky-100 text-sky-900 text-xs matrix-col-product print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
                         >
                           {dailyTotal ? Number(dailyTotal).toLocaleString('tr-TR') : '-'}
                         </td>
                       );
                     })}
                     <td
-                      style={{ width: '5%' }}
-                      className="p-2 print-col-daily text-right font-mono text-xs font-bold text-sky-950 bg-sky-100 border-l border-sky-200 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                      className="p-2 matrix-col-daily print-col-daily text-right font-mono text-xs font-bold text-sky-950 bg-sky-100 border-l border-sky-200 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
                     >
                       {grandTotalShipped.toLocaleString('tr-TR')}
                     </td>
                     <td
-                      colSpan={4}
-                      style={{ width: '22%' }}
-                      className="p-2 text-center text-sky-800 bg-sky-50 font-mono text-[10px] print:p-0.5 print:text-[7px] print:border-slate-500"
+                      colSpan={3}
+                      className="p-2 text-center text-sky-800 bg-sky-50 font-mono text-[10px] border-l border-sky-200 print:p-0.5 print:text-[7px] print:border-slate-500"
                     >
-                      Seçili Günün Ürün Dağılımı
+                      Seçili Günün Ürün Dağılımı ({grandTotalShipped.toLocaleString('tr-TR')} m²)
+                    </td>
+                    <td
+                      className="p-2 matrix-col-pallet print-col-pallet text-center text-slate-400 bg-sky-50 border-l border-sky-200 font-mono text-xs print:p-0.5"
+                    >
+                      -
                     </td>
                   </tr>
                 )}
@@ -2246,12 +2357,11 @@ export default function DailyShipmentStockMatrixReport() {
                 {/* 2. MEVCUT FABRİKA STOĞU */}
                 <tr className="bg-emerald-50/90 text-emerald-950">
                   <td
-                    style={{ width: '17%' }}
-                    className="p-2 print-col-cust sticky left-0 z-10 bg-emerald-100/90 border-r border-emerald-200 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
+                    className="p-2 matrix-col-cust print-col-cust sticky left-0 z-10 bg-emerald-100/90 border-r border-emerald-200 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-emerald-900 print:text-[8px] print:font-black">FABRİKA STOĞU</span>
-                      <span className="text-[10px] text-emerald-700 bg-emerald-200/60 px-1.5 py-0.5 rounded font-normal print:hidden">
+                      <span className="font-bold text-emerald-900 print:text-[8px] print:font-black truncate">FABRİKA STOĞU</span>
+                      <span className="text-[10px] text-emerald-700 bg-emerald-200/60 px-1.5 py-0.5 rounded font-normal print:hidden shrink-0">
                         Depo
                       </span>
                     </div>
@@ -2262,32 +2372,37 @@ export default function DailyShipmentStockMatrixReport() {
                       <td
                         key={prod.id}
                         style={{ width: `${productColWidthPct}%` }}
-                        className="p-1.5 text-right font-mono font-bold border-r border-emerald-100 text-emerald-900 text-xs print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                        className="p-1.5 text-right font-mono font-bold border-r border-emerald-100 text-emerald-900 text-xs matrix-col-product print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
                       >
                         {stk ? stk.toLocaleString('tr-TR') : '-'}
                       </td>
                     );
                   })}
-                  <td colSpan={5} style={{ width: '27%' }} className="p-2 text-center text-emerald-800 bg-emerald-100/50 border-l border-emerald-200 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
-                    Depo Hazır Mamul Rezervi
+                  <td colSpan={3} className="p-2 text-right text-emerald-800 bg-emerald-100/50 border-l border-emerald-200 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
+                    Toplam Fabrika Depo Stoğu:
+                  </td>
+                  <td className="p-2 matrix-col-rem print-col-rem text-right font-mono text-sm font-black text-emerald-950 bg-emerald-200/90 border-l border-emerald-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8px]">
+                    {totalFactoryStock.toLocaleString('tr-TR')}
+                  </td>
+                  <td className="p-2 matrix-col-pallet print-col-pallet text-center text-slate-400 bg-emerald-100/30 border-l border-emerald-200 font-mono text-xs print:p-0.5">
+                    -
                   </td>
                 </tr>
 
                 {/* 3. GÜNLÜK ÜRETİM MİKTARI (HÜCRE İÇİ DÜZENLENEBİLİR) */}
                 <tr className="bg-amber-50/90 text-amber-950">
                   <td
-                    style={{ width: '17%' }}
-                    className="p-2 print-col-cust sticky left-0 z-10 bg-amber-100/90 border-r border-amber-200 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
+                    className="p-2 matrix-col-cust print-col-cust sticky left-0 z-10 bg-amber-100/90 border-r border-amber-200 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
                   >
                     <div className="flex items-center justify-between">
                       <div>
-                        <span className="font-bold text-amber-900 print:text-[8px] print:font-black">GÜNLÜK ÜRETİM</span>
+                        <span className="font-bold text-amber-900 print:text-[8px] print:font-black truncate">GÜNLÜK ÜRETİM</span>
                         <div className="text-[10px] text-amber-700 font-normal print:hidden">Hücreye yazıp kaydedin</div>
                       </div>
                       <button
                         onClick={handleSaveAllProductions}
                         disabled={savingProduction}
-                        className="no-print px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-[10px] font-bold shadow-xs cursor-pointer transition-colors"
+                        className="no-print px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-[10px] font-bold shadow-xs cursor-pointer transition-colors shrink-0"
                         title="Tüm girilen üretimleri veritabanına kaydet"
                       >
                         {savingProduction ? '...' : 'Tümünü Kaydet'}
@@ -2305,7 +2420,7 @@ export default function DailyShipmentStockMatrixReport() {
                       <td
                         key={prod.id}
                         style={{ width: `${productColWidthPct}%` }}
-                        className="p-1 text-right font-mono border-r border-amber-200 bg-amber-50/40 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                        className="p-1 text-right font-mono border-r border-amber-200 bg-amber-50/40 matrix-col-product print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
                       >
                         <div className="flex items-center gap-1 justify-end">
                           <input
@@ -2333,27 +2448,32 @@ export default function DailyShipmentStockMatrixReport() {
                       </td>
                     );
                   })}
-                  <td colSpan={5} style={{ width: '27%' }} className="p-2 text-center text-amber-800 bg-amber-100/50 border-l border-amber-200 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
-                    Bantlardan Çıkan Günlük İmalat
+                  <td colSpan={3} className="p-2 text-right text-amber-800 bg-amber-100/50 border-l border-amber-200 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
+                    Toplam Günlük İmalat:
+                  </td>
+                  <td className="p-2 matrix-col-rem print-col-rem text-right font-mono text-sm font-black text-amber-950 bg-amber-200/90 border-l border-amber-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8px]">
+                    {totalDailyProduction.toLocaleString('tr-TR')}
+                  </td>
+                  <td className="p-2 matrix-col-pallet print-col-pallet text-center text-slate-400 bg-amber-100/30 border-l border-amber-200 font-mono text-xs print:p-0.5">
+                    -
                   </td>
                 </tr>
 
                 {/* 4. GÜN SONU / NET KALAN DENGE */}
                 <tr className="bg-purple-100/80 text-purple-950 font-black">
                   <td
-                    style={{ width: '17%' }}
-                    className="p-2 print-col-cust sticky left-0 z-10 bg-purple-200/90 border-r border-purple-300 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
+                    className="p-2 matrix-col-cust print-col-cust sticky left-0 z-10 bg-purple-200/90 border-r border-purple-300 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-black text-purple-950 print:text-[8px]">GÜN SONU DENGE</span>
-                      <span className="text-[10px] text-purple-800 font-normal print:hidden">
+                      <span className="font-black text-purple-950 print:text-[8px] truncate">GÜN SONU DENGE</span>
+                      <span className="text-[10px] text-purple-800 font-normal print:hidden shrink-0">
                         Stok+Üretim-Sevk
                       </span>
                     </div>
                   </td>
                   {filteredProducts.map((prod) => {
                     const stk = stockMap[prod.id] || 0;
-                    const prd = Number(editingProduction[prod.id] || dailyProductionMap[prod.id] || 0);
+                    const prd = Number(editingProduction[prod.id] !== undefined ? editingProduction[prod.id] : dailyProductionMap[prod.id] || 0);
                     const gdn = productTotals[prod.id] || 0;
                     const balance = stk + prd - gdn;
 
@@ -2361,7 +2481,7 @@ export default function DailyShipmentStockMatrixReport() {
                       <td
                         key={prod.id}
                         style={{ width: `${productColWidthPct}%` }}
-                        className={`p-1.5 text-right font-mono font-black border-r border-purple-200 text-xs print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px] ${
+                        className={`p-1.5 text-right font-mono font-black border-r border-purple-200 text-xs matrix-col-product print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px] ${
                           balance < 0
                             ? 'text-rose-700 bg-rose-100/70'
                             : balance > 0
@@ -2373,23 +2493,28 @@ export default function DailyShipmentStockMatrixReport() {
                       </td>
                     );
                   })}
-                  <td colSpan={5} style={{ width: '27%' }} className="p-2 text-center text-purple-900 bg-purple-200/60 border-l border-purple-300 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
-                    Net Stok Bakiyesi
+                  <td colSpan={3} className="p-2 text-right text-purple-900 bg-purple-200/60 border-l border-purple-300 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
+                    Net Gün Sonu Bakiye:
+                  </td>
+                  <td className={`p-2 matrix-col-rem print-col-rem text-right font-mono text-sm font-black bg-purple-200/90 border-l border-purple-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8px] ${totalNetBalance < 0 ? 'text-rose-700' : 'text-purple-950'}`}>
+                    {totalNetBalance.toLocaleString('tr-TR')}
+                  </td>
+                  <td className="p-2 matrix-col-pallet print-col-pallet text-center text-slate-400 bg-purple-100/30 border-l border-purple-200 font-mono text-xs print:p-0.5">
+                    -
                   </td>
                 </tr>
 
                 {/* 5. TOPLAM AÇIK SİPARİŞ / KOTA İHTİYACI (ÜRETİM PLANLAMA KILAVUZU) */}
                 <tr className="bg-rose-100/80 text-rose-950 font-black">
                   <td
-                    style={{ width: '17%' }}
-                    className="p-2 print-col-cust sticky left-0 z-10 bg-rose-200/90 border-r border-rose-300 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
+                    className="p-2 matrix-col-cust print-col-cust sticky left-0 z-10 bg-rose-200/90 border-r border-rose-300 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
                   >
                     <div className="flex items-center justify-between">
                       <div>
-                        <span className="font-black text-rose-950 uppercase print:text-[8px]">AÇIK KOTA İHTİYACI</span>
+                        <span className="font-black text-rose-950 uppercase print:text-[8px] truncate">AÇIK KOTA İHTİYACI</span>
                         <div className="text-[10px] text-rose-800 font-normal print:hidden">Planlanacak Üretim Talebi</div>
                       </div>
-                      <Target size={14} className="text-rose-800 print:hidden" />
+                      <Target size={14} className="text-rose-800 print:hidden shrink-0" />
                     </div>
                   </td>
                   {filteredProducts.map((prod) => {
@@ -2398,7 +2523,7 @@ export default function DailyShipmentStockMatrixReport() {
                       <td
                         key={prod.id}
                         style={{ width: `${productColWidthPct}%` }}
-                        className={`p-1.5 text-right font-mono font-black border-r border-rose-200 text-xs print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px] ${
+                        className={`p-1.5 text-right font-mono font-black border-r border-rose-200 text-xs matrix-col-product print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px] ${
                           demand > 0 ? 'text-rose-900 bg-rose-50' : 'text-slate-300'
                         }`}
                         title={`${prod.name} için teslim edilmesi gereken toplam açık taahhüt`}
@@ -2407,7 +2532,7 @@ export default function DailyShipmentStockMatrixReport() {
                       </td>
                     );
                   })}
-                  <td colSpan={3} style={{ width: '16%' }} className="p-2 text-right text-rose-900 bg-rose-200/60 border-l border-rose-300 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
+                  <td colSpan={3} className="p-2 text-right text-rose-900 bg-rose-200/60 border-l border-rose-300 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
                     <div className="leading-tight">
                       <div className="font-black">TÜM AÇIK SİPARİŞ BAKİYESİ:</div>
                       {totalUnassignedQuotaRemainingSum > 0 && (
@@ -2418,8 +2543,7 @@ export default function DailyShipmentStockMatrixReport() {
                     </div>
                   </td>
                   <td
-                    style={{ width: '6%' }}
-                    className="p-2 print-col-rem text-right font-mono text-sm font-black text-rose-950 bg-rose-300/80 border-l border-rose-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8.5px]"
+                    className="p-2 matrix-col-rem print-col-rem text-right font-mono text-sm font-black text-rose-950 bg-rose-300/80 border-l border-rose-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8.5px]"
                     title={
                       totalUnassignedQuotaRemainingSum > 0
                         ? `Taş Tanımlı Açık İhtiyaç: ${Number(totalProductQuotaDemandSum).toLocaleString('tr-TR')} m²\nGenel (Taşsız) Kotalar: ${Number(totalUnassignedQuotaRemainingSum).toLocaleString('tr-TR')} m² [${unassignedCustomerNames.join(', ')}]`
@@ -2428,15 +2552,16 @@ export default function DailyShipmentStockMatrixReport() {
                   >
                     {totalQuotaRemainingSum ? Number(totalQuotaRemainingSum).toLocaleString('tr-TR') : '-'}
                   </td>
-                  <td style={{ width: '5%' }} className="p-2 print-col-pallet text-center text-slate-400 bg-rose-200/40 border-l border-rose-300 font-mono text-xs print:p-0.5">
+                  <td className="p-2 matrix-col-pallet print-col-pallet text-center text-slate-400 bg-rose-200/40 border-l border-rose-300 font-mono text-xs print:p-0.5">
                     -
                   </td>
                 </tr>
               </tfoot>
             </table>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+    </div>
 
       {/* ── PRINT-ONLY 3-COLUMN OFFICIAL SIGNATURE BLOCK ── */}
       <div className="signature-block print-only mt-4 pt-2 border-t-2 border-slate-700">
