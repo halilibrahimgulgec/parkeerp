@@ -1385,19 +1385,10 @@ function ShipmentForm({
       if (field === 'pallets' || field === 'product_id') {
         const p = products.find((x) => x.id === (field === 'product_id' ? value : cur.product_id));
         if (p) {
-          cur.m2 = cur.pallets * p.m2_per_pallet;
+          cur.m2 = Math.round(cur.pallets * p.m2_per_pallet * 100) / 100;
           if (field === 'product_id' && p.unit) {
             cur.unit = p.unit;
           }
-        }
-      }
-
-      // Çift yönlü: Metraj doğrudan girildiğinde palet adedini otomatik hesapla
-      if (field === 'm2') {
-        const p = products.find((x) => x.id === cur.product_id);
-        if (p && p.m2_per_pallet > 0 && cur.pallet_type !== 'dokme') {
-          const calcPallets = Number(value) / p.m2_per_pallet;
-          cur.pallets = Math.round(calcPallets * 10) / 10;
         }
       }
 
@@ -2136,8 +2127,8 @@ function ShipmentForm({
         <div className="flex items-center justify-between mb-3">
           <div>
             <h3 className="text-sm font-semibold text-slate-700">Yüklenen Ürünler</h3>
-            <p className="text-[11px] text-slate-400">
-              Ürün seçildiğinde sözleşme veya son sevk fiyatı kendiliğinden dolar. Palet ve m² birbirini otomatik hesaplar.
+            <p className="text-[11px] text-slate-500">
+              Palet girildiğinde standart m²/metre otomatik hesaplanır. Farklı sıra/adet yüklemelerinde miktar elle değiştirildiğinde <span className="font-semibold text-blue-700">palet sayısı sabit kalır</span>.
             </p>
           </div>
           <button
@@ -2329,6 +2320,32 @@ function ShipmentForm({
                           : `• Stok: ${stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`}
                       </span>
                     )}
+
+                    {/* Özel Sıra / Palet İçi Yükleme Bilgisi */}
+                    {(() => {
+                      const prod = products.find((p) => p.id === item.product_id);
+                      if (!prod || !prod.m2_per_pallet || !item.pallets || item.pallets <= 0 || item.pallet_type === 'dokme') return null;
+                      const standardM2 = Math.round(item.pallets * prod.m2_per_pallet * 100) / 100;
+                      const isCustomRow = Math.abs(item.m2 - standardM2) > 0.05;
+                      if (!isCustomRow) return null;
+
+                      const perPalletActual = (Number(item.m2) / item.pallets).toFixed(2);
+                      return (
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-50 text-amber-900 border border-amber-200">
+                          <span>📦</span>
+                          <span>Özel Yükleme: <strong>{perPalletActual} {unitLabel}/Palet</strong></span>
+                          <span className="text-amber-600 font-normal hidden sm:inline">(Standart: {prod.m2_per_pallet})</span>
+                          <button
+                            type="button"
+                            onClick={() => setItem(idx, 'm2', standardM2)}
+                            className="ml-1 text-[10px] text-blue-700 hover:text-blue-900 font-bold underline cursor-pointer"
+                            title="Standart palet katsayısına dön"
+                          >
+                            Standarda Dön ({standardM2} {unitLabel})
+                          </button>
+                        </span>
+                      );
+                    })()}
                   </div>
 
                   {/* Line item total */}
