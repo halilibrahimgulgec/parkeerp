@@ -1307,8 +1307,26 @@ export default function ProductionPlanning() {
                                   {isM1 ? 'Makine 1 (Parke)' : 'Makine 2 (Bordür)'}
                                 </span>
                               </td>
-                              <td className="px-3 py-2.5 font-bold text-slate-900">
-                                {it.products?.name} ({it.products?.thickness || 'Standart'} / {it.products?.color || 'Gri'})
+                              <td className="px-3 py-2.5">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="font-bold text-slate-900">
+                                    {it.products?.name} ({it.products?.thickness || 'Standart'} / {it.products?.color || 'Gri'})
+                                  </span>
+                                  {it.is_mold_change ? (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                      🔧 Kalıp Değişimi (~1.5 sa ayar)
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                                      🔁 Kesintisiz Kalıp
+                                    </span>
+                                  )}
+                                </div>
+                                {it.notes && (
+                                  <div className="text-[10.5px] text-slate-500 mt-0.5 font-sans leading-tight">
+                                    {it.notes}
+                                  </div>
+                                )}
                               </td>
                               <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-900">
                                 {it.planned_m2.toLocaleString('tr-TR')} {it.products?.unit || 'm²'}
@@ -1622,7 +1640,7 @@ export default function ProductionPlanning() {
                       >
                         <div className="flex items-start justify-between gap-3 mb-2">
                           <div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-1.5">
                               <span className="font-mono text-xs font-bold text-slate-700">
                                 {new Date(item.planned_date).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', weekday: 'short' })}
                               </span>
@@ -1631,6 +1649,15 @@ export default function ProductionPlanning() {
                               }`}>
                                 {item.shift} (10 Saat)
                               </span>
+                              {item.notes?.includes('🔧') || item.notes?.includes('Kalıp Montajı') ? (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                  🔧 Kalıp Değişimi
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                                  🔁 Kesintisiz Kalıp
+                                </span>
+                              )}
                             </div>
                             <h4 className="font-bold text-slate-900 text-sm mt-1">
                               {item.products?.name}
@@ -1638,6 +1665,11 @@ export default function ProductionPlanning() {
                             <span className="text-[11px] text-slate-500">
                               {item.products?.thickness} • {item.products?.color} • 1 Palet: {item.products?.m2_per_pallet} m²
                             </span>
+                            {item.notes && (
+                              <div className="text-[11px] text-slate-700 bg-slate-50 border border-slate-200/80 rounded-xl px-2.5 py-1.5 mt-2 font-medium">
+                                {item.notes}
+                              </div>
+                            )}
                           </div>
 
                           <div className="text-right">
@@ -1761,7 +1793,7 @@ export default function ProductionPlanning() {
                       >
                         <div className="flex items-start justify-between gap-3 mb-2">
                           <div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-1.5">
                               <span className="font-mono text-xs font-bold text-slate-700">
                                 {new Date(item.planned_date).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', weekday: 'short' })}
                               </span>
@@ -1770,6 +1802,15 @@ export default function ProductionPlanning() {
                               }`}>
                                 {item.shift} (10 Saat)
                               </span>
+                              {item.notes?.includes('🔧') || item.notes?.includes('Kalıp Montajı') ? (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                  🔧 Kalıp Değişimi
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                                  🔁 Kesintisiz Kalıp
+                                </span>
+                              )}
                             </div>
                             <h4 className="font-bold text-slate-900 text-sm mt-1">
                               {item.products?.name}
@@ -1777,6 +1818,11 @@ export default function ProductionPlanning() {
                             <span className="text-[11px] text-slate-500">
                               {item.products?.thickness} • {item.products?.color} • 1 Palet: {item.products?.m2_per_pallet} {item.products?.unit}
                             </span>
+                            {item.notes && (
+                              <div className="text-[11px] text-slate-700 bg-slate-50 border border-slate-200/80 rounded-xl px-2.5 py-1.5 mt-2 font-medium">
+                                {item.notes}
+                              </div>
+                            )}
                           </div>
 
                           <div className="text-right">
