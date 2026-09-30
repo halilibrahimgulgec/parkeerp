@@ -32,7 +32,13 @@ import {
   FileText,
   ArrowUp,
 } from 'lucide-react';
-import { scanWaybillImageForShipment, ParsedShipmentOCRData, smartMatchProduct } from '../utils/aiVisionOCREngine';
+import {
+  scanWaybillImageForShipment,
+  ParsedShipmentOCRData,
+  smartMatchProduct,
+  normalizeDateToISO,
+  normalizePalletType
+} from '../utils/aiVisionOCREngine';
 
 const getLocalDateString = () => {
   const now = new Date();
@@ -1099,7 +1105,7 @@ function ShipmentForm({
       setForm((prev) => {
         const next = { ...prev };
         if (ocr.invoice_no) next.invoice_no = ocr.invoice_no;
-        if (ocr.date) next.shipment_date = ocr.date;
+        if (ocr.date) next.shipment_date = normalizeDateToISO(ocr.date);
         if (ocr.matched_customer_id) next.customer_id = ocr.matched_customer_id;
         if (ocr.matched_site_id) next.site_id = ocr.matched_site_id;
         if (ocr.vehicle_plate) next.vehicle_plate = ocr.vehicle_plate;
@@ -1124,13 +1130,14 @@ function ShipmentForm({
                 products.find((p) => p.name.toLowerCase().includes(it.product_name.toLowerCase()));
               prodId = matched?.id || products[0]?.id || '';
             }
+            const pObj = products.find((p) => p.id === prodId);
             return {
               product_id: prodId,
               pallets: it.pallets,
-              pallet_type: it.pallet_type || 'tahta',
+              pallet_type: it.pallet_type || 'uretim',
               m2: it.m2,
               unit: it.unit || 'm2',
-              unit_price: 0,
+              unit_price: Number(pObj?.price || 0),
             };
           });
         }
@@ -1138,9 +1145,13 @@ function ShipmentForm({
         return next;
       });
 
+      const firstItem = ocr.items?.[0];
+      const pTypeLabel = firstItem?.pallet_type ? PALLET_LABELS[firstItem.pallet_type] || firstItem.pallet_type : 'Üretim Paleti';
+      const formattedDate = ocr.date ? new Date(normalizeDateToISO(ocr.date)).toLocaleDateString('tr-TR') : '';
+
       setScanNotice({
         type: 'success',
-        text: `✅ İrsaliye (#${ocr.invoice_no || '-'} / ${ocr.customer_name || 'Müşteri'}) başarıyla okundu ve form dolduruldu!`,
+        text: `✅ İrsaliye (#${ocr.invoice_no || '-'} / ${ocr.customer_name || 'Müşteri'}) başarıyla okundu! ${formattedDate ? `Tarih: ${formattedDate} | ` : ''}Palet: ${firstItem?.pallets || 0} (${pTypeLabel})`,
       });
     } catch (err: any) {
       console.error('OCR Error:', err);
