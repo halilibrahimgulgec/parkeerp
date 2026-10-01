@@ -1137,7 +1137,7 @@ function ShipmentForm({
               pallet_type: it.pallet_type || 'uretim',
               m2: it.m2,
               unit: it.unit || 'm2',
-              unit_price: Number(pObj?.price || 0),
+              unit_price: Number(pObj?.unit_price || (pObj as any)?.price || 0),
             };
           });
         }
@@ -3039,7 +3039,7 @@ export default function ShipmentPage() {
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all shadow-md shadow-blue-500/20 cursor-pointer"
           >
             <Plus size={18} />
-            <span>+ Yeni Sevkiyat Girişi</span>
+            <span>Yeni Sevkiyat Girişi</span>
           </button>
         </div>
       </div>
