@@ -6,6 +6,7 @@ import {
   Mic,
   MicOff,
   X,
+  ChevronDown,
   RefreshCw,
   Settings,
   Copy,
@@ -191,6 +192,18 @@ export default function AIAssistantModal() {
       window.removeEventListener('open-parke-ai', handleOpen);
     };
   }, []);
+
+  // Listen for Escape key to close modal
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen]);
 
   // Load saved API key and messaging settings on mount
   useEffect(() => {
@@ -836,7 +849,7 @@ export default function AIAssistantModal() {
   return (
     <>
       {/* 1. Floating Action Trigger Button */}
-      <div className="no-print fixed bottom-16 sm:bottom-6 right-6 z-40">
+      <div className={`no-print fixed bottom-16 sm:bottom-6 right-6 z-40 ${isOpen ? 'hidden' : 'flex'}`}>
         <button
           onClick={() => setIsOpen(!isOpen)}
           className="relative group flex items-center gap-2.5 px-4 py-3 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-600 hover:to-orange-600 text-white rounded-full shadow-xl shadow-amber-500/25 transition-all duration-300 transform hover:scale-105 active:scale-95 focus:outline-none"
@@ -854,45 +867,67 @@ export default function AIAssistantModal() {
         </button>
       </div>
 
-      {/* 2. Floating AI Drawer / Modal */}
+      {/* 2. Backdrop Overlay for mobile & desktop dismiss */}
       {isOpen && (
         <div
-          className="no-print fixed inset-x-0 bottom-0 sm:bottom-20 sm:right-6 sm:left-auto w-full max-w-full sm:max-w-[500px] sm:w-[500px] h-[85vh] sm:h-[680px] max-h-[92vh] bg-white sm:rounded-2xl rounded-t-2xl shadow-2xl border border-slate-200/80 flex flex-col z-50 overflow-hidden transition-all duration-300"
-          style={{ boxShadow: '0 20px 50px rgba(15, 23, 42, 0.25)' }}
+          className="no-print fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-40 transition-opacity duration-200 cursor-pointer"
+          onClick={() => setIsOpen(false)}
+          aria-label="Kapat"
+        />
+      )}
+
+      {/* 3. Floating AI Drawer / Modal */}
+      {isOpen && (
+        <div
+          className="no-print fixed inset-x-0 bottom-0 sm:bottom-20 sm:right-6 sm:left-auto w-full max-w-full sm:max-w-[500px] sm:w-[500px] h-[88vh] sm:h-[680px] max-h-[94vh] bg-white sm:rounded-2xl rounded-t-3xl shadow-2xl border border-slate-200/80 flex flex-col z-50 overflow-hidden transition-all duration-300"
+          style={{ boxShadow: '0 20px 50px rgba(15, 23, 42, 0.35)' }}
         >
+          {/* Mobile Swipe / Pull Handle Bar - Easy to tap or drag down to dismiss */}
+          <div
+            onClick={() => setIsOpen(false)}
+            className="sm:hidden w-full pt-3 pb-2 flex flex-col items-center justify-center cursor-pointer bg-slate-950 hover:bg-slate-900 active:bg-slate-800 border-b border-slate-800/80 transition-colors select-none group shrink-0"
+            title="Aşağı İndir / Kapat"
+          >
+            <div className="w-12 h-1.5 bg-slate-500 group-hover:bg-amber-400 group-active:scale-95 rounded-full transition-all mb-1" />
+            <div className="flex items-center gap-1 text-[11px] font-bold text-slate-400 group-hover:text-amber-300">
+              <ChevronDown className="w-3.5 h-3.5 text-amber-400" />
+              <span>Aşağı İndir / Kapat</span>
+            </div>
+          </div>
+
           {/* Header */}
-          <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white px-4 py-3.5 flex items-center justify-between border-b border-slate-700 select-none">
-            <div className="flex items-center gap-2.5">
-              <div className="p-1.5 bg-gradient-to-br from-amber-400 to-orange-500 rounded-lg text-white shadow-sm">
-                <Bot className="w-5 h-5" />
+          <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white px-3 sm:px-4 py-2.5 sm:py-3.5 flex items-center justify-between border-b border-slate-700 select-none shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="p-1.5 bg-gradient-to-br from-amber-400 to-orange-500 rounded-lg text-white shadow-sm shrink-0">
+                <Bot className="w-4 h-4 sm:w-5 sm:h-5" />
               </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="font-bold text-sm text-slate-100">Parke AI Fabrika Zekası</h3>
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <h3 className="font-bold text-xs sm:text-sm text-slate-100 truncate">Parke AI Fabrika Zekası</h3>
+                  <span className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    Canlı Veri
+                    Canlı
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-400 truncate max-w-[220px]">
-                  {apiKey ? 'Google Gemini 2.0 Flash' : 'Dahili Fabrika Zekası Motoru'}
+                <p className="text-[10px] sm:text-[11px] text-slate-400 truncate max-w-[120px] sm:max-w-[220px]">
+                  {apiKey ? 'Google Gemini 2.0 Flash' : 'Dahili Fabrika Zekası'}
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 shrink-0">
               <button
                 onClick={loadFreshSnapshot}
                 disabled={isRefreshingSnapshot}
                 className="p-1.5 hover:bg-slate-700/60 rounded-lg text-slate-300 hover:text-white transition-colors"
                 title="Canlı verileri tazele"
               >
-                <RefreshCw className={`w-4 h-4 ${isRefreshingSnapshot ? 'animate-spin text-amber-400' : ''}`} />
+                <RefreshCw className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isRefreshingSnapshot ? 'animate-spin text-amber-400' : ''}`} />
               </button>
               {/* Phase 4: Walkie-Talkie Button in Header */}
               <button
                 onClick={() => setIsWalkieTalkieOpen(true)}
-                className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                className="p-1.5 sm:px-2 sm:py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
                 title="Saha Telsizi / Bas-Konuş Modu (PTT)"
               >
                 <Radio className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
@@ -906,7 +941,7 @@ export default function AIAssistantModal() {
                 }`}
                 title={autoSpeak ? 'Otomatik Sesli Okuma Açık (Her yanıt okunur)' : 'Otomatik Sesli Okuma Kapalı'}
               >
-                {autoSpeak ? <Volume2 className="w-4 h-4 text-white" /> : <VolumeX className="w-4 h-4 text-slate-400" />}
+                {autoSpeak ? <Volume2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" /> : <VolumeX className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />}
               </button>
               <button
                 onClick={() => setShowSettings(!showSettings)}
@@ -915,14 +950,18 @@ export default function AIAssistantModal() {
                 }`}
                 title="AI Motor Ayarları"
               >
-                <Settings className="w-4 h-4" />
+                <Settings className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               </button>
               <button
+                type="button"
                 onClick={() => setIsOpen(false)}
-                className="p-1.5 hover:bg-slate-700/60 rounded-lg text-slate-300 hover:text-white transition-colors ml-1"
-                title="Kapat"
+                className="ml-1 px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white rounded-xl shadow-md font-bold text-xs flex items-center gap-1 transition-all active:scale-95 cursor-pointer shrink-0"
+                title="Aşağı İndir / Kapat"
+                aria-label="Kapat"
               >
-                <X className="w-4 h-4" />
+                <ChevronDown className="w-4 h-4 sm:hidden" />
+                <X className="w-3.5 h-3.5 hidden sm:inline" />
+                <span className="text-[11px] font-bold">Kapat</span>
               </button>
             </div>
           </div>
