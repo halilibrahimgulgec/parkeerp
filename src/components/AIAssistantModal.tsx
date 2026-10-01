@@ -184,8 +184,11 @@ export default function AIAssistantModal() {
   };
 
   useEffect(() => {
+    const handleOpen = () => setIsOpen(true);
+    window.addEventListener('open-parke-ai', handleOpen);
     return () => {
       stopSpeaking();
+      window.removeEventListener('open-parke-ai', handleOpen);
     };
   }, []);
 

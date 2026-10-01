@@ -2,6 +2,7 @@ import { ReactNode, useState } from 'react';
 import Sidebar from './Sidebar';
 import NotificationBell from './NotificationBell';
 import AIAssistantModal from './AIAssistantModal';
+import MobileBottomNav from './MobileBottomNav';
 import { Menu, X } from 'lucide-react';
 
 type Page = 'dashboard' | 'production' | 'production_planning' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking';
@@ -22,22 +23,24 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
 
   return (
     <div className="flex flex-col md:flex-row min-h-screen bg-slate-50 print:block print:bg-white print:m-0 print:p-0 print:w-full print:min-h-0">
-      {/* Mobile Top Navbar */}
-      <header className="flex md:hidden items-center justify-between px-4 py-3 bg-slate-900 text-white sticky top-0 z-30 shadow-md">
-        <span className="font-bold text-lg">Parke ERP</span>
-        <div className="flex items-center gap-2">
-          <div className="text-slate-800 bg-white/90 rounded-xl p-0.5">
-            <NotificationBell onNavigate={handleNavigate} />
+      {/* Mobile Top Navbar (Hidden on Dashboard because MobileDashboard has its own curved profile header) */}
+      {currentPage !== 'dashboard' && (
+        <header className="flex md:hidden items-center justify-between px-4 py-3 bg-slate-900 text-white sticky top-0 z-30 shadow-md">
+          <span className="font-bold text-lg">Parke ERP</span>
+          <div className="flex items-center gap-2">
+            <div className="text-slate-800 bg-white/90 rounded-xl p-0.5">
+              <NotificationBell onNavigate={handleNavigate} />
+            </div>
+            <button 
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)} 
+              className="p-1 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+              aria-label="Menüyü Aç/Kapat"
+            >
+              {isSidebarOpen ? <X size={24} /> : <Menu size={24} />}
+            </button>
           </div>
-          <button 
-            onClick={() => setIsSidebarOpen(!isSidebarOpen)} 
-            className="p-1 hover:bg-slate-800 rounded-lg transition-colors"
-            aria-label="Menüyü Aç/Kapat"
-          >
-            {isSidebarOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
-        </div>
-      </header>
+        </header>
+      )}
 
       {/* Mobile Sidebar Overlay (Backdrop) */}
       {isSidebarOpen && (
@@ -65,6 +68,9 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
           {children}
         </div>
       </main>
+
+      {/* Mobile Bottom Navigation Bar */}
+      <MobileBottomNav currentPage={currentPage} onNavigate={handleNavigate} />
 
       {/* Floating AI Factory Assistant */}
       <AIAssistantModal />

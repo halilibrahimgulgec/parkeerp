@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { getShipmentDisplayQuantity } from './Shipment';
 import { calculateAllQuotas } from '../utils/quotaCalculator';
+import MobileDashboard from '../components/MobileDashboard';
 
 type Page = 'dashboard' | 'production' | 'production_planning' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking';
 
@@ -120,6 +121,39 @@ function KPICard({ title, value, sub, icon: Icon, color }: { title: string; valu
 }
 
 export default function Dashboard({ onNavigate }: DashboardProps = {}) {
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth < 768;
+    }
+    return false;
+  });
+
+  const [isMobileDark, setIsMobileDark] = useState(() => {
+    try {
+      return localStorage.getItem('parke_mobile_theme') === 'dark';
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const handleToggleMobileTheme = () => {
+    setIsMobileDark((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('parke_mobile_theme', next ? 'dark' : 'light');
+      } catch {}
+      return next;
+    });
+  };
+
   const [kpi, setKpi] = useState<KPI>({
     productionDisplay: '0 m²',
     productionSub: 'Net üretim (fire düşülmüş)',
@@ -308,6 +342,16 @@ export default function Dashboard({ onNavigate }: DashboardProps = {}) {
       (item.thickness || '').toLowerCase().includes(q);
     return matchesFilter && matchesSearch;
   });
+
+  if (isMobile && onNavigate) {
+    return (
+      <MobileDashboard
+        onNavigate={onNavigate}
+        isDark={isMobileDark}
+        onToggleTheme={handleToggleMobileTheme}
+      />
+    );
+  }
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6">
