@@ -74,11 +74,6 @@ export default function DailyShipmentStockMatrixReport() {
   const [loading, setLoading] = useState<boolean>(true);
   const [latestShipmentDate, setLatestShipmentDate] = useState<string | null>(null);
 
-  // In-line Quick Production Editing State: { [productId: string]: string }
-  const [editingProduction, setEditingProduction] = useState<{ [productId: string]: string }>({});
-  const [savingProduction, setSavingProduction] = useState<boolean>(false);
-  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
-
   // Load Data
   const loadData = async () => {
     setLoading(true);
@@ -183,15 +178,8 @@ export default function DailyShipmentStockMatrixReport() {
 
       if (prodEntriesRes.data && prodEntriesRes.data.length > 0) {
         setProductionEntries(prodEntriesRes.data);
-        const pMap: { [id: string]: string } = {};
-        prodEntriesRes.data.forEach((pe: any) => {
-          const prev = Number(pMap[pe.product_id] || 0);
-          pMap[pe.product_id] = String(prev + (Number(pe.net_m2 || pe.total_m2) || 0));
-        });
-        setEditingProduction(pMap);
       } else {
         setProductionEntries([]);
-        setEditingProduction({});
       }
     } catch (err) {
       console.error('Matris veri yükleme hatası:', err);
@@ -374,10 +362,22 @@ export default function DailyShipmentStockMatrixReport() {
   }, [calculatedQuotas, customers]);
 
   // Pallet Balances Map for Customer & Site
-  const { customerPalletMap, sitePalletMap, grandTotalPalletBalance } = useMemo(() => {
-    const cMap: Record<string, { total: number; tahta: number; sevkiyat: number; uretim: number }> = {};
-    const sMap: Record<string, { total: number; tahta: number; sevkiyat: number; uretim: number }> = {};
+  // Pallet Balances Map for Customer & Site (Tahta vs Üretim/Sevkiyat ayrımı)
+  const {
+    customerPalletMap,
+    sitePalletMap,
+    grandTotalPalletBalance,
+    grandTotalTahtaPallet,
+    grandTotalUretimSevkiyatPallet,
+    grandTotalUretimPallet,
+    grandTotalSevkiyatPallet,
+  } = useMemo(() => {
+    const cMap: Record<string, { total: number; tahta: number; sevkiyat: number; uretim: number; uretimSevkiyat: number }> = {};
+    const sMap: Record<string, { total: number; tahta: number; sevkiyat: number; uretim: number; uretimSevkiyat: number }> = {};
     let gTotal = 0;
+    let gTahta = 0;
+    let gUretim = 0;
+    let gSevkiyat = 0;
 
     (palletBalances || []).forEach((pb) => {
       const cid = pb.customer_id;
@@ -386,22 +386,45 @@ export default function DailyShipmentStockMatrixReport() {
       const qty = Number(pb.balance) || 0;
       const pType = pb.pallet_type;
 
-      if (!cMap[cid]) cMap[cid] = { total: 0, tahta: 0, sevkiyat: 0, uretim: 0 };
+      if (!cMap[cid]) cMap[cid] = { total: 0, tahta: 0, sevkiyat: 0, uretim: 0, uretimSevkiyat: 0 };
       cMap[cid].total += qty;
-      if (pType === 'tahta') cMap[cid].tahta += qty;
-      else if (pType === 'sevkiyat') cMap[cid].sevkiyat += qty;
-      else if (pType === 'uretim') cMap[cid].uretim += qty;
+      if (pType === 'tahta') {
+        cMap[cid].tahta += qty;
+        gTahta += qty;
+      } else if (pType === 'sevkiyat') {
+        cMap[cid].sevkiyat += qty;
+        cMap[cid].uretimSevkiyat += qty;
+        gSevkiyat += qty;
+      } else if (pType === 'uretim') {
+        cMap[cid].uretim += qty;
+        cMap[cid].uretimSevkiyat += qty;
+        gUretim += qty;
+      }
 
-      if (!sMap[sKey]) sMap[sKey] = { total: 0, tahta: 0, sevkiyat: 0, uretim: 0 };
+      if (!sMap[sKey]) sMap[sKey] = { total: 0, tahta: 0, sevkiyat: 0, uretim: 0, uretimSevkiyat: 0 };
       sMap[sKey].total += qty;
-      if (pType === 'tahta') sMap[sKey].tahta += qty;
-      else if (pType === 'sevkiyat') sMap[sKey].sevkiyat += qty;
-      else if (pType === 'uretim') sMap[sKey].uretim += qty;
+      if (pType === 'tahta') {
+        sMap[sKey].tahta += qty;
+      } else if (pType === 'sevkiyat') {
+        sMap[sKey].sevkiyat += qty;
+        sMap[sKey].uretimSevkiyat += qty;
+      } else if (pType === 'uretim') {
+        sMap[sKey].uretim += qty;
+        sMap[sKey].uretimSevkiyat += qty;
+      }
 
       gTotal += qty;
     });
 
-    return { customerPalletMap: cMap, sitePalletMap: sMap, grandTotalPalletBalance: gTotal };
+    return {
+      customerPalletMap: cMap,
+      sitePalletMap: sMap,
+      grandTotalPalletBalance: gTotal,
+      grandTotalTahtaPallet: gTahta,
+      grandTotalUretimSevkiyatPallet: gUretim + gSevkiyat,
+      grandTotalUretimPallet: gUretim,
+      grandTotalSevkiyatPallet: gSevkiyat,
+    };
   }, [palletBalances]);
 
   // Helper: Child sites for a customer
@@ -587,130 +610,13 @@ export default function DailyShipmentStockMatrixReport() {
 
   const totalDailyProduction = useMemo(() => {
     return filteredProducts.reduce((sum, prod) => {
-      const qty = editingProduction[prod.id] !== undefined
-        ? Number(editingProduction[prod.id]) || 0
-        : (dailyProductionMap[prod.id] || 0);
-      return sum + qty;
+      return sum + (dailyProductionMap[prod.id] || 0);
     }, 0);
-  }, [filteredProducts, editingProduction, dailyProductionMap]);
+  }, [filteredProducts, dailyProductionMap]);
 
   const totalNetBalance = useMemo(() => {
     return totalFactoryStock + totalDailyProduction - grandTotalShipped;
   }, [totalFactoryStock, totalDailyProduction, grandTotalShipped]);
-
-  // Save single product production entry
-  const handleSaveProduction = async (productId: string) => {
-    const qtyStr = editingProduction[productId];
-    if (qtyStr === undefined || qtyStr === '') return;
-
-    const qty = Number(qtyStr);
-    if (isNaN(qty) || qty < 0) {
-      alert('Lütfen geçerli bir üretim miktarı giriniz.');
-      return;
-    }
-
-    setSavingProduction(true);
-    try {
-      const targetDate = dateMode === 'single' ? selectedDate : endDate;
-      const targetProd = products.find((p) => p.id === productId);
-
-      const existing = productionEntries.find(
-        (pe) => pe.product_id === productId && pe.date === targetDate
-      );
-
-      if (existing) {
-        const { error } = await supabase
-          .from('production_entries')
-          .update({
-            total_m2: qty,
-            net_m2: qty,
-            total_pallets: targetProd?.m2_per_pallet ? Math.ceil(qty / targetProd.m2_per_pallet) : 1,
-            notes: 'Günlük Matris Hızlı Üretim Girişi',
-          })
-          .eq('id', existing.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from('production_entries').insert([
-          {
-            date: targetDate,
-            shift: 'Gündüz',
-            machine_no: '1',
-            product_id: productId,
-            total_pallets: targetProd?.m2_per_pallet ? Math.ceil(qty / targetProd.m2_per_pallet) : 1,
-            total_m2: qty,
-            waste_m2: 0,
-            net_m2: qty,
-            lot_number: `LOT-${targetDate.replace(/-/g, '')}`,
-            notes: 'Günlük Matris Hızlı Üretim Girişi',
-            created_by: user?.id || null,
-          },
-        ]);
-        if (error) throw error;
-      }
-
-      setSaveSuccessMsg(`"${targetProd?.name || 'Ürün'}" üretimi başarıyla kaydedildi!`);
-      setTimeout(() => setSaveSuccessMsg(null), 3500);
-      await loadData();
-    } catch (err: any) {
-      console.error('Üretim kaydetme hatası:', err);
-      alert('Üretim kaydedilirken hata oluştu: ' + (err?.message || 'Bilinmeyen hata'));
-    } finally {
-      setSavingProduction(false);
-    }
-  };
-
-  // Save all non-empty edited productions at once
-  const handleSaveAllProductions = async () => {
-    setSavingProduction(true);
-    try {
-      const targetDate = dateMode === 'single' ? selectedDate : endDate;
-
-      for (const prod of filteredProducts) {
-        const valStr = editingProduction[prod.id];
-        if (valStr !== undefined && valStr !== '') {
-          const qty = Number(valStr);
-          if (!isNaN(qty) && qty >= 0) {
-            const existing = productionEntries.find((pe) => pe.product_id === prod.id && pe.date === targetDate);
-            if (existing) {
-              await supabase
-                .from('production_entries')
-                .update({
-                  total_m2: qty,
-                  net_m2: qty,
-                  total_pallets: prod.m2_per_pallet ? Math.ceil(qty / prod.m2_per_pallet) : 1,
-                })
-                .eq('id', existing.id);
-            } else if (qty > 0) {
-              await supabase.from('production_entries').insert([
-                {
-                  date: targetDate,
-                  shift: 'Gündüz',
-                  machine_no: '1',
-                  product_id: prod.id,
-                  total_pallets: prod.m2_per_pallet ? Math.ceil(qty / prod.m2_per_pallet) : 1,
-                  total_m2: qty,
-                  waste_m2: 0,
-                  net_m2: qty,
-                  lot_number: `LOT-${targetDate.replace(/-/g, '')}`,
-                  notes: 'Günlük Matris Toplu Üretim Girişi',
-                  created_by: user?.id || null,
-                },
-              ]);
-            }
-          }
-        }
-      }
-
-      setSaveSuccessMsg('Tüm girilen günlük üretim miktarları başarıyla kaydedildi!');
-      setTimeout(() => setSaveSuccessMsg(null), 3500);
-      await loadData();
-    } catch (err: any) {
-      console.error('Toplu üretim kaydetme hatası:', err);
-      alert('Üretimler kaydedilirken hata oluştu: ' + err.message);
-    } finally {
-      setSavingProduction(false);
-    }
-  };
 
   // Export to Excel (.xls)
   const handleExportExcel = () => {
@@ -722,7 +628,7 @@ export default function DailyShipmentStockMatrixReport() {
       <table border="1" style="border-collapse: collapse; font-family: Arial, sans-serif; font-size: 11px;">
         <thead>
           <tr style="background-color: #1e3a8a; color: #ffffff; font-weight: bold; text-align: center;">
-            <th colspan="${filteredProducts.length + 6}" style="font-size: 14px; padding: 10px;">
+            <th colspan="${filteredProducts.length + 7}" style="font-size: 14px; padding: 10px;">
               PARKE ERP • ${reportTitle} • ${matrixCellMode === 'daily' ? 'GÜNLÜK SEVKİYAT MATRİSİ' : 'KÜMÜLATİF (TOPLAM) SEVKİYAT MATRİSİ'}
             </th>
           </tr>
@@ -736,7 +642,8 @@ export default function DailyShipmentStockMatrixReport() {
             <th style="padding: 8px; text-align: right; background-color: #f3e8ff;">SİPARİŞ / KOTA</th>
             <th style="padding: 8px; text-align: right; background-color: #fef3c7;">KÜMÜLATİF SEVK</th>
             <th style="padding: 8px; text-align: right; background-color: #dcfce7;">KALAN BAKİYE</th>
-            <th style="padding: 8px; text-align: right; background-color: #fef9c3;">ZİMMETLİ PALET</th>
+            <th style="padding: 8px; text-align: right; background-color: #fef9c3;">TAHTA PALET</th>
+            <th style="padding: 8px; text-align: right; background-color: #ffedd5;">ÜRETİM / SEVK. PALETİ</th>
           </tr>
         </thead>
         <tbody>
@@ -789,7 +696,10 @@ export default function DailyShipmentStockMatrixReport() {
                   ${qSummary?.hasQuota ? qSummary.totalRemaining.toLocaleString('tr-TR') : '-'}
                 </td>
                 <td style="padding: 6px; text-align: right; font-weight: bold; background-color: #fef9c3; color: #854d0e;">
-                  ${cPallet && cPallet.total !== 0 ? cPallet.total.toLocaleString('tr-TR') : '-'}
+                  ${cPallet && cPallet.tahta !== 0 ? cPallet.tahta.toLocaleString('tr-TR') : '-'}
+                </td>
+                <td style="padding: 6px; text-align: right; font-weight: bold; background-color: #ffedd5; color: #9a3412;">
+                  ${cPallet && cPallet.uretimSevkiyat !== 0 ? cPallet.uretimSevkiyat.toLocaleString('tr-TR') : '-'}
                 </td>
               </tr>
             `;
@@ -818,7 +728,8 @@ export default function DailyShipmentStockMatrixReport() {
                     <td style="padding: 4px; text-align: right; background-color: #faf5ff;">${sQuota?.hasQuota ? sQuota.totalTarget.toLocaleString('tr-TR') : '-'}</td>
                     <td style="padding: 4px; text-align: right; background-color: #fffbeb;">${sCum ? sCum.toLocaleString('tr-TR') : '-'}</td>
                     <td style="padding: 4px; text-align: right; background-color: #f0fdf4;">${sQuota?.hasQuota ? sQuota.totalRemaining.toLocaleString('tr-TR') : '-'}</td>
-                    <td style="padding: 4px; text-align: right; background-color: #fefce8;">${sPallet && sPallet.total !== 0 ? sPallet.total.toLocaleString('tr-TR') : '-'}</td>
+                    <td style="padding: 4px; text-align: right; background-color: #fefce8;">${sPallet && sPallet.tahta !== 0 ? sPallet.tahta.toLocaleString('tr-TR') : '-'}</td>
+                    <td style="padding: 4px; text-align: right; background-color: #fff7ed;">${sPallet && sPallet.uretimSevkiyat !== 0 ? sPallet.uretimSevkiyat.toLocaleString('tr-TR') : '-'}</td>
                   </tr>
                 `;
               });
@@ -838,7 +749,8 @@ export default function DailyShipmentStockMatrixReport() {
             <td style="padding: 8px; text-align: right; color: #6b21a8;">${totalQuotaTargetSum ? totalQuotaTargetSum.toLocaleString('tr-TR') : '-'}</td>
             <td style="padding: 8px; text-align: right; color: #b45309;">${grandTotalCumulativeShipped ? grandTotalCumulativeShipped.toLocaleString('tr-TR') : (totalQuotaShippedSum ? totalQuotaShippedSum.toLocaleString('tr-TR') : '-')}</td>
             <td style="padding: 8px; text-align: right; color: #15803d;">${totalQuotaRemainingSum ? totalQuotaRemainingSum.toLocaleString('tr-TR') : '-'}</td>
-            <td style="padding: 8px; text-align: right; color: #854d0e;">${grandTotalPalletBalance ? grandTotalPalletBalance.toLocaleString('tr-TR') : '-'}</td>
+            <td style="padding: 8px; text-align: right; color: #854d0e;">${grandTotalTahtaPallet ? grandTotalTahtaPallet.toLocaleString('tr-TR') : '-'}</td>
+            <td style="padding: 8px; text-align: right; color: #9a3412;">${grandTotalUretimSevkiyatPallet ? grandTotalUretimSevkiyatPallet.toLocaleString('tr-TR') : '-'}</td>
           </tr>
 
           <!-- GÜNLÜK SEVKİYAT (SEÇİLİ GÜN) -->
@@ -849,7 +761,7 @@ export default function DailyShipmentStockMatrixReport() {
               return `<td style="padding: 7px; text-align: right; color: #2563eb;">${pTot ? pTot.toLocaleString('tr-TR') : '-'}</td>`;
             }).join('')}
             <td style="padding: 7px; text-align: right; color: #2563eb;">${grandTotalShipped.toLocaleString('tr-TR')}</td>
-            <td colspan="4" style="padding: 7px; text-align: center; color: #64748b; font-weight: normal;">Günlük Gerçekleşen Dağılım</td>
+            <td colspan="5" style="padding: 7px; text-align: center; color: #64748b; font-weight: normal;">Günlük Gerçekleşen Dağılım</td>
           </tr>
 
           <!-- MEVCUT DEPO STOK -->
@@ -862,17 +774,19 @@ export default function DailyShipmentStockMatrixReport() {
             <td colspan="3" style="padding: 8px; text-align: right; color: #166534; font-weight: bold;">TOPLAM DEPO STOĞU:</td>
             <td style="padding: 8px; text-align: right; color: #166534; font-size: 13px; font-weight: bold;">${totalFactoryStock.toLocaleString('tr-TR')}</td>
             <td style="padding: 8px; text-align: center; color: #166534;">-</td>
+            <td style="padding: 8px; text-align: center; color: #166534;">-</td>
           </tr>
 
           <!-- GÜNLÜK ÜRETİM MİKTARI -->
           <tr style="background-color: #fef3c7; font-weight: bold; font-size: 12px;">
             <td style="padding: 8px; color: #92400e;">GÜNLÜK ÜRETİM MİKTARI</td>
             ${filteredProducts.map((p) => {
-              const prd = editingProduction[p.id] || dailyProductionMap[p.id] || 0;
+              const prd = dailyProductionMap[p.id] || 0;
               return `<td style="padding: 8px; text-align: right; color: #92400e;">${prd ? Number(prd).toLocaleString('tr-TR') : '-'}</td>`;
             }).join('')}
             <td colspan="3" style="padding: 8px; text-align: right; color: #92400e; font-weight: bold;">TOPLAM GÜNLÜK İMALAT:</td>
             <td style="padding: 8px; text-align: right; color: #92400e; font-size: 13px; font-weight: bold;">${totalDailyProduction.toLocaleString('tr-TR')}</td>
+            <td style="padding: 8px; text-align: center; color: #92400e;">-</td>
             <td style="padding: 8px; text-align: center; color: #92400e;">-</td>
           </tr>
 
@@ -881,13 +795,14 @@ export default function DailyShipmentStockMatrixReport() {
             <td style="padding: 8px; color: #6b21a8;">GÜN SONU / NET KALAN DENGE</td>
             ${filteredProducts.map((p) => {
               const stk = stockMap[p.id] || 0;
-              const prd = Number(editingProduction[p.id] || dailyProductionMap[p.id] || 0);
+              const prd = dailyProductionMap[p.id] || 0;
               const gdn = productTotals[p.id] || 0;
               const balance = stk + prd - gdn;
               return `<td style="padding: 8px; text-align: right; color: #6b21a8;">${balance.toLocaleString('tr-TR')}</td>`;
             }).join('')}
             <td colspan="3" style="padding: 8px; text-align: right; color: #6b21a8; font-weight: bold;">NET GÜN SONU BAKİYE:</td>
             <td style="padding: 8px; text-align: right; color: #6b21a8; font-size: 13px; font-weight: bold;">${totalNetBalance.toLocaleString('tr-TR')}</td>
+            <td style="padding: 8px; text-align: center; color: #6b21a8;">-</td>
             <td style="padding: 8px; text-align: center; color: #6b21a8;">-</td>
           </tr>
 
@@ -900,6 +815,7 @@ export default function DailyShipmentStockMatrixReport() {
             }).join('')}
             <td colspan="3" style="padding: 8px; text-align: right; color: #be123c;">TOPLAM AÇIK İHTİYAÇ:</td>
             <td style="padding: 8px; text-align: right; color: #be123c; font-size: 13px;">${totalQuotaRemainingSum.toLocaleString('tr-TR')}</td>
+            <td style="padding: 8px; text-align: center; color: #94a3b8;">-</td>
             <td style="padding: 8px; text-align: center; color: #94a3b8;">-</td>
           </tr>
         </tbody>
@@ -1158,11 +1074,15 @@ export default function DailyShipmentStockMatrixReport() {
             text-align: right !important;
           }
           .print-col-pallet,
-          .matrix-col-pallet {
-            width: 5% !important;
+          .matrix-col-pallet,
+          .print-col-pallet-tahta,
+          .matrix-col-pallet-tahta,
+          .print-col-pallet-uretim,
+          .matrix-col-pallet-uretim {
+            width: 4.5% !important;
             min-width: 0 !important;
             max-width: none !important;
-            padding-right: 4px !important;
+            padding-right: 3px !important;
             text-align: right !important;
           }
 
@@ -1207,10 +1127,16 @@ export default function DailyShipmentStockMatrixReport() {
             min-width: 100px !important;
             max-width: 100px !important;
           }
-          .matrix-col-pallet {
-            width: 85px !important;
-            min-width: 85px !important;
-            max-width: 85px !important;
+          .matrix-col-pallet,
+          .matrix-col-pallet-tahta {
+            width: 80px !important;
+            min-width: 80px !important;
+            max-width: 80px !important;
+          }
+          .matrix-col-pallet-uretim {
+            width: 90px !important;
+            min-width: 90px !important;
+            max-width: 90px !important;
           }
         }
       `}</style>
@@ -1530,17 +1456,6 @@ export default function DailyShipmentStockMatrixReport() {
             )}
           </div>
         )}
-
-        {/* Success Alert */}
-        {saveSuccessMsg && (
-          <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-emerald-900 text-xs font-semibold flex items-center justify-between animate-fadeIn">
-            <div className="flex items-center gap-2">
-              <Check size={16} className="text-emerald-600" />
-              <span>{saveSuccessMsg}</span>
-            </div>
-            <span className="text-[10px] text-emerald-700">Veritabanı güncellendi</span>
-          </div>
-        )}
       </div>
 
       {/* ── CUSTOMER MULTI-SELECT CHECKBOX MODAL ── */}
@@ -1776,7 +1691,8 @@ export default function DailyShipmentStockMatrixReport() {
                   <col className="matrix-col-quota print-col-quota" />
                   <col className="matrix-col-cum print-col-cum" />
                   <col className="matrix-col-rem print-col-rem" />
-                  <col className="matrix-col-pallet print-col-pallet" />
+                  <col className="matrix-col-pallet-tahta print-col-pallet-tahta" />
+                  <col className="matrix-col-pallet-uretim print-col-pallet-uretim" />
                 </colgroup>
                 {/* ── TABLE HEADER: PRODUCTS & SUMMARY COLUMNS ── */}
                 <thead className="matrix-thead sticky top-0 z-20 bg-slate-100 shadow-xs print:static print:table-header-group">
@@ -1813,7 +1729,7 @@ export default function DailyShipmentStockMatrixReport() {
                       </th>
                     ))}
 
-                    {/* Far Right 5 Columns: Planning, Balance & Pallet Tracking */}
+                    {/* Far Right 6 Columns: Planning, Balance & Pallet Tracking */}
                     <th
                       className="p-2 matrix-col-daily print-col-daily text-right bg-blue-100 text-blue-950 font-black border-l border-slate-300 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
                     >
@@ -1851,13 +1767,22 @@ export default function DailyShipmentStockMatrixReport() {
                       <div className="text-[9px] text-emerald-700 font-normal print:hidden">Açık İhtiyaç</div>
                     </th>
                     <th
-                      className="p-2 matrix-col-pallet print-col-pallet text-right bg-amber-100/90 text-amber-950 font-black border-l border-amber-200 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
+                      className="p-2 matrix-col-pallet-tahta print-col-pallet-tahta text-right bg-amber-100/90 text-amber-950 font-black border-l border-amber-200 print:p-0.5 print:pr-1 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
                     >
-                      <div className="text-[10px] uppercase print:text-[7.5px] print:leading-tight">
-                        <div>ZİMMETLİ</div>
+                      <div className="text-[10px] uppercase print:text-[7px] print:leading-tight">
+                        <div>TAHTA</div>
                         <div>PALET</div>
                       </div>
                       <div className="text-[9px] text-amber-800 font-normal print:hidden">Bakiye</div>
+                    </th>
+                    <th
+                      className="p-2 matrix-col-pallet-uretim print-col-pallet-uretim text-right bg-orange-100/90 text-orange-950 font-black border-l border-orange-200 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[7.5px]"
+                    >
+                      <div className="text-[10px] uppercase print:text-[7px] print:leading-tight">
+                        <div>ÜRETİM / SEVK.</div>
+                        <div>PALETİ</div>
+                      </div>
+                      <div className="text-[9px] text-orange-800 font-normal print:hidden">Bakiye</div>
                     </th>
                   </tr>
                 </thead>
@@ -1867,7 +1792,7 @@ export default function DailyShipmentStockMatrixReport() {
                 {filteredCustomers.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={filteredProducts.length + 6}
+                      colSpan={filteredProducts.length + 7}
                       className="py-12 text-center text-slate-400 bg-slate-50"
                     >
                       <Layers size={32} className="mx-auto text-slate-300 mb-2 opacity-60" />
@@ -1881,7 +1806,7 @@ export default function DailyShipmentStockMatrixReport() {
                     const childSites = getCustomerChildSites(cust.id);
                     const hasChildSites = childSites.length > 0;
                     const isExpanded = expandedCustomerIds.has(cust.id);
-                    const custPallet = customerPalletMap[cust.id] || { total: 0, tahta: 0, sevkiyat: 0, uretim: 0 };
+                    const custPallet = customerPalletMap[cust.id] || { total: 0, tahta: 0, sevkiyat: 0, uretim: 0, uretimSevkiyat: 0 };
 
                     return (
                       <React.Fragment key={cust.id}>
@@ -2079,20 +2004,35 @@ export default function DailyShipmentStockMatrixReport() {
                             )}
                           </td>
 
-                          {/* 5. Zimmetli Palet Sayısı */}
+                          {/* 5. Zimmetli Tahta Palet Sayısı */}
                           <td
-                            className="p-2 matrix-col-pallet print-col-pallet text-right font-mono font-bold bg-amber-50/50 border-l border-amber-100 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-400 print:text-[8px]"
+                            className="p-2 matrix-col-pallet-tahta print-col-pallet-tahta text-right font-mono font-bold bg-amber-50/50 border-l border-amber-100 print:p-0.5 print:pr-1 print:min-w-0 print:border-slate-400 print:text-[8px]"
                           >
-                            {custPallet.total !== 0 ? (
-                              <div title={`Tahta: ${custPallet.tahta}, Sevkiyat: ${custPallet.sevkiyat}, Üretim: ${custPallet.uretim}`}>
+                            {custPallet.tahta !== 0 ? (
+                              <span className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${
+                                custPallet.tahta > 0 ? 'bg-amber-100 text-amber-900 border border-amber-300' : 'text-slate-400'
+                              }`}>
+                                {custPallet.tahta.toLocaleString('tr-TR')}
+                              </span>
+                            ) : (
+                              <span className="text-slate-300 font-normal">-</span>
+                            )}
+                          </td>
+
+                          {/* 6. Zimmetli Üretim ve Sevkiyat Paleti */}
+                          <td
+                            className="p-2 matrix-col-pallet-uretim print-col-pallet-uretim text-right font-mono font-bold bg-orange-50/50 border-l border-orange-100 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-400 print:text-[8px]"
+                          >
+                            {custPallet.uretimSevkiyat !== 0 ? (
+                              <div title={`Üretim: ${custPallet.uretim}, Sevkiyat: ${custPallet.sevkiyat}`}>
                                 <span className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${
-                                  custPallet.total > 0 ? 'bg-amber-100 text-amber-900 border border-amber-300' : 'text-slate-400'
+                                  custPallet.uretimSevkiyat > 0 ? 'bg-orange-100 text-orange-900 border border-orange-300' : 'text-slate-400'
                                 }`}>
-                                  {custPallet.total.toLocaleString('tr-TR')}
+                                  {custPallet.uretimSevkiyat.toLocaleString('tr-TR')}
                                 </span>
-                                {custPallet.tahta > 0 && custPallet.total !== custPallet.tahta && (
-                                  <div className="text-[8.5px] text-amber-800 font-semibold print:hidden">
-                                    {custPallet.tahta} tahta
+                                {custPallet.uretim > 0 && custPallet.sevkiyat > 0 && (
+                                  <div className="text-[8.5px] text-orange-800 font-semibold print:hidden">
+                                    {custPallet.uretim} ü / {custPallet.sevkiyat} s
                                   </div>
                                 )}
                               </div>
@@ -2107,7 +2047,7 @@ export default function DailyShipmentStockMatrixReport() {
                           const siteDailyTotal = siteTotals[cust.id]?.[site.id] || 0;
                           const siteCumTotal = cumulativeSiteTotals[cust.id]?.[site.id] || 0;
                           const sitePalletKey = `${cust.id}_${site.id}`;
-                          const sitePallet = sitePalletMap[sitePalletKey] || { total: 0, tahta: 0, sevkiyat: 0, uretim: 0 };
+                          const sitePallet = sitePalletMap[sitePalletKey] || { total: 0, tahta: 0, sevkiyat: 0, uretim: 0, uretimSevkiyat: 0 };
                           const sQuota = siteQuotaMap[cust.id]?.[site.id];
 
                           return (
@@ -2223,13 +2163,26 @@ export default function DailyShipmentStockMatrixReport() {
                                 )}
                               </td>
 
-                              {/* Site Zimmetli Palet */}
+                              {/* Site Zimmetli Tahta Palet */}
                               <td
-                                className="p-2 matrix-col-pallet print-col-pallet text-right font-mono font-medium bg-amber-50/40 border-l border-amber-100 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-400 print:text-[7.5px]"
+                                className="p-2 matrix-col-pallet-tahta print-col-pallet-tahta text-right font-mono font-medium bg-amber-50/40 border-l border-amber-100 print:p-0.5 print:pr-1 print:min-w-0 print:border-slate-400 print:text-[7.5px]"
                               >
-                                {sitePallet.total !== 0 ? (
+                                {sitePallet.tahta !== 0 ? (
                                   <span className="inline-block px-1 py-0.2 rounded text-[10.5px] font-bold bg-amber-100/80 text-amber-900 border border-amber-200">
-                                    {sitePallet.total.toLocaleString('tr-TR')}
+                                    {sitePallet.tahta.toLocaleString('tr-TR')}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-300">-</span>
+                                )}
+                              </td>
+
+                              {/* Site Zimmetli Üretim ve Sevkiyat Paleti */}
+                              <td
+                                className="p-2 matrix-col-pallet-uretim print-col-pallet-uretim text-right font-mono font-medium bg-orange-50/40 border-l border-orange-100 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-400 print:text-[7.5px]"
+                              >
+                                {sitePallet.uretimSevkiyat !== 0 ? (
+                                  <span className="inline-block px-1 py-0.2 rounded text-[10.5px] font-bold bg-orange-100/80 text-orange-900 border border-orange-200" title={`Üretim: ${sitePallet.uretim}, Sevkiyat: ${sitePallet.sevkiyat}`}>
+                                    {sitePallet.uretimSevkiyat.toLocaleString('tr-TR')}
                                   </span>
                                 ) : (
                                   <span className="text-slate-300">-</span>
@@ -2304,9 +2257,19 @@ export default function DailyShipmentStockMatrixReport() {
                     {totalQuotaRemainingSum ? totalQuotaRemainingSum.toLocaleString('tr-TR') : '-'}
                   </td>
                   <td
-                    className="p-2 matrix-col-pallet print-col-pallet text-right font-mono text-sm font-black text-amber-950 bg-amber-200/90 border-l border-amber-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                    className="p-2 matrix-col-pallet-tahta print-col-pallet-tahta text-right font-mono text-sm font-black text-amber-950 bg-amber-200/90 border-l border-amber-300 print:p-0.5 print:pr-1 print:min-w-0 print:border-slate-500 print:text-[8px]"
                   >
-                    {grandTotalPalletBalance ? grandTotalPalletBalance.toLocaleString('tr-TR') : '-'}
+                    {grandTotalTahtaPallet ? grandTotalTahtaPallet.toLocaleString('tr-TR') : '-'}
+                  </td>
+                  <td
+                    className="p-2 matrix-col-pallet-uretim print-col-pallet-uretim text-right font-mono text-sm font-black text-orange-950 bg-orange-200/90 border-l border-orange-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                  >
+                    <div>{grandTotalUretimSevkiyatPallet ? grandTotalUretimSevkiyatPallet.toLocaleString('tr-TR') : '-'}</div>
+                    {grandTotalUretimPallet > 0 && grandTotalSevkiyatPallet > 0 && (
+                      <div className="text-[9px] font-semibold text-orange-900 print:hidden">
+                        {grandTotalUretimPallet} ü • {grandTotalSevkiyatPallet} s
+                      </div>
+                    )}
                   </td>
                 </tr>
 
@@ -2347,7 +2310,12 @@ export default function DailyShipmentStockMatrixReport() {
                       Seçili Günün Ürün Dağılımı ({grandTotalShipped.toLocaleString('tr-TR')} m²)
                     </td>
                     <td
-                      className="p-2 matrix-col-pallet print-col-pallet text-center text-slate-400 bg-sky-50 border-l border-sky-200 font-mono text-xs print:p-0.5"
+                      className="p-2 matrix-col-pallet-tahta print-col-pallet-tahta text-center text-slate-400 bg-sky-50 border-l border-sky-200 font-mono text-xs print:p-0.5"
+                    >
+                      -
+                    </td>
+                    <td
+                      className="p-2 matrix-col-pallet-uretim print-col-pallet-uretim text-center text-slate-400 bg-sky-50 border-l border-sky-200 font-mono text-xs print:p-0.5"
                     >
                       -
                     </td>
@@ -2384,67 +2352,35 @@ export default function DailyShipmentStockMatrixReport() {
                   <td className="p-2 matrix-col-rem print-col-rem text-right font-mono text-sm font-black text-emerald-950 bg-emerald-200/90 border-l border-emerald-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8px]">
                     {totalFactoryStock.toLocaleString('tr-TR')}
                   </td>
-                  <td className="p-2 matrix-col-pallet print-col-pallet text-center text-slate-400 bg-emerald-100/30 border-l border-emerald-200 font-mono text-xs print:p-0.5">
+                  <td className="p-2 matrix-col-pallet-tahta print-col-pallet-tahta text-center text-slate-400 bg-emerald-100/30 border-l border-emerald-200 font-mono text-xs print:p-0.5">
+                    -
+                  </td>
+                  <td className="p-2 matrix-col-pallet-uretim print-col-pallet-uretim text-center text-slate-400 bg-emerald-100/30 border-l border-emerald-200 font-mono text-xs print:p-0.5">
                     -
                   </td>
                 </tr>
 
-                {/* 3. GÜNLÜK ÜRETİM MİKTARI (HÜCRE İÇİ DÜZENLENEBİLİR) */}
+                {/* 3. GÜNLÜK ÜRETİM MİKTARI (OTOMATİK - SİSTEM İMALAT VERİSİ) */}
                 <tr className="bg-amber-50/90 text-amber-950">
                   <td
                     className="p-2 matrix-col-cust print-col-cust sticky left-0 z-10 bg-amber-100/90 border-r border-amber-200 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
                   >
                     <div className="flex items-center justify-between">
-                      <div>
-                        <span className="font-bold text-amber-900 print:text-[8px] print:font-black truncate">GÜNLÜK ÜRETİM</span>
-                        <div className="text-[10px] text-amber-700 font-normal print:hidden">Hücreye yazıp kaydedin</div>
-                      </div>
-                      <button
-                        onClick={handleSaveAllProductions}
-                        disabled={savingProduction}
-                        className="no-print px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-[10px] font-bold shadow-xs cursor-pointer transition-colors shrink-0"
-                        title="Tüm girilen üretimleri veritabanına kaydet"
-                      >
-                        {savingProduction ? '...' : 'Tümünü Kaydet'}
-                      </button>
+                      <span className="font-bold text-amber-900 print:text-[8px] print:font-black truncate">GÜNLÜK ÜRETİM</span>
+                      <span className="text-[10px] text-amber-700 bg-amber-200/60 px-1.5 py-0.5 rounded font-normal print:hidden shrink-0">
+                        İmalat
+                      </span>
                     </div>
                   </td>
                   {filteredProducts.map((prod) => {
-                    const currentVal = editingProduction[prod.id] !== undefined
-                      ? editingProduction[prod.id]
-                      : dailyProductionMap[prod.id]
-                      ? String(dailyProductionMap[prod.id])
-                      : '';
-
+                    const prd = dailyProductionMap[prod.id] || 0;
                     return (
                       <td
                         key={prod.id}
                         style={{ width: `${productColWidthPct}%` }}
-                        className="p-1 text-right font-mono border-r border-amber-200 bg-amber-50/40 matrix-col-product print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                        className="p-1.5 text-right font-mono font-bold border-r border-amber-200 bg-amber-50/40 text-amber-950 text-xs matrix-col-product print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
                       >
-                        <div className="flex items-center gap-1 justify-end">
-                          <input
-                            type="number"
-                            placeholder="0"
-                            value={currentVal}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setEditingProduction((prev) => ({ ...prev, [prod.id]: val }));
-                            }}
-                            className="w-16 bg-white border border-amber-300 rounded px-1.5 py-0.5 text-right font-mono text-xs font-bold text-amber-950 focus:outline-none focus:ring-2 focus:ring-amber-500 no-print"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => handleSaveProduction(prod.id)}
-                            className="no-print text-amber-700 hover:text-amber-950 hover:bg-amber-200/70 p-1 rounded cursor-pointer"
-                            title="Bu üretimi kaydet"
-                          >
-                            <Check size={13} />
-                          </button>
-                          <span className="print-only text-right font-bold text-amber-950 print:text-[8px]">
-                            {currentVal ? Number(currentVal).toLocaleString('tr-TR') : '-'}
-                          </span>
-                        </div>
+                        {prd ? Number(prd).toLocaleString('tr-TR') : '-'}
                       </td>
                     );
                   })}
@@ -2454,7 +2390,10 @@ export default function DailyShipmentStockMatrixReport() {
                   <td className="p-2 matrix-col-rem print-col-rem text-right font-mono text-sm font-black text-amber-950 bg-amber-200/90 border-l border-amber-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8px]">
                     {totalDailyProduction.toLocaleString('tr-TR')}
                   </td>
-                  <td className="p-2 matrix-col-pallet print-col-pallet text-center text-slate-400 bg-amber-100/30 border-l border-amber-200 font-mono text-xs print:p-0.5">
+                  <td className="p-2 matrix-col-pallet-tahta print-col-pallet-tahta text-center text-slate-400 bg-amber-100/30 border-l border-amber-200 font-mono text-xs print:p-0.5">
+                    -
+                  </td>
+                  <td className="p-2 matrix-col-pallet-uretim print-col-pallet-uretim text-center text-slate-400 bg-amber-100/30 border-l border-amber-200 font-mono text-xs print:p-0.5">
                     -
                   </td>
                 </tr>
@@ -2473,7 +2412,7 @@ export default function DailyShipmentStockMatrixReport() {
                   </td>
                   {filteredProducts.map((prod) => {
                     const stk = stockMap[prod.id] || 0;
-                    const prd = Number(editingProduction[prod.id] !== undefined ? editingProduction[prod.id] : dailyProductionMap[prod.id] || 0);
+                    const prd = dailyProductionMap[prod.id] || 0;
                     const gdn = productTotals[prod.id] || 0;
                     const balance = stk + prd - gdn;
 
@@ -2499,7 +2438,10 @@ export default function DailyShipmentStockMatrixReport() {
                   <td className={`p-2 matrix-col-rem print-col-rem text-right font-mono text-sm font-black bg-purple-200/90 border-l border-purple-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8px] ${totalNetBalance < 0 ? 'text-rose-700' : 'text-purple-950'}`}>
                     {totalNetBalance.toLocaleString('tr-TR')}
                   </td>
-                  <td className="p-2 matrix-col-pallet print-col-pallet text-center text-slate-400 bg-purple-100/30 border-l border-purple-200 font-mono text-xs print:p-0.5">
+                  <td className="p-2 matrix-col-pallet-tahta print-col-pallet-tahta text-center text-slate-400 bg-purple-100/30 border-l border-purple-200 font-mono text-xs print:p-0.5">
+                    -
+                  </td>
+                  <td className="p-2 matrix-col-pallet-uretim print-col-pallet-uretim text-center text-slate-400 bg-purple-100/30 border-l border-purple-200 font-mono text-xs print:p-0.5">
                     -
                   </td>
                 </tr>
@@ -2552,7 +2494,10 @@ export default function DailyShipmentStockMatrixReport() {
                   >
                     {totalQuotaRemainingSum ? Number(totalQuotaRemainingSum).toLocaleString('tr-TR') : '-'}
                   </td>
-                  <td className="p-2 matrix-col-pallet print-col-pallet text-center text-slate-400 bg-rose-200/40 border-l border-rose-300 font-mono text-xs print:p-0.5">
+                  <td className="p-2 matrix-col-pallet-tahta print-col-pallet-tahta text-center text-slate-400 bg-rose-200/40 border-l border-rose-300 font-mono text-xs print:p-0.5">
+                    -
+                  </td>
+                  <td className="p-2 matrix-col-pallet-uretim print-col-pallet-uretim text-center text-slate-400 bg-rose-200/40 border-l border-rose-300 font-mono text-xs print:p-0.5">
                     -
                   </td>
                 </tr>
