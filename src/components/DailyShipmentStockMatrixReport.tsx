@@ -5,7 +5,8 @@ import { Product, Customer, Site } from '../types';
 import {
   Table, ChevronLeft, ChevronRight, ChevronDown, ChevronsUpDown, Download, Printer,
   RefreshCw, Layers, Building2, Package, Check, AlertTriangle,
-  Filter, CheckSquare, Square, Users, Target, X, Search, Boxes, MapPin
+  Filter, CheckSquare, Square, Users, Target, X, Search, Boxes, MapPin,
+  ClipboardList, CheckCircle2, Factory, TrendingUp
 } from 'lucide-react';
 
 import {
@@ -37,6 +38,9 @@ interface PalletBalanceEntry {
 
 export default function DailyShipmentStockMatrixReport() {
   const { user } = useAuth();
+
+  // View Mode: 'plan' (Sade Sipariş & Üretim Planlama Tablosu - Varsayılan) | 'matrix' (Geniş Ürün Matrisi)
+  const [activeViewMode, setActiveViewMode] = useState<'plan' | 'matrix'>('plan');
 
   // Mode: 'single' (tek gün - Excel'deki gibi) or 'range' (tarih aralığı)
   const [dateMode, setDateMode] = useState<'single' | 'range'>('single');
@@ -618,8 +622,202 @@ export default function DailyShipmentStockMatrixReport() {
     return totalFactoryStock + totalDailyProduction - grandTotalShipped;
   }, [totalFactoryStock, totalDailyProduction, grandTotalShipped]);
 
+  // Product Production Need Summaries for Top Cards & Planning View
+  const productProductionSummaries = useMemo(() => {
+    const list: {
+      productId: string;
+      productName: string;
+      unit: string;
+      thickness?: string;
+      totalDemand: number;
+      currentStock: number;
+      todayProduction: number;
+      netNeeded: number;
+      surplus: number;
+      isDeficit: boolean;
+    }[] = [];
+
+    products.forEach((p) => {
+      const demand = productQuotaDemands[p.id] || 0;
+      const stock = stockMap[p.id] || 0;
+      const prodToday = dailyProductionMap[p.id] || 0;
+
+      // Only include products that have active open demand OR current factory stock
+      if (demand > 0 || stock > 0) {
+        const netNeeded = Math.max(0, demand - stock);
+        const surplus = Math.max(0, stock - demand);
+        list.push({
+          productId: p.id,
+          productName: p.name,
+          unit: p.unit || 'm²',
+          thickness: p.thickness,
+          totalDemand: demand,
+          currentStock: stock,
+          todayProduction: prodToday,
+          netNeeded,
+          surplus,
+          isDeficit: demand > stock,
+        });
+      }
+    });
+
+    // Sort: deficits (urgent production needed) first, then by demand desc
+    list.sort((a, b) => {
+      if (a.isDeficit && !b.isDeficit) return -1;
+      if (!a.isDeficit && b.isDeficit) return 1;
+      return b.netNeeded - a.netNeeded || b.totalDemand - a.totalDemand;
+    });
+
+    return list;
+  }, [products, productQuotaDemands, stockMap, dailyProductionMap]);
+
+  const totalNetProductionDemandSum = useMemo(() => {
+    return productProductionSummaries.reduce((acc, it) => acc + it.netNeeded, 0);
+  }, [productProductionSummaries]);
+
   // Export to Excel (.xls)
   const handleExportExcel = () => {
+    if (activeViewMode === 'plan') {
+      const planTitle = dateMode === 'single'
+        ? `MÜŞTERİ SİPARİŞ & ÜRETİM PLANLAMA RAPORU (${selectedDate})`
+        : `MÜŞTERİ SİPARİŞ & ÜRETİM PLANLAMA RAPORU (${startDate} - ${endDate})`;
+
+      let planHtml = `
+        <table border="1" style="border-collapse: collapse; font-family: Arial, sans-serif; font-size: 11px;">
+          <thead>
+            <tr style="background-color: #0f766e; color: #ffffff; font-weight: bold; text-align: center;">
+              <th colspan="9" style="font-size: 14px; padding: 12px;">
+                PARKE ERP • ${planTitle}
+              </th>
+            </tr>
+            <tr style="background-color: #f1f5f9; font-weight: bold; text-align: left;">
+              <th style="padding: 8px; width: 220px;">MÜŞTERİ / ŞANTİYE</th>
+              <th style="padding: 8px; width: 220px;">SİPARİŞ VERİLEN TAŞ</th>
+              <th style="padding: 8px; text-align: right; width: 110px;">SÖZLEŞME (m²)</th>
+              <th style="padding: 8px; text-align: right; width: 110px;">SEVK EDİLEN (m²)</th>
+              <th style="padding: 8px; text-align: right; width: 120px; background-color: #ffe4e6; color: #9f1239;">KALAN AÇIK (m²)</th>
+              <th style="padding: 8px; text-align: right; width: 110px; background-color: #dcfce7; color: #166534;">DEPO STOĞU (m²)</th>
+              <th style="padding: 8px; text-align: center; width: 160px; background-color: #f3e8ff; color: #6b21a8;">NET ÜRETİM İHTİYACI</th>
+              <th style="padding: 8px; text-align: right; width: 90px; background-color: #fef9c3;">TAHTA PALET</th>
+              <th style="padding: 8px; text-align: right; width: 100px; background-color: #ffedd5;">ÜRETİM/SEVK. PALET</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+
+      filteredCustomers.forEach((c) => {
+        const qSummary = customerQuotaMap[c.id];
+        const cPallet = customerPalletMap[c.id] || { total: 0, tahta: 0, sevkiyat: 0, uretim: 0, uretimSevkiyat: 0 };
+        const childSites = getCustomerChildSites(c.id);
+        const isExpanded = expandedCustomerIds.has(c.id);
+
+        const productQuotas = qSummary?.productQuotas ? Object.values(qSummary.productQuotas) : [];
+        const hasUnassigned = qSummary?.hasUnassignedProductQuota && (qSummary.unassignedQuota > 0 || qSummary.unassignedRemaining > 0);
+
+        const prodNames = productQuotas.length > 0
+          ? productQuotas.map((pQ) => pQ.productName).join('<br/>')
+          : (hasUnassigned ? 'Genel Kota (Taş Seçilmemiş)' : 'Serbest Satış');
+
+        const totalTargetStr = productQuotas.length > 0
+          ? productQuotas.map((pQ) => Number(pQ.target).toLocaleString('tr-TR')).join('<br/>')
+          : (hasUnassigned ? Number(qSummary.unassignedQuota).toLocaleString('tr-TR') : '-');
+
+        const totalShippedStr = productQuotas.length > 0
+          ? productQuotas.map((pQ) => Number(pQ.shipped).toLocaleString('tr-TR')).join('<br/>')
+          : (hasUnassigned ? Number(qSummary.totalShipped).toLocaleString('tr-TR') : (customerTotals[c.id] ? customerTotals[c.id].toLocaleString('tr-TR') : '-'));
+
+        const totalRemStr = productQuotas.length > 0
+          ? productQuotas.map((pQ) => Number(pQ.remaining).toLocaleString('tr-TR')).join('<br/>')
+          : (hasUnassigned ? Number(qSummary.unassignedRemaining ?? 0).toLocaleString('tr-TR') : '-');
+
+        const totalStockStr = productQuotas.length > 0
+          ? productQuotas.map((pQ) => Number(stockMap[pQ.productId] || 0).toLocaleString('tr-TR')).join('<br/>')
+          : '-';
+
+        const productionStatusStr = productQuotas.length > 0
+          ? productQuotas.map((pQ) => {
+              const stk = stockMap[pQ.productId] || 0;
+              const diff = pQ.remaining - stk;
+              if (pQ.remaining <= 0) return '<span style="color: #2563eb; font-weight: bold;">Kota Doldu</span>';
+              if (diff > 0) return `<span style="color: #be123c; font-weight: bold;">⚠️ ${diff.toLocaleString('tr-TR')} m² Üretilmeli</span>`;
+              return `<span style="color: #15803d; font-weight: bold;">✅ Stok Yeterli (+${Math.abs(diff).toLocaleString('tr-TR')})</span>`;
+            }).join('<br/>')
+          : '-';
+
+        planHtml += `
+          <tr style="background-color: #ffffff; vertical-align: top;">
+            <td style="padding: 6px; font-weight: bold;">
+              ${c.name}
+              ${childSites.length > 0 ? `<br/><small style="color: #0f766e;">[${childSites.length} Şantiye ${isExpanded ? 'Açık' : 'Gizli'}]</small>` : ''}
+            </td>
+            <td style="padding: 6px;">${prodNames}</td>
+            <td style="padding: 6px; text-align: right; font-weight: bold;">${totalTargetStr}</td>
+            <td style="padding: 6px; text-align: right; color: #1e40af; font-weight: bold;">${totalShippedStr}</td>
+            <td style="padding: 6px; text-align: right; color: #9f1239; font-weight: bold; background-color: #fff1f2;">${totalRemStr}</td>
+            <td style="padding: 6px; text-align: right; color: #166534; font-weight: bold; background-color: #f0fdf4;">${totalStockStr}</td>
+            <td style="padding: 6px; text-align: center; background-color: #faf5ff;">${productionStatusStr}</td>
+            <td style="padding: 6px; text-align: right; background-color: #fefce8; color: #854d0e; font-weight: bold;">${cPallet.tahta ? cPallet.tahta.toLocaleString('tr-TR') : '-'}</td>
+            <td style="padding: 6px; text-align: right; background-color: #fff7ed; color: #9a3412; font-weight: bold;">${cPallet.uretimSevkiyat ? cPallet.uretimSevkiyat.toLocaleString('tr-TR') : '-'}</td>
+          </tr>
+        `;
+
+        if (isExpanded && childSites.length > 0) {
+          childSites.forEach((site) => {
+            const sQuota = siteQuotaMap[c.id]?.[site.id];
+            const sPallet = sitePalletMap[`${c.id}_${site.id}`] || { total: 0, tahta: 0, sevkiyat: 0, uretim: 0, uretimSevkiyat: 0 };
+            const siteProductQuotas = sQuota?.productQuotas ? Object.values(sQuota.productQuotas) : [];
+
+            planHtml += `
+              <tr style="background-color: #f8fafc; font-size: 10px; color: #475569; vertical-align: top;">
+                <td style="padding: 4px 4px 4px 22px; font-style: italic;">
+                  ↳ ${site.isUnassigned ? 'Merkez / Şantiyesiz' : `Şantiye: ${site.name}`}
+                </td>
+                <td style="padding: 4px;">${siteProductQuotas.map((sp) => sp.productName).join(' / ') || '-'}</td>
+                <td style="padding: 4px; text-align: right;">${sQuota?.totalTarget ? sQuota.totalTarget.toLocaleString('tr-TR') : '-'}</td>
+                <td style="padding: 4px; text-align: right; color: #1e40af;">${sQuota?.totalShipped ? sQuota.totalShipped.toLocaleString('tr-TR') : '-'}</td>
+                <td style="padding: 4px; text-align: right; color: #9f1239; background-color: #fff1f2;">${sQuota?.totalRemaining ? sQuota.totalRemaining.toLocaleString('tr-TR') : '-'}</td>
+                <td style="padding: 4px; text-align: right;">-</td>
+                <td style="padding: 4px; text-align: center;">-</td>
+                <td style="padding: 4px; text-align: right; background-color: #fefce8;">${sPallet.tahta ? sPallet.tahta.toLocaleString('tr-TR') : '-'}</td>
+                <td style="padding: 4px; text-align: right; background-color: #fff7ed;">${sPallet.uretimSevkiyat ? sPallet.uretimSevkiyat.toLocaleString('tr-TR') : '-'}</td>
+              </tr>
+            `;
+          });
+        }
+      });
+
+      planHtml += `
+          </tbody>
+          <tfoot>
+            <tr style="background-color: #e2e8f0; font-weight: bold; font-size: 12px;">
+              <td colspan="2" style="padding: 8px;">GENEL TOPLAM (${filteredCustomers.length} Müşteri)</td>
+              <td style="padding: 8px; text-align: right;">${totalQuotaTargetSum ? totalQuotaTargetSum.toLocaleString('tr-TR') : '-'}</td>
+              <td style="padding: 8px; text-align: right; color: #1e40af;">${totalQuotaShippedSum ? totalQuotaShippedSum.toLocaleString('tr-TR') : '-'}</td>
+              <td style="padding: 8px; text-align: right; color: #9f1239; background-color: #fecdd3;">${totalQuotaRemainingSum ? totalQuotaRemainingSum.toLocaleString('tr-TR') : '-'}</td>
+              <td style="padding: 8px; text-align: right; color: #166534; background-color: #bbf7d0;">${totalFactoryStock.toLocaleString('tr-TR')}</td>
+              <td style="padding: 8px; text-align: center; background-color: #e9d5ff;">Toplam Açık: ${totalQuotaRemainingSum.toLocaleString('tr-TR')} m²</td>
+              <td style="padding: 8px; text-align: right; color: #854d0e; background-color: #fef08a;">${grandTotalTahtaPallet ? grandTotalTahtaPallet.toLocaleString('tr-TR') : '-'}</td>
+              <td style="padding: 8px; text-align: right; color: #9a3412; background-color: #fed7aa;">${grandTotalUretimSevkiyatPallet ? grandTotalUretimSevkiyatPallet.toLocaleString('tr-TR') : '-'}</td>
+            </tr>
+          </tfoot>
+        </table>
+      `;
+
+      const uri = 'data:application/vnd.ms-excel;base64,';
+      const template = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+        <head><meta http-equiv="content-type" content="text/plain; charset=UTF-8"/></head>
+        <body>${planHtml}</body>
+      </html>`;
+      const base64 = (s: string) => window.btoa(unescape(encodeURIComponent(s)));
+      const link = document.createElement('a');
+      link.href = uri + base64(template);
+      link.download = `MUSTERI_SIPARIS_VE_URETIM_PLANI_${dateMode === 'single' ? selectedDate : `${startDate}_${endDate}`}.xls`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      return;
+    }
+
     const reportTitle = dateMode === 'single'
       ? `GÜNLÜK SEVKİYAT VE STOK MATRİSİ (${selectedDate})`
       : `SEVKİYAT VE STOK MATRİSİ (${startDate} - ${endDate})`;
@@ -704,7 +902,7 @@ export default function DailyShipmentStockMatrixReport() {
               </tr>
             `;
 
-            if (childSites.length > 0) {
+            if (expandedCustomerIds.has(c.id) && childSites.length > 0) {
               childSites.forEach((site) => {
                 const sDaily = siteTotals[c.id]?.[site.id] || 0;
                 const sCum = cumulativeSiteTotals[c.id]?.[site.id] || 0;
@@ -1198,6 +1396,49 @@ export default function DailyShipmentStockMatrixReport() {
           </div>
         </div>
 
+        {/* ── VIEW MODE SWITCHER (SADE PLANLAMA TABLOSU vs GENİŞ MATRİS) ── */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gradient-to-r from-slate-100 to-slate-50 p-2.5 rounded-xl border border-slate-200">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-slate-700 ml-1">Rapor Görünümü:</span>
+            <div className="flex bg-slate-200/80 p-0.5 rounded-lg text-xs font-bold shadow-inner">
+              <button
+                type="button"
+                onClick={() => setActiveViewMode('plan')}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-md transition-all cursor-pointer ${
+                  activeViewMode === 'plan'
+                    ? 'bg-emerald-600 text-white shadow-xs font-black'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <ClipboardList size={14} />
+                <span>📋 Sade Sipariş & Üretim Planı</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveViewMode('matrix')}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-md transition-all cursor-pointer ${
+                  activeViewMode === 'matrix'
+                    ? 'bg-emerald-600 text-white shadow-xs font-black'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Table size={14} />
+                <span>📊 Geniş Ürün Matrisi (Çapraz Tablo)</span>
+              </button>
+            </div>
+          </div>
+          <div className="text-[11px] text-slate-600 font-medium">
+            {activeViewMode === 'plan' ? (
+              <span className="flex items-center gap-1 text-emerald-800">
+                <CheckCircle2 size={13} className="text-emerald-600" />
+                <span>Tek ekranda firma siparişi, gideni, depo stoğu ve net basılacak üretim miktarı</span>
+              </span>
+            ) : (
+              <span className="text-slate-500">Tüm ürün çeşitlerinin yan yana listelendiği detaylı matris</span>
+            )}
+          </div>
+        </div>
+
         {/* Date Filter & Fast Navigation */}
         <div className="flex flex-col md:flex-row items-center justify-between gap-4 pt-1">
           <div className="flex items-center gap-2 flex-wrap w-full md:w-auto">
@@ -1629,6 +1870,463 @@ export default function DailyShipmentStockMatrixReport() {
           <div className="py-20 text-center text-slate-400 space-y-3">
             <RefreshCw size={32} className="mx-auto animate-spin text-emerald-600" />
             <p className="text-xs font-semibold">Matris verileri, stoklar ve kotalar hesaplanıyor...</p>
+          </div>
+        ) : activeViewMode === 'plan' ? (
+          /* ── SADE SİPARİŞ & ÜRETİM PLANLAMA GÖRÜNÜMÜ ── */
+          <div className="space-y-4 p-4">
+            {/* 1. Üst Fabrika Yönetici Özet Barı */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 no-print">
+              <div className="bg-gradient-to-br from-rose-50 to-rose-100/60 border border-rose-200 rounded-2xl p-3.5 shadow-xs">
+                <div className="text-[11px] font-bold text-rose-800 uppercase flex items-center gap-1.5">
+                  <Target size={14} className="text-rose-600" />
+                  <span>Toplam Açık Sipariş</span>
+                </div>
+                <div className="text-xl font-black text-rose-950 font-mono mt-1">
+                  {totalQuotaRemainingSum.toLocaleString('tr-TR')} <span className="text-xs font-bold text-rose-700">m²</span>
+                </div>
+                <div className="text-[10px] text-rose-700 mt-0.5">
+                  {quotaCustomersCount} kotalı firmanın kalan teslimatı
+                </div>
+              </div>
+
+              <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/60 border border-emerald-200 rounded-2xl p-3.5 shadow-xs">
+                <div className="text-[11px] font-bold text-emerald-800 uppercase flex items-center gap-1.5">
+                  <Boxes size={14} className="text-emerald-600" />
+                  <span>Fabrika Depo Stoğu</span>
+                </div>
+                <div className="text-xl font-black text-emerald-950 font-mono mt-1">
+                  {totalFactoryStock.toLocaleString('tr-TR')} <span className="text-xs font-bold text-emerald-700">m²</span>
+                </div>
+                <div className="text-[10px] text-emerald-700 mt-0.5">
+                  Sahadaki mevcut hazır mamul
+                </div>
+              </div>
+
+              <div className="bg-gradient-to-br from-purple-50 to-purple-100/60 border border-purple-200 rounded-2xl p-3.5 shadow-xs">
+                <div className="text-[11px] font-bold text-purple-800 uppercase flex items-center gap-1.5">
+                  <Factory size={14} className="text-purple-600" />
+                  <span>Net Üretim Açığı</span>
+                </div>
+                <div className="text-xl font-black text-purple-950 font-mono mt-1">
+                  {totalNetProductionDemandSum.toLocaleString('tr-TR')} <span className="text-xs font-bold text-purple-700">m²</span>
+                </div>
+                <div className="text-[10px] text-purple-700 mt-0.5">
+                  Stok düşüldükten sonra basılması gereken
+                </div>
+              </div>
+
+              <div className="bg-gradient-to-br from-amber-50 to-amber-100/60 border border-amber-200 rounded-2xl p-3.5 shadow-xs">
+                <div className="text-[11px] font-bold text-amber-800 uppercase flex items-center gap-1.5">
+                  <TrendingUp size={14} className="text-amber-600" />
+                  <span>Bugün Üretilen</span>
+                </div>
+                <div className="text-xl font-black text-amber-950 font-mono mt-1">
+                  {totalDailyProduction.toLocaleString('tr-TR')} <span className="text-xs font-bold text-amber-700">m²</span>
+                </div>
+                <div className="text-[10px] text-amber-700 mt-0.5">
+                  Sistemdeki imalat kayıtları
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Ürün Bazında Net Üretim Emri Kartları */}
+            {productProductionSummaries.length > 0 && (
+              <div className="no-print">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs font-black text-slate-800 uppercase flex items-center gap-1.5">
+                    <Factory size={14} className="text-slate-600" />
+                    <span>Taş Bazında Acil Üretim İhtiyaçları & Depo Dengesi</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Öncelikli basılması gereken kalıplar en başta listelenir
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">
+                  {productProductionSummaries.map((it) => (
+                    <div
+                      key={it.productId}
+                      className={`p-3 rounded-xl border transition-all ${
+                        it.isDeficit
+                          ? 'bg-rose-50/70 border-rose-200 hover:border-rose-300'
+                          : 'bg-emerald-50/50 border-emerald-200 hover:border-emerald-300'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-1">
+                        <div className="font-bold text-slate-900 text-xs line-clamp-1" title={it.productName}>
+                          {it.productName}
+                        </div>
+                        {it.thickness && (
+                          <span className="text-[9.5px] font-semibold text-slate-500 bg-white/80 px-1 rounded shrink-0">
+                            {it.thickness}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="mt-2 grid grid-cols-2 gap-1 text-[11px]">
+                        <div>
+                          <span className="text-slate-500">Açık Sipariş:</span>{' '}
+                          <span className="font-bold font-mono text-slate-800">
+                            {it.totalDemand ? it.totalDemand.toLocaleString('tr-TR') : '0'}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-slate-500">Depo:</span>{' '}
+                          <span className="font-bold font-mono text-emerald-800">
+                            {it.currentStock ? it.currentStock.toLocaleString('tr-TR') : '0'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="mt-2 pt-1.5 border-t border-slate-200/60 flex items-center justify-between">
+                        {it.isDeficit ? (
+                          <span className="text-[11px] font-black text-rose-900 bg-rose-100 px-2 py-0.5 rounded-lg border border-rose-300 inline-flex items-center gap-1">
+                            <AlertTriangle size={12} className="text-rose-700 shrink-0" />
+                            <span>{it.netNeeded.toLocaleString('tr-TR')} {it.unit} Üretilmeli</span>
+                          </span>
+                        ) : (
+                          <span className="text-[11px] font-bold text-emerald-900 bg-emerald-100 px-2 py-0.5 rounded-lg border border-emerald-300 inline-flex items-center gap-1">
+                            <CheckCircle2 size={12} className="text-emerald-700 shrink-0" />
+                            <span>Stok Yeterli (+{it.surplus.toLocaleString('tr-TR')})</span>
+                          </span>
+                        )}
+                        {it.todayProduction > 0 && (
+                          <span className="text-[10px] font-bold text-amber-800 bg-amber-100/80 px-1.5 py-0.5 rounded">
+                            +{it.todayProduction.toLocaleString('tr-TR')} gün
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 3. Sade Sipariş & Üretim Planlama Tablosu */}
+            <div className="border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs select-text">
+                  <thead className="bg-slate-800 text-white uppercase text-[10.5px] font-bold tracking-wider">
+                    <tr>
+                      <th className="p-3 w-[260px] min-w-[220px]">Müşteri / Firma & Şantiye</th>
+                      <th className="p-3 min-w-[200px]">Sipariş Verilen Ürün / Taş</th>
+                      <th className="p-3 text-right w-[110px]">Sözleşme / Kota</th>
+                      <th className="p-3 text-right w-[110px]">Sevk Edilen (Giden)</th>
+                      <th className="p-3 text-right w-[120px] bg-rose-900/60 text-rose-100">Kalan Açık Sipariş</th>
+                      <th className="p-3 text-right w-[110px] bg-emerald-900/60 text-emerald-100">Depo Stoğu</th>
+                      <th className="p-3 text-center w-[160px] bg-purple-900/60 text-purple-100">Net Üretim İhtiyacı</th>
+                      <th className="p-3 text-right w-[95px] bg-amber-900/60 text-amber-100">Tahta Palet</th>
+                      <th className="p-3 text-right w-[105px] bg-orange-900/60 text-orange-100">Üretim/Sevk.</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 bg-white">
+                    {filteredCustomers.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="p-8 text-center text-slate-400">
+                          Seçili filtrelere uygun müşteri kaydı bulunamadı.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredCustomers.map((cust) => {
+                        const qSummary = customerQuotaMap[cust.id];
+                        const cPallet = customerPalletMap[cust.id] || { total: 0, tahta: 0, sevkiyat: 0, uretim: 0, uretimSevkiyat: 0 };
+                        const childSites = getCustomerChildSites(cust.id);
+                        const hasChildSites = childSites.length > 0;
+                        const isExpanded = expandedCustomerIds.has(cust.id);
+
+                        const productQuotas = qSummary?.productQuotas ? Object.values(qSummary.productQuotas) : [];
+                        const hasUnassigned = qSummary?.hasUnassignedProductQuota && (qSummary.unassignedQuota > 0 || qSummary.unassignedRemaining > 0);
+
+                        return (
+                          <React.Fragment key={cust.id}>
+                            <tr className={`hover:bg-slate-50 transition-colors ${isExpanded ? 'bg-teal-50/20' : ''}`}>
+                              {/* Col 1: Customer Name */}
+                              <td className="p-3 align-top font-bold text-slate-900 border-r border-slate-100">
+                                <div className="flex items-start justify-between gap-1.5">
+                                  <div>
+                                    <div className="text-sm font-black text-slate-900 flex items-center gap-1.5">
+                                      <span>{cust.name}</span>
+                                      {qSummary?.hasQuota ? (
+                                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 border border-purple-200">
+                                          Kotalı
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                    {cust.phone && (
+                                      <div className="text-[10px] text-slate-400 font-mono font-normal mt-0.5">
+                                        {cust.phone}
+                                      </div>
+                                    )}
+                                  </div>
+                                  {hasChildSites && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleCustomerExpanded(cust.id)}
+                                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors shrink-0 ${
+                                        isExpanded
+                                          ? 'bg-teal-600 text-white shadow-xs'
+                                          : 'bg-teal-50 text-teal-800 hover:bg-teal-100 border border-teal-200'
+                                      }`}
+                                      title={isExpanded ? 'Şantiyeleri Daralt' : 'Şantiyeleri Aç'}
+                                    >
+                                      {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                                      <span>{childSites.length} Şantiye</span>
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+
+                              {/* Col 2: Products */}
+                              <td className="p-3 align-top border-r border-slate-100">
+                                {productQuotas.length > 0 ? (
+                                  <div className="space-y-2">
+                                    {productQuotas.map((pQ) => (
+                                      <div key={pQ.productId} className="py-0.5 font-bold text-slate-800 flex items-center gap-1.5">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                                        <span>{pQ.productName}</span>
+                                      </div>
+                                    ))}
+                                    {hasUnassigned && (
+                                      <div className="py-0.5 font-bold text-purple-700 flex items-center gap-1.5 text-[11px]">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
+                                        <span>Genel Kota (Taş Seçilmemiş)</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : hasUnassigned ? (
+                                  <div className="font-bold text-purple-700 flex items-center gap-1.5">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
+                                    <span>Genel Kota (Taş Seçilmemiş)</span>
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-400 italic">Serbest Sevkiyat</span>
+                                )}
+                              </td>
+
+                              {/* Col 3: Quota Target */}
+                              <td className="p-3 align-top text-right font-mono font-bold text-slate-800 border-r border-slate-100">
+                                {productQuotas.length > 0 ? (
+                                  <div className="space-y-2">
+                                    {productQuotas.map((pQ) => (
+                                      <div key={pQ.productId} className="py-0.5">
+                                        {pQ.target ? Number(pQ.target).toLocaleString('tr-TR') : '-'}
+                                        <span className="text-[10px] text-slate-400 ml-0.5 font-normal">{pQ.unit || 'm²'}</span>
+                                      </div>
+                                    ))}
+                                    {hasUnassigned && (
+                                      <div className="py-0.5 text-purple-700 font-bold text-[11px]">
+                                        {Number(qSummary.unassignedQuota).toLocaleString('tr-TR')}
+                                        <span className="text-[10px] text-slate-400 ml-0.5 font-normal">m²</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : hasUnassigned ? (
+                                  <div className="text-purple-700 font-bold">
+                                    {Number(qSummary.unassignedQuota).toLocaleString('tr-TR')}
+                                    <span className="text-[10px] text-slate-400 ml-0.5 font-normal">m²</span>
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-300">-</span>
+                                )}
+                              </td>
+
+                              {/* Col 4: Shipped */}
+                              <td className="p-3 align-top text-right font-mono font-bold text-blue-900 border-r border-slate-100">
+                                {productQuotas.length > 0 ? (
+                                  <div className="space-y-2">
+                                    {productQuotas.map((pQ) => (
+                                      <div key={pQ.productId} className="py-0.5">
+                                        {pQ.shipped ? Number(pQ.shipped).toLocaleString('tr-TR') : '0'}
+                                        <span className="text-[10px] text-slate-400 ml-0.5 font-normal">{pQ.unit || 'm²'}</span>
+                                      </div>
+                                    ))}
+                                    {hasUnassigned && (
+                                      <div className="py-0.5 text-blue-800 font-bold text-[11px]">
+                                        {Number(qSummary.totalShipped).toLocaleString('tr-TR')}
+                                        <span className="text-[10px] text-slate-400 ml-0.5 font-normal">m²</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <div>
+                                    {customerTotals[cust.id] ? Number(customerTotals[cust.id]).toLocaleString('tr-TR') : (cumulativeCustomerTotals[cust.id] ? Number(cumulativeCustomerTotals[cust.id]).toLocaleString('tr-TR') : '-')}
+                                  </div>
+                                )}
+                              </td>
+
+                              {/* Col 5: Remaining Quota */}
+                              <td className="p-3 align-top text-right font-mono font-black text-rose-950 bg-rose-50/40 border-r border-rose-100">
+                                {productQuotas.length > 0 ? (
+                                  <div className="space-y-2">
+                                    {productQuotas.map((pQ) => (
+                                      <div key={pQ.productId} className="py-0.5 text-rose-900 font-black">
+                                        {pQ.remaining > 0 ? Number(pQ.remaining).toLocaleString('tr-TR') : '0'}
+                                        <span className="text-[10px] text-rose-600/70 ml-0.5 font-normal">{pQ.unit || 'm²'}</span>
+                                      </div>
+                                    ))}
+                                    {hasUnassigned && (
+                                      <div className="py-0.5 text-rose-900 font-black text-[11px]">
+                                        {Number(qSummary.unassignedRemaining ?? 0).toLocaleString('tr-TR')}
+                                        <span className="text-[10px] text-rose-600/70 ml-0.5 font-normal">m²</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : hasUnassigned ? (
+                                  <div className="text-rose-900 font-black">
+                                    {Number(qSummary.unassignedRemaining ?? 0).toLocaleString('tr-TR')}
+                                    <span className="text-[10px] text-rose-600/70 ml-0.5 font-normal">m²</span>
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-300">-</span>
+                                )}
+                              </td>
+
+                              {/* Col 6: Factory Stock */}
+                              <td className="p-3 align-top text-right font-mono font-bold text-emerald-950 bg-emerald-50/40 border-r border-emerald-100">
+                                {productQuotas.length > 0 ? (
+                                  <div className="space-y-2">
+                                    {productQuotas.map((pQ) => {
+                                      const stk = stockMap[pQ.productId] || 0;
+                                      return (
+                                        <div key={pQ.productId} className="py-0.5 text-emerald-900 font-bold">
+                                          {stk ? stk.toLocaleString('tr-TR') : '0'}
+                                          <span className="text-[10px] text-emerald-600/70 ml-0.5 font-normal">{pQ.unit || 'm²'}</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-300">-</span>
+                                )}
+                              </td>
+
+                              {/* Col 7: Net Production Need */}
+                              <td className="p-3 align-top text-center border-r border-purple-100 bg-purple-50/30">
+                                {productQuotas.length > 0 ? (
+                                  <div className="space-y-2">
+                                    {productQuotas.map((pQ) => {
+                                      const stk = stockMap[pQ.productId] || 0;
+                                      const diff = pQ.remaining - stk;
+                                      if (pQ.remaining <= 0) {
+                                        return (
+                                          <div key={pQ.productId} className="py-0.5">
+                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                                              Kota Doldu
+                                            </span>
+                                          </div>
+                                        );
+                                      }
+                                      if (diff > 0) {
+                                        return (
+                                          <div key={pQ.productId} className="py-0.5">
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10.5px] font-black bg-rose-100 text-rose-900 border border-rose-300">
+                                              ⚠️ {diff.toLocaleString('tr-TR')} {pQ.unit || 'm²'} Üretilmeli
+                                            </span>
+                                          </div>
+                                        );
+                                      }
+                                      return (
+                                        <div key={pQ.productId} className="py-0.5">
+                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10.5px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                                            ✅ Stok Yeterli (+{Math.abs(diff).toLocaleString('tr-TR')})
+                                          </span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-300">-</span>
+                                )}
+                              </td>
+
+                              {/* Col 8: Pallet Tahta */}
+                              <td className="p-3 align-top text-right font-mono font-bold text-amber-950 bg-amber-50/50 border-r border-amber-100">
+                                {cPallet.tahta ? cPallet.tahta.toLocaleString('tr-TR') : '-'}
+                              </td>
+
+                              {/* Col 9: Pallet Üretim / Sevk */}
+                              <td className="p-3 align-top text-right font-mono font-bold text-orange-950 bg-orange-50/50">
+                                {cPallet.uretimSevkiyat ? cPallet.uretimSevkiyat.toLocaleString('tr-TR') : '-'}
+                              </td>
+                            </tr>
+
+                            {/* Child Sites Rows (Only rendered if isExpanded is true!) */}
+                            {isExpanded && childSites.map((site) => {
+                              const sQuota = siteQuotaMap[cust.id]?.[site.id];
+                              const sPallet = sitePalletMap[`${cust.id}_${site.id}`] || { tahta: 0, uretimSevkiyat: 0 };
+                              const siteProductQuotas = sQuota?.productQuotas ? Object.values(sQuota.productQuotas) : [];
+
+                              return (
+                                <tr key={site.id} className="bg-slate-50/90 hover:bg-slate-100/90 transition-colors border-l-4 border-l-teal-500">
+                                  <td className="p-2.5 pl-8 text-xs font-semibold text-slate-700 border-r border-slate-200">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-teal-600 font-black">↳</span>
+                                      <span>{site.isUnassigned ? '🏢 Merkez / Şantiyesiz' : `🏗️ ${site.name}`}</span>
+                                    </div>
+                                  </td>
+                                  <td className="p-2.5 text-xs text-slate-600 border-r border-slate-200">
+                                    {siteProductQuotas.length > 0 ? (
+                                      siteProductQuotas.map((spQ) => spQ.productName).join(', ')
+                                    ) : (
+                                      <span className="text-slate-400 italic">Şantiye Dökümü</span>
+                                    )}
+                                  </td>
+                                  <td className="p-2.5 text-right font-mono text-xs text-slate-700 border-r border-slate-200">
+                                    {sQuota?.totalTarget ? Number(sQuota.totalTarget).toLocaleString('tr-TR') : '-'}
+                                  </td>
+                                  <td className="p-2.5 text-right font-mono text-xs text-blue-800 border-r border-slate-200">
+                                    {sQuota?.totalShipped ? Number(sQuota.totalShipped).toLocaleString('tr-TR') : '-'}
+                                  </td>
+                                  <td className="p-2.5 text-right font-mono text-xs font-bold text-rose-800 border-r border-slate-200 bg-rose-50/30">
+                                    {sQuota?.totalRemaining ? Number(sQuota.totalRemaining).toLocaleString('tr-TR') : '-'}
+                                  </td>
+                                  <td className="p-2.5 text-right font-mono text-xs text-slate-400 border-r border-slate-200">-</td>
+                                  <td className="p-2.5 text-center text-xs text-slate-400 border-r border-slate-200">-</td>
+                                  <td className="p-2.5 text-right font-mono text-xs text-amber-800 border-r border-slate-200 bg-amber-50/30">
+                                    {sPallet.tahta ? sPallet.tahta.toLocaleString('tr-TR') : '-'}
+                                  </td>
+                                  <td className="p-2.5 text-right font-mono text-xs text-orange-800 bg-orange-50/30">
+                                    {sPallet.uretimSevkiyat ? sPallet.uretimSevkiyat.toLocaleString('tr-TR') : '-'}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </React.Fragment>
+                        );
+                      })
+                    )}
+                  </tbody>
+                  <tfoot className="bg-slate-100 text-slate-900 font-black text-xs border-t-2 border-slate-300">
+                    <tr>
+                      <td className="p-3" colSpan={2}>
+                        GENEL TOPLAM ({filteredCustomers.length} Müşteri)
+                      </td>
+                      <td className="p-3 text-right font-mono">
+                        {totalQuotaTargetSum ? totalQuotaTargetSum.toLocaleString('tr-TR') : '-'}
+                      </td>
+                      <td className="p-3 text-right font-mono text-blue-900">
+                        {totalQuotaShippedSum ? totalQuotaShippedSum.toLocaleString('tr-TR') : '-'}
+                      </td>
+                      <td className="p-3 text-right font-mono text-rose-950 bg-rose-200/80">
+                        {totalQuotaRemainingSum ? totalQuotaRemainingSum.toLocaleString('tr-TR') : '-'}
+                      </td>
+                      <td className="p-3 text-right font-mono text-emerald-950 bg-emerald-200/80">
+                        {totalFactoryStock.toLocaleString('tr-TR')}
+                      </td>
+                      <td className="p-3 text-center text-purple-950 bg-purple-200/80">
+                        Net Açık: {totalNetProductionDemandSum.toLocaleString('tr-TR')} m²
+                      </td>
+                      <td className="p-3 text-right font-mono text-amber-950 bg-amber-200/90">
+                        {grandTotalTahtaPallet ? grandTotalTahtaPallet.toLocaleString('tr-TR') : '-'}
+                      </td>
+                      <td className="p-3 text-right font-mono text-orange-950 bg-orange-200/90">
+                        {grandTotalUretimSevkiyatPallet ? grandTotalUretimSevkiyatPallet.toLocaleString('tr-TR') : '-'}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
           </div>
         ) : (
           <div>
