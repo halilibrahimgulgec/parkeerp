@@ -359,13 +359,70 @@ ${userNote ? `Kullanıcının ilettiği ek not: "${userNote}"` : ''}`;
 }
 
 /**
- * Model Önbelleği (Her taramada 404 almamak ve gereksiz ağ beklemelerini sıfırlamak için)
+ * Model Önbelleği ve Dinamik Model Keşfi
  */
 let cachedWorkingModel: string | null = null;
+let cachedDiscoveredModels: { key: string; models: string[]; timestamp: number } | null = null;
+
+const ROBUST_FALLBACK_MODELS = [
+  'gemini-1.5-flash',
+  'gemini-1.5-flash-latest',
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-exp',
+  'gemini-1.5-flash-8b',
+  'gemini-1.5-pro',
+  'gemini-1.5-pro-latest',
+];
+
+async function getAvailableVisionModels(apiKey: string): Promise<string[]> {
+  if (cachedDiscoveredModels && cachedDiscoveredModels.key === apiKey && Date.now() - cachedDiscoveredModels.timestamp < 3600000) {
+    return cachedDiscoveredModels.models;
+  }
+
+  try {
+    const controller = new AbortController();
+    const tId = setTimeout(() => controller.abort(), 4000);
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`, {
+      signal: controller.signal
+    });
+    clearTimeout(tId);
+
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.models)) {
+        const genModels = data.models
+          .filter((m: any) => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
+          .map((m: any) => m.name.replace(/^models\//, ''));
+
+        if (genModels.length > 0) {
+          genModels.sort((a: string, b: string) => {
+            const score = (m: string) => {
+              let s = 0;
+              if (m.includes('flash')) s += 10;
+              if (m.includes('2.0')) s += 5;
+              if (m.includes('1.5')) s += 4;
+              if (m.includes('8b')) s += 3;
+              if (m.includes('pro')) s += 2;
+              return s;
+            };
+            return score(b) - score(a);
+          });
+
+          cachedDiscoveredModels = { key: apiKey, models: genModels, timestamp: Date.now() };
+          return genModels;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('Dinamik model keşfi uyarısı, yedek model listesi devrede:', e);
+  }
+
+  return ROBUST_FALLBACK_MODELS;
+}
 
 /**
  * YÜKSEK HIZLI VISION AI MOTORU (FAST CASCADE)
- * Doğrudan en hızlı Google Gemini 2.0 Flash modeline gider, gereksiz sorguları atlar (~1.2s yanıt süresi).
+ * En hızlı modelden başlayarak dinamik ve hatasız kaskad çalıştırır.
  */
 export async function callFastVisionCascade(
   base64Image: string,
@@ -382,20 +439,31 @@ export async function callFastVisionCascade(
     throw new Error('API_KEY_MISSING');
   }
 
-  // En hızlıdan yedeğe doğru sıralı gerçek modeller
-  const candidateModels = cachedWorkingModel
-    ? [cachedWorkingModel, 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']
-    : ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+  const discovered = await getAvailableVisionModels(cleanKey);
+  const candidateModels = Array.from(new Set([
+    ...(cachedWorkingModel ? [cachedWorkingModel] : []),
+    ...discovered,
+    ...ROBUST_FALLBACK_MODELS
+  ]));
 
-  const uniqueModels = Array.from(new Set(candidateModels));
   const detailedErrors: string[] = [];
 
-  for (const model of uniqueModels) {
+  for (const model of candidateModels) {
+    // v1beta önce denenir (JSON modu destekler), ardından v1 standart denenir
     for (const apiVersion of ['v1beta', 'v1']) {
       try {
         const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent?key=${cleanKey}`;
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 14000);
+        const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+        const genConfig: any = {
+          temperature: 0.1,
+          maxOutputTokens: 2048,
+        };
+        // responseMimeType yalnızca v1beta üzerinde desteklenir
+        if (apiVersion === 'v1beta') {
+          genConfig.responseMimeType = "application/json";
+        }
 
         const response = await fetch(url, {
           method: 'POST',
@@ -416,11 +484,7 @@ export async function callFastVisionCascade(
                 ],
               },
             ],
-            generationConfig: {
-              temperature: 0.0,
-              maxOutputTokens: 650,
-              responseMimeType: "application/json",
-            },
+            generationConfig: genConfig,
           }),
         });
 
@@ -440,24 +504,27 @@ export async function callFastVisionCascade(
           if (response.status === 403 && parsedMsg.includes('PERMISSION_DENIED')) {
             throw new Error('Bu API anahtarının Generative Language API erişim izni bulunmuyor veya bölge kısıtlaması var.');
           }
+          if (response.status === 429) {
+            throw new Error('Google Gemini API istek kotası doldu (HTTP 429). Lütfen 30 saniye sonra tekrar deneyiniz veya aistudio.google.com üzerinden yeni bir anahtar alınız.');
+          }
 
-          detailedErrors.push(`[${model}] HTTP ${response.status}: ${parsedMsg || errText.substring(0, 80)}`);
+          detailedErrors.push(`[${apiVersion}/${model}] HTTP ${response.status}: ${parsedMsg || errText.substring(0, 100)}`);
           continue;
         }
 
         const resJson = await response.json();
         const text = resJson.candidates?.[0]?.content?.parts?.[0]?.text;
         if (text && text.trim().length > 0) {
-          cachedWorkingModel = model; // Gelecek çağrılar için önbelleğe al
-          return { candidateText: text, usedModel: `${model}` };
+          cachedWorkingModel = model;
+          return { candidateText: text, usedModel: `${model} (${apiVersion})` };
         }
       } catch (err: any) {
         if (err?.name === 'AbortError') {
-          detailedErrors.push(`[${model}] Zaman aşımı (14s)`);
-        } else if (err?.message?.includes('Google Gemini API anahtarı') || err?.message?.includes('PERMISSION_DENIED')) {
+          detailedErrors.push(`[${apiVersion}/${model}] Zaman aşımı (20s)`);
+        } else if (err?.message?.includes('Google Gemini API anahtarı') || err?.message?.includes('PERMISSION_DENIED') || err?.message?.includes('kota')) {
           throw err;
         } else {
-          detailedErrors.push(`[${model}] Hata: ${err?.message}`);
+          detailedErrors.push(`[${apiVersion}/${model}] Hata: ${err?.message}`);
         }
       }
     }
@@ -485,10 +552,11 @@ export async function callVisionCascade(
     throw new Error('API_KEY_MISSING');
   }
 
+  const discovered = await getAvailableVisionModels(cleanKey);
   const candidateModels = Array.from(new Set([
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
-    'gemini-1.5-pro',
+    ...(cachedWorkingModel ? [cachedWorkingModel] : []),
+    ...discovered,
+    ...ROBUST_FALLBACK_MODELS
   ]));
 
   const prompt = buildVisionPrompt(userNote);
@@ -498,9 +566,13 @@ export async function callVisionCascade(
     for (const apiVersion of ['v1beta', 'v1']) {
       try {
         const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent?key=${cleanKey}`;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 20000);
+
         const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
             contents: [
               {
@@ -523,6 +595,8 @@ export async function callVisionCascade(
           }),
         });
 
+        clearTimeout(timeoutId);
+
         if (!response.ok) {
           const errText = await response.text();
           let parsedMsg = '';
@@ -537,26 +611,34 @@ export async function callVisionCascade(
           if (response.status === 403 && parsedMsg.includes('PERMISSION_DENIED')) {
             throw new Error('Bu API anahtarının Generative Language API erişim izni bulunmuyor veya bölge kısıtlaması var.');
           }
+          if (response.status === 429) {
+            throw new Error('Google Gemini API istek kotası doldu (HTTP 429). Lütfen 30 saniye bekleyip tekrar deneyiniz veya aistudio.google.com üzerinden yeni bir anahtar alınız.');
+          }
 
+          detailedErrors.push(`[${apiVersion}/${model}] HTTP ${response.status}: ${parsedMsg || errText.substring(0, 100)}`);
           continue;
         }
 
         const resJson = await response.json();
         const text = resJson.candidates?.[0]?.content?.parts?.[0]?.text;
         if (text && text.trim().length > 0) {
+          cachedWorkingModel = model;
           return { candidateText: text, usedModel: `${model} (${apiVersion})` };
         }
       } catch (err: any) {
-        if (err?.message?.includes('Google Gemini API anahtarı') || err?.message?.includes('Generative Language API')) {
+        if (err?.name === 'AbortError') {
+          detailedErrors.push(`[${apiVersion}/${model}] Zaman aşımı (20s)`);
+        } else if (err?.message?.includes('Google Gemini API anahtarı') || err?.message?.includes('PERMISSION_DENIED') || err?.message?.includes('kota')) {
           throw err;
+        } else {
+          detailedErrors.push(`[${apiVersion}/${model}] Hata: ${err?.message}`);
         }
-        detailedErrors.push(`[${apiVersion}/${model}] Hata: ${err?.message}`);
       }
     }
   }
 
   const summaryError = detailedErrors.slice(-3).join(' | ');
-  throw new Error(`Vision AI modelleri çağrılamadı: ${summaryError}`);
+  throw new Error(`Vision AI modelleri çağrılamadı: ${summaryError || 'Ağ veya model bağlantısı kurulamadı'}`);
 }
 
 /**
