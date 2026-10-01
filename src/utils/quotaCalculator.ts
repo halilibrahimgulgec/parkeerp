@@ -25,6 +25,8 @@ export interface CalculatedQuotaItem {
 }
 
 export interface QuotaMetric {
+  productId?: string;
+  productName?: string;
   target: number;
   shipped: number;
   remaining: number;
@@ -40,6 +42,9 @@ export interface CustomerQuotaSummary {
   completionPct: number;
   productQuotas: Record<string, QuotaMetric>;
   hasUnassignedProductQuota: boolean;
+  unassignedTarget?: number;
+  unassignedShipped?: number;
+  unassignedQuota?: number;
   unassignedRemaining: number;
   items: CalculatedQuotaItem[];
 }
@@ -209,8 +214,10 @@ export function calculateCustomerQuotaMap(
     let totalRemaining = 0;
     let netBalance = 0;
     let hasUnassigned = false;
+    let unassignedTarget = 0;
+    let unassignedShipped = 0;
     let unassignedRemaining = 0;
-    const productQuotas: Record<string, any> = {};
+    const productQuotas: Record<string, QuotaMetric> = {};
 
     custQuotas.forEach((q) => {
       totalTarget += q.target_quantity;
@@ -223,13 +230,17 @@ export function calculateCustomerQuotaMap(
         const t = (prev?.target || 0) + q.target_quantity;
         const sh = (prev?.shipped || 0) + q.shipped_quantity;
         productQuotas[q.product_id] = {
+          productId: q.product_id,
+          productName: q.product_name || prev?.productName || 'Tanımlı Taş',
           target: t,
           shipped: sh,
           remaining: Math.max(0, t - sh),
-          unit: q.unit,
+          unit: q.unit || 'm²',
         };
       } else {
         hasUnassigned = true;
+        unassignedTarget += q.target_quantity;
+        unassignedShipped += q.shipped_quantity;
         unassignedRemaining += q.remaining_quantity;
       }
     });
@@ -246,6 +257,9 @@ export function calculateCustomerQuotaMap(
       completionPct,
       productQuotas,
       hasUnassignedProductQuota: hasUnassigned,
+      unassignedTarget,
+      unassignedShipped,
+      unassignedQuota: unassignedTarget,
       unassignedRemaining,
       items: custQuotas,
     };
@@ -296,10 +310,12 @@ export function calculateSiteQuotaMap(
         const t = (prev?.target || 0) + q.target_quantity;
         const sh = (prev?.shipped || 0) + q.shipped_quantity;
         sq.productQuotas[q.product_id] = {
+          productId: q.product_id,
+          productName: q.product_name || prev?.productName || 'Tanımlı Taş',
           target: t,
           shipped: sh,
           remaining: Math.max(0, t - sh),
-          unit: q.unit,
+          unit: q.unit || 'm²',
         };
       }
     });

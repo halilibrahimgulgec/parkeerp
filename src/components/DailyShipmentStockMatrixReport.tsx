@@ -675,6 +675,126 @@ export default function DailyShipmentStockMatrixReport() {
     return productProductionSummaries.reduce((acc, it) => acc + it.netNeeded, 0);
   }, [productProductionSummaries]);
 
+  // Helper: Get list of products with quotas, actual stock and production need for a customer
+  const getCustomerQuotaProducts = (cust: Customer, qSummary?: CustomerQuotaSummary) => {
+    if (!qSummary || !qSummary.hasQuota) return [];
+    const list: {
+      productId: string;
+      productName: string;
+      shortName: string;
+      thickness?: string;
+      target: number;
+      shipped: number;
+      remaining: number;
+      stock: number;
+      unit: string;
+      netNeeded: number;
+      surplus: number;
+      isDeficit: boolean;
+      isUnassigned?: boolean;
+    }[] = [];
+
+    if (qSummary.productQuotas) {
+      Object.entries(qSummary.productQuotas).forEach(([pId, metric]) => {
+        const prod = products.find((p) => p.id === pId);
+        const thickness = prod?.thickness;
+        const prodName = prod
+          ? `${prod.name}${thickness ? ` (${thickness})` : ''}`
+          : (metric.productName || 'Tanımlı Taş');
+        const shortName = prod ? prod.name : (metric.productName || 'Tanımlı Taş');
+        const currentStock = stockMap[pId] || 0;
+        const netNeeded = Math.max(0, metric.remaining - currentStock);
+        const surplus = Math.max(0, currentStock - metric.remaining);
+
+        list.push({
+          productId: pId,
+          productName: prodName,
+          shortName,
+          thickness,
+          target: metric.target,
+          shipped: metric.shipped,
+          remaining: metric.remaining,
+          stock: currentStock,
+          unit: metric.unit || prod?.unit || 'm²',
+          netNeeded,
+          surplus,
+          isDeficit: metric.remaining > currentStock,
+        });
+      });
+    }
+
+    if (qSummary.hasUnassignedProductQuota && ((qSummary.unassignedTarget ?? qSummary.unassignedQuota ?? 0) > 0 || (qSummary.unassignedRemaining ?? 0) > 0)) {
+      const uTarget = qSummary.unassignedTarget ?? qSummary.unassignedQuota ?? 0;
+      const uRem = qSummary.unassignedRemaining ?? 0;
+      const uShipped = qSummary.unassignedShipped ?? Math.max(0, uTarget - uRem);
+
+      list.push({
+        productId: '__unassigned__',
+        productName: 'Genel Sözleşme (Taş Belirtilmemiş)',
+        shortName: 'Genel Kota',
+        target: uTarget,
+        shipped: uShipped,
+        remaining: uRem,
+        stock: 0,
+        unit: 'm²',
+        netNeeded: uRem,
+        surplus: 0,
+        isDeficit: uRem > 0,
+        isUnassigned: true,
+      });
+    }
+
+    return list;
+  };
+
+  // Helper: Get list of products with quotas for a site
+  const getSiteQuotaProducts = (site: { id: string; name: string }, sQuota?: SiteQuotaSummary) => {
+    if (!sQuota || !sQuota.hasQuota) return [];
+    const list: {
+      productId: string;
+      productName: string;
+      shortName: string;
+      thickness?: string;
+      target: number;
+      shipped: number;
+      remaining: number;
+      stock: number;
+      unit: string;
+      netNeeded: number;
+      surplus: number;
+    }[] = [];
+
+    if (sQuota.productQuotas) {
+      Object.entries(sQuota.productQuotas).forEach(([pId, metric]) => {
+        const prod = products.find((p) => p.id === pId);
+        const thickness = prod?.thickness;
+        const prodName = prod
+          ? `${prod.name}${thickness ? ` (${thickness})` : ''}`
+          : (metric.productName || 'Tanımlı Taş');
+        const shortName = prod ? prod.name : (metric.productName || 'Tanımlı Taş');
+        const currentStock = stockMap[pId] || 0;
+        const netNeeded = Math.max(0, metric.remaining - currentStock);
+        const surplus = Math.max(0, currentStock - metric.remaining);
+
+        list.push({
+          productId: pId,
+          productName: prodName,
+          shortName,
+          thickness,
+          target: metric.target,
+          shipped: metric.shipped,
+          remaining: metric.remaining,
+          stock: currentStock,
+          unit: metric.unit || prod?.unit || 'm²',
+          netNeeded,
+          surplus,
+        });
+      });
+    }
+
+    return list;
+  };
+
   // Export to Excel (.xls)
   const handleExportExcel = () => {
     if (activeViewMode === 'plan') {
@@ -692,12 +812,12 @@ export default function DailyShipmentStockMatrixReport() {
             </tr>
             <tr style="background-color: #f1f5f9; font-weight: bold; text-align: left;">
               <th style="padding: 8px; width: 220px;">MÜŞTERİ / ŞANTİYE</th>
-              <th style="padding: 8px; width: 220px;">SİPARİŞ VERİLEN TAŞ</th>
-              <th style="padding: 8px; text-align: right; width: 110px;">SÖZLEŞME (m²)</th>
-              <th style="padding: 8px; text-align: right; width: 110px;">SEVK EDİLEN (m²)</th>
-              <th style="padding: 8px; text-align: right; width: 120px; background-color: #ffe4e6; color: #9f1239;">KALAN AÇIK (m²)</th>
-              <th style="padding: 8px; text-align: right; width: 110px; background-color: #dcfce7; color: #166534;">DEPO STOĞU (m²)</th>
-              <th style="padding: 8px; text-align: center; width: 160px; background-color: #f3e8ff; color: #6b21a8;">NET ÜRETİM İHTİYACI</th>
+              <th style="padding: 8px; width: 240px;">SİPARİŞ VERİLEN TAŞ</th>
+              <th style="padding: 8px; text-align: right; width: 110px;">SÖZLEŞME</th>
+              <th style="padding: 8px; text-align: right; width: 110px;">SEVK EDİLEN</th>
+              <th style="padding: 8px; text-align: right; width: 120px; background-color: #ffe4e6; color: #9f1239;">KALAN AÇIK</th>
+              <th style="padding: 8px; text-align: right; width: 110px; background-color: #dcfce7; color: #166534;">DEPO STOĞU</th>
+              <th style="padding: 8px; text-align: center; width: 220px; background-color: #f3e8ff; color: #6b21a8;">NET ÜRETİM İHTİYACI</th>
               <th style="padding: 8px; text-align: right; width: 90px; background-color: #fef9c3;">TAHTA PALET</th>
               <th style="padding: 8px; text-align: right; width: 100px; background-color: #ffedd5;">ÜRETİM/SEVK. PALET</th>
             </tr>
@@ -711,36 +831,33 @@ export default function DailyShipmentStockMatrixReport() {
         const childSites = getCustomerChildSites(c.id);
         const isExpanded = expandedCustomerIds.has(c.id);
 
-        const productQuotas = qSummary?.productQuotas ? Object.values(qSummary.productQuotas) : [];
-        const hasUnassigned = qSummary?.hasUnassignedProductQuota && (qSummary.unassignedQuota > 0 || qSummary.unassignedRemaining > 0);
+        const custProducts = getCustomerQuotaProducts(c, qSummary);
 
-        const prodNames = productQuotas.length > 0
-          ? productQuotas.map((pQ) => pQ.productName).join('<br/>')
-          : (hasUnassigned ? 'Genel Kota (Taş Seçilmemiş)' : 'Serbest Satış');
+        const prodNames = custProducts.length > 0
+          ? custProducts.map((p) => `<b>• ${p.productName}</b>`).join('<br/>')
+          : '<span style="color:#94a3b8; font-style:italic;">Serbest Satış / Kotasız</span>';
 
-        const totalTargetStr = productQuotas.length > 0
-          ? productQuotas.map((pQ) => Number(pQ.target).toLocaleString('tr-TR')).join('<br/>')
-          : (hasUnassigned ? Number(qSummary.unassignedQuota).toLocaleString('tr-TR') : '-');
-
-        const totalShippedStr = productQuotas.length > 0
-          ? productQuotas.map((pQ) => Number(pQ.shipped).toLocaleString('tr-TR')).join('<br/>')
-          : (hasUnassigned ? Number(qSummary.totalShipped).toLocaleString('tr-TR') : (customerTotals[c.id] ? customerTotals[c.id].toLocaleString('tr-TR') : '-'));
-
-        const totalRemStr = productQuotas.length > 0
-          ? productQuotas.map((pQ) => Number(pQ.remaining).toLocaleString('tr-TR')).join('<br/>')
-          : (hasUnassigned ? Number(qSummary.unassignedRemaining ?? 0).toLocaleString('tr-TR') : '-');
-
-        const totalStockStr = productQuotas.length > 0
-          ? productQuotas.map((pQ) => Number(stockMap[pQ.productId] || 0).toLocaleString('tr-TR')).join('<br/>')
+        const totalTargetStr = custProducts.length > 0
+          ? custProducts.map((p) => `${Number(p.target).toLocaleString('tr-TR')} ${p.unit}`).join('<br/>')
           : '-';
 
-        const productionStatusStr = productQuotas.length > 0
-          ? productQuotas.map((pQ) => {
-              const stk = stockMap[pQ.productId] || 0;
-              const diff = pQ.remaining - stk;
-              if (pQ.remaining <= 0) return '<span style="color: #2563eb; font-weight: bold;">Kota Doldu</span>';
-              if (diff > 0) return `<span style="color: #be123c; font-weight: bold;">⚠️ ${diff.toLocaleString('tr-TR')} m² Üretilmeli</span>`;
-              return `<span style="color: #15803d; font-weight: bold;">✅ Stok Yeterli (+${Math.abs(diff).toLocaleString('tr-TR')})</span>`;
+        const totalShippedStr = custProducts.length > 0
+          ? custProducts.map((p) => `${Number(p.shipped).toLocaleString('tr-TR')} ${p.unit}`).join('<br/>')
+          : (customerTotals[c.id] ? `${Number(customerTotals[c.id]).toLocaleString('tr-TR')} m²` : (cumulativeCustomerTotals[c.id] ? `${Number(cumulativeCustomerTotals[c.id]).toLocaleString('tr-TR')} m²` : '-'));
+
+        const totalRemStr = custProducts.length > 0
+          ? custProducts.map((p) => `${Number(p.remaining).toLocaleString('tr-TR')} ${p.unit}`).join('<br/>')
+          : '-';
+
+        const totalStockStr = custProducts.length > 0
+          ? custProducts.map((p) => p.isUnassigned ? '-' : `${Number(p.stock).toLocaleString('tr-TR')} ${p.unit}`).join('<br/>')
+          : '-';
+
+        const productionStatusStr = custProducts.length > 0
+          ? custProducts.map((p) => {
+              if (p.remaining <= 0) return `<span style="color: #2563eb; font-weight: bold;">✅ ${p.shortName}: Kota Doldu</span>`;
+              if (p.netNeeded > 0) return `<span style="color: #be123c; font-weight: bold;">⚠️ <b>${p.shortName}</b>: ${Number(p.netNeeded).toLocaleString('tr-TR')} ${p.unit} Üretilmeli</span>`;
+              return `<span style="color: #15803d; font-weight: bold;">✅ <b>${p.shortName}</b>: Stok Yeterli (+${Number(p.surplus).toLocaleString('tr-TR')} ${p.unit})</span>`;
             }).join('<br/>')
           : '-';
 
@@ -765,19 +882,47 @@ export default function DailyShipmentStockMatrixReport() {
           childSites.forEach((site) => {
             const sQuota = siteQuotaMap[c.id]?.[site.id];
             const sPallet = sitePalletMap[`${c.id}_${site.id}`] || { total: 0, tahta: 0, sevkiyat: 0, uretim: 0, uretimSevkiyat: 0 };
-            const siteProductQuotas = sQuota?.productQuotas ? Object.values(sQuota.productQuotas) : [];
+            const siteProducts = getSiteQuotaProducts(site, sQuota);
+
+            const siteProdNames = siteProducts.length > 0
+              ? siteProducts.map((sp) => `↳ ${sp.productName}`).join('<br/>')
+              : '<span style="color:#94a3b8; font-style:italic;">Şantiye Dökümü</span>';
+
+            const siteTargetStr = siteProducts.length > 0
+              ? siteProducts.map((sp) => `${Number(sp.target).toLocaleString('tr-TR')} ${sp.unit}`).join('<br/>')
+              : (sQuota?.totalTarget ? `${Number(sQuota.totalTarget).toLocaleString('tr-TR')} m²` : '-');
+
+            const siteShippedStr = siteProducts.length > 0
+              ? siteProducts.map((sp) => `${Number(sp.shipped).toLocaleString('tr-TR')} ${sp.unit}`).join('<br/>')
+              : (sQuota?.totalShipped ? `${Number(sQuota.totalShipped).toLocaleString('tr-TR')} m²` : '-');
+
+            const siteRemStr = siteProducts.length > 0
+              ? siteProducts.map((sp) => `${Number(sp.remaining).toLocaleString('tr-TR')} ${sp.unit}`).join('<br/>')
+              : (sQuota?.totalRemaining ? `${Number(sQuota.totalRemaining).toLocaleString('tr-TR')} m²` : '-');
+
+            const siteStockStr = siteProducts.length > 0
+              ? siteProducts.map((sp) => `${Number(sp.stock).toLocaleString('tr-TR')} ${sp.unit}`).join('<br/>')
+              : '-';
+
+            const siteProdStatusStr = siteProducts.length > 0
+              ? siteProducts.map((sp) => {
+                  if (sp.remaining <= 0) return `<span style="color: #2563eb;">Kota Doldu</span>`;
+                  if (sp.netNeeded > 0) return `<span style="color: #be123c;">⚠️ ${sp.shortName}: ${Number(sp.netNeeded).toLocaleString('tr-TR')} ${sp.unit} Açık</span>`;
+                  return `<span style="color: #15803d;">✅ ${sp.shortName}: Stok Var</span>`;
+                }).join('<br/>')
+              : '-';
 
             planHtml += `
               <tr style="background-color: #f8fafc; font-size: 10px; color: #475569; vertical-align: top;">
                 <td style="padding: 4px 4px 4px 22px; font-style: italic;">
                   ↳ ${site.isUnassigned ? 'Merkez / Şantiyesiz' : `Şantiye: ${site.name}`}
                 </td>
-                <td style="padding: 4px;">${siteProductQuotas.map((sp) => sp.productName).join(' / ') || '-'}</td>
-                <td style="padding: 4px; text-align: right;">${sQuota?.totalTarget ? sQuota.totalTarget.toLocaleString('tr-TR') : '-'}</td>
-                <td style="padding: 4px; text-align: right; color: #1e40af;">${sQuota?.totalShipped ? sQuota.totalShipped.toLocaleString('tr-TR') : '-'}</td>
-                <td style="padding: 4px; text-align: right; color: #9f1239; background-color: #fff1f2;">${sQuota?.totalRemaining ? sQuota.totalRemaining.toLocaleString('tr-TR') : '-'}</td>
-                <td style="padding: 4px; text-align: right;">-</td>
-                <td style="padding: 4px; text-align: center;">-</td>
+                <td style="padding: 4px;">${siteProdNames}</td>
+                <td style="padding: 4px; text-align: right;">${siteTargetStr}</td>
+                <td style="padding: 4px; text-align: right; color: #1e40af;">${siteShippedStr}</td>
+                <td style="padding: 4px; text-align: right; color: #9f1239; background-color: #fff1f2;">${siteRemStr}</td>
+                <td style="padding: 4px; text-align: right; color: #166534; background-color: #f0fdf4;">${siteStockStr}</td>
+                <td style="padding: 4px; text-align: center; background-color: #faf5ff;">${siteProdStatusStr}</td>
                 <td style="padding: 4px; text-align: right; background-color: #fefce8;">${sPallet.tahta ? sPallet.tahta.toLocaleString('tr-TR') : '-'}</td>
                 <td style="padding: 4px; text-align: right; background-color: #fff7ed;">${sPallet.uretimSevkiyat ? sPallet.uretimSevkiyat.toLocaleString('tr-TR') : '-'}</td>
               </tr>
@@ -2034,8 +2179,7 @@ export default function DailyShipmentStockMatrixReport() {
                         const hasChildSites = childSites.length > 0;
                         const isExpanded = expandedCustomerIds.has(cust.id);
 
-                        const productQuotas = qSummary?.productQuotas ? Object.values(qSummary.productQuotas) : [];
-                        const hasUnassigned = qSummary?.hasUnassignedProductQuota && (qSummary.unassignedQuota > 0 || qSummary.unassignedRemaining > 0);
+                        const custProducts = getCustomerQuotaProducts(cust, qSummary);
 
                         return (
                           <React.Fragment key={cust.id}>
@@ -2078,52 +2222,34 @@ export default function DailyShipmentStockMatrixReport() {
 
                               {/* Col 2: Products */}
                               <td className="p-3 align-top border-r border-slate-100">
-                                {productQuotas.length > 0 ? (
+                                {custProducts.length > 0 ? (
                                   <div className="space-y-2">
-                                    {productQuotas.map((pQ) => (
-                                      <div key={pQ.productId} className="py-0.5 font-bold text-slate-800 flex items-center gap-1.5">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-                                        <span>{pQ.productName}</span>
+                                    {custProducts.map((p) => (
+                                      <div key={p.productId} className="py-0.5 flex items-start gap-1.5">
+                                        <span className={`w-2 h-2 rounded-full shrink-0 mt-1 ${p.isUnassigned ? 'bg-purple-500' : 'bg-emerald-500'}`} />
+                                        <div className="flex flex-col">
+                                          <span className="text-xs font-black text-slate-900 leading-tight">
+                                            {p.productName}
+                                          </span>
+                                        </div>
                                       </div>
                                     ))}
-                                    {hasUnassigned && (
-                                      <div className="py-0.5 font-bold text-purple-700 flex items-center gap-1.5 text-[11px]">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
-                                        <span>Genel Kota (Taş Seçilmemiş)</span>
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : hasUnassigned ? (
-                                  <div className="font-bold text-purple-700 flex items-center gap-1.5">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
-                                    <span>Genel Kota (Taş Seçilmemiş)</span>
                                   </div>
                                 ) : (
-                                  <span className="text-slate-400 italic">Serbest Sevkiyat</span>
+                                  <span className="text-slate-400 italic text-xs">Serbest Satış / Kotasız</span>
                                 )}
                               </td>
 
                               {/* Col 3: Quota Target */}
                               <td className="p-3 align-top text-right font-mono font-bold text-slate-800 border-r border-slate-100">
-                                {productQuotas.length > 0 ? (
+                                {custProducts.length > 0 ? (
                                   <div className="space-y-2">
-                                    {productQuotas.map((pQ) => (
-                                      <div key={pQ.productId} className="py-0.5">
-                                        {pQ.target ? Number(pQ.target).toLocaleString('tr-TR') : '-'}
-                                        <span className="text-[10px] text-slate-400 ml-0.5 font-normal">{pQ.unit || 'm²'}</span>
+                                    {custProducts.map((p) => (
+                                      <div key={p.productId} className="py-0.5">
+                                        {p.target ? Number(p.target).toLocaleString('tr-TR') : '-'}
+                                        <span className="text-[10px] text-slate-400 ml-0.5 font-normal">{p.unit}</span>
                                       </div>
                                     ))}
-                                    {hasUnassigned && (
-                                      <div className="py-0.5 text-purple-700 font-bold text-[11px]">
-                                        {Number(qSummary.unassignedQuota).toLocaleString('tr-TR')}
-                                        <span className="text-[10px] text-slate-400 ml-0.5 font-normal">m²</span>
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : hasUnassigned ? (
-                                  <div className="text-purple-700 font-bold">
-                                    {Number(qSummary.unassignedQuota).toLocaleString('tr-TR')}
-                                    <span className="text-[10px] text-slate-400 ml-0.5 font-normal">m²</span>
                                   </div>
                                 ) : (
                                   <span className="text-slate-300">-</span>
@@ -2132,49 +2258,37 @@ export default function DailyShipmentStockMatrixReport() {
 
                               {/* Col 4: Shipped */}
                               <td className="p-3 align-top text-right font-mono font-bold text-blue-900 border-r border-slate-100">
-                                {productQuotas.length > 0 ? (
+                                {custProducts.length > 0 ? (
                                   <div className="space-y-2">
-                                    {productQuotas.map((pQ) => (
-                                      <div key={pQ.productId} className="py-0.5">
-                                        {pQ.shipped ? Number(pQ.shipped).toLocaleString('tr-TR') : '0'}
-                                        <span className="text-[10px] text-slate-400 ml-0.5 font-normal">{pQ.unit || 'm²'}</span>
+                                    {custProducts.map((p) => (
+                                      <div key={p.productId} className="py-0.5">
+                                        {p.shipped ? Number(p.shipped).toLocaleString('tr-TR') : '0'}
+                                        <span className="text-[10px] text-slate-400 ml-0.5 font-normal">{p.unit}</span>
                                       </div>
                                     ))}
-                                    {hasUnassigned && (
-                                      <div className="py-0.5 text-blue-800 font-bold text-[11px]">
-                                        {Number(qSummary.totalShipped).toLocaleString('tr-TR')}
-                                        <span className="text-[10px] text-slate-400 ml-0.5 font-normal">m²</span>
-                                      </div>
-                                    )}
                                   </div>
                                 ) : (
                                   <div>
-                                    {customerTotals[cust.id] ? Number(customerTotals[cust.id]).toLocaleString('tr-TR') : (cumulativeCustomerTotals[cust.id] ? Number(cumulativeCustomerTotals[cust.id]).toLocaleString('tr-TR') : '-')}
+                                    {customerTotals[cust.id]
+                                      ? Number(customerTotals[cust.id]).toLocaleString('tr-TR')
+                                      : (cumulativeCustomerTotals[cust.id]
+                                        ? Number(cumulativeCustomerTotals[cust.id]).toLocaleString('tr-TR')
+                                        : '-')}
+                                    <span className="text-[10px] text-slate-400 ml-0.5 font-normal">m²</span>
                                   </div>
                                 )}
                               </td>
 
                               {/* Col 5: Remaining Quota */}
                               <td className="p-3 align-top text-right font-mono font-black text-rose-950 bg-rose-50/40 border-r border-rose-100">
-                                {productQuotas.length > 0 ? (
+                                {custProducts.length > 0 ? (
                                   <div className="space-y-2">
-                                    {productQuotas.map((pQ) => (
-                                      <div key={pQ.productId} className="py-0.5 text-rose-900 font-black">
-                                        {pQ.remaining > 0 ? Number(pQ.remaining).toLocaleString('tr-TR') : '0'}
-                                        <span className="text-[10px] text-rose-600/70 ml-0.5 font-normal">{pQ.unit || 'm²'}</span>
+                                    {custProducts.map((p) => (
+                                      <div key={p.productId} className="py-0.5 text-rose-900 font-black">
+                                        {p.remaining > 0 ? Number(p.remaining).toLocaleString('tr-TR') : '0'}
+                                        <span className="text-[10px] text-rose-600/70 ml-0.5 font-normal">{p.unit}</span>
                                       </div>
                                     ))}
-                                    {hasUnassigned && (
-                                      <div className="py-0.5 text-rose-900 font-black text-[11px]">
-                                        {Number(qSummary.unassignedRemaining ?? 0).toLocaleString('tr-TR')}
-                                        <span className="text-[10px] text-rose-600/70 ml-0.5 font-normal">m²</span>
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : hasUnassigned ? (
-                                  <div className="text-rose-900 font-black">
-                                    {Number(qSummary.unassignedRemaining ?? 0).toLocaleString('tr-TR')}
-                                    <span className="text-[10px] text-rose-600/70 ml-0.5 font-normal">m²</span>
                                   </div>
                                 ) : (
                                   <span className="text-slate-300">-</span>
@@ -2183,17 +2297,22 @@ export default function DailyShipmentStockMatrixReport() {
 
                               {/* Col 6: Factory Stock */}
                               <td className="p-3 align-top text-right font-mono font-bold text-emerald-950 bg-emerald-50/40 border-r border-emerald-100">
-                                {productQuotas.length > 0 ? (
+                                {custProducts.length > 0 ? (
                                   <div className="space-y-2">
-                                    {productQuotas.map((pQ) => {
-                                      const stk = stockMap[pQ.productId] || 0;
-                                      return (
-                                        <div key={pQ.productId} className="py-0.5 text-emerald-900 font-bold">
-                                          {stk ? stk.toLocaleString('tr-TR') : '0'}
-                                          <span className="text-[10px] text-emerald-600/70 ml-0.5 font-normal">{pQ.unit || 'm²'}</span>
-                                        </div>
-                                      );
-                                    })}
+                                    {custProducts.map((p) => (
+                                      <div key={p.productId} className="py-0.5">
+                                        {p.isUnassigned ? (
+                                          <span className="text-slate-400 font-normal italic text-xs">-</span>
+                                        ) : (
+                                          <>
+                                            <span className={p.stock > 0 ? 'text-emerald-900 font-black' : 'text-slate-400 font-medium'}>
+                                              {Number(p.stock).toLocaleString('tr-TR')}
+                                            </span>
+                                            <span className="text-[10px] text-emerald-700/70 ml-0.5 font-normal">{p.unit}</span>
+                                          </>
+                                        )}
+                                      </div>
+                                    ))}
                                   </div>
                                 ) : (
                                   <span className="text-slate-300">-</span>
@@ -2202,40 +2321,41 @@ export default function DailyShipmentStockMatrixReport() {
 
                               {/* Col 7: Net Production Need */}
                               <td className="p-3 align-top text-center border-r border-purple-100 bg-purple-50/30">
-                                {productQuotas.length > 0 ? (
+                                {custProducts.length > 0 ? (
                                   <div className="space-y-2">
-                                    {productQuotas.map((pQ) => {
-                                      const stk = stockMap[pQ.productId] || 0;
-                                      const diff = pQ.remaining - stk;
-                                      if (pQ.remaining <= 0) {
+                                    {custProducts.map((p) => {
+                                      if (p.remaining <= 0) {
                                         return (
-                                          <div key={pQ.productId} className="py-0.5">
-                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
-                                              Kota Doldu
+                                          <div key={p.productId} className="py-0.5">
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                                              ✅ <span className="font-extrabold">{p.shortName}</span>: Kota Doldu
                                             </span>
                                           </div>
                                         );
                                       }
-                                      if (diff > 0) {
+                                      if (p.netNeeded > 0) {
                                         return (
-                                          <div key={pQ.productId} className="py-0.5">
-                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10.5px] font-black bg-rose-100 text-rose-900 border border-rose-300">
-                                              ⚠️ {diff.toLocaleString('tr-TR')} {pQ.unit || 'm²'} Üretilmeli
+                                          <div key={p.productId} className="py-0.5">
+                                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10.5px] font-black bg-rose-100 text-rose-900 border border-rose-300 shadow-xs">
+                                              <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-pulse shrink-0" />
+                                              <span>
+                                                ⚠️ <span className="font-extrabold underline decoration-rose-400">{p.shortName}</span>: {Number(p.netNeeded).toLocaleString('tr-TR')} {p.unit} Üretilmeli
+                                              </span>
                                             </span>
                                           </div>
                                         );
                                       }
                                       return (
-                                        <div key={pQ.productId} className="py-0.5">
-                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10.5px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
-                                            ✅ Stok Yeterli (+{Math.abs(diff).toLocaleString('tr-TR')})
+                                        <div key={p.productId} className="py-0.5">
+                                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-[10.5px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                                            ✅ <span className="font-extrabold">{p.shortName}</span>: Stok Yeterli (+{Number(p.surplus).toLocaleString('tr-TR')} {p.unit})
                                           </span>
                                         </div>
                                       );
                                     })}
                                   </div>
                                 ) : (
-                                  <span className="text-slate-300">-</span>
+                                  <span className="text-slate-400 text-xs italic">Planlama Yok</span>
                                 )}
                               </td>
 
@@ -2254,7 +2374,7 @@ export default function DailyShipmentStockMatrixReport() {
                             {isExpanded && childSites.map((site) => {
                               const sQuota = siteQuotaMap[cust.id]?.[site.id];
                               const sPallet = sitePalletMap[`${cust.id}_${site.id}`] || { tahta: 0, uretimSevkiyat: 0 };
-                              const siteProductQuotas = sQuota?.productQuotas ? Object.values(sQuota.productQuotas) : [];
+                              const siteProducts = getSiteQuotaProducts(site, sQuota);
 
                               return (
                                 <tr key={site.id} className="bg-slate-50/90 hover:bg-slate-100/90 transition-colors border-l-4 border-l-teal-500">
@@ -2265,23 +2385,110 @@ export default function DailyShipmentStockMatrixReport() {
                                     </div>
                                   </td>
                                   <td className="p-2.5 text-xs text-slate-600 border-r border-slate-200">
-                                    {siteProductQuotas.length > 0 ? (
-                                      siteProductQuotas.map((spQ) => spQ.productName).join(', ')
+                                    {siteProducts.length > 0 ? (
+                                      <div className="space-y-1">
+                                        {siteProducts.map((sp) => (
+                                          <div key={sp.productId} className="flex items-center gap-1.5 text-xs font-semibold text-slate-700">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-teal-500 shrink-0" />
+                                            <span>{sp.productName}</span>
+                                          </div>
+                                        ))}
+                                      </div>
                                     ) : (
                                       <span className="text-slate-400 italic">Şantiye Dökümü</span>
                                     )}
                                   </td>
                                   <td className="p-2.5 text-right font-mono text-xs text-slate-700 border-r border-slate-200">
-                                    {sQuota?.totalTarget ? Number(sQuota.totalTarget).toLocaleString('tr-TR') : '-'}
+                                    {siteProducts.length > 0 ? (
+                                      <div className="space-y-1">
+                                        {siteProducts.map((sp) => (
+                                          <div key={sp.productId}>
+                                            {sp.target ? Number(sp.target).toLocaleString('tr-TR') : '-'}
+                                            <span className="text-[10px] text-slate-400 ml-0.5 font-normal">{sp.unit}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <span>{sQuota?.totalTarget ? Number(sQuota.totalTarget).toLocaleString('tr-TR') : '-'}</span>
+                                    )}
                                   </td>
                                   <td className="p-2.5 text-right font-mono text-xs text-blue-800 border-r border-slate-200">
-                                    {sQuota?.totalShipped ? Number(sQuota.totalShipped).toLocaleString('tr-TR') : '-'}
+                                    {siteProducts.length > 0 ? (
+                                      <div className="space-y-1">
+                                        {siteProducts.map((sp) => (
+                                          <div key={sp.productId} className="font-bold">
+                                            {sp.shipped ? Number(sp.shipped).toLocaleString('tr-TR') : '0'}
+                                            <span className="text-[10px] text-slate-400 ml-0.5 font-normal">{sp.unit}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <span className="font-bold">{sQuota?.totalShipped ? Number(sQuota.totalShipped).toLocaleString('tr-TR') : '-'}</span>
+                                    )}
                                   </td>
                                   <td className="p-2.5 text-right font-mono text-xs font-bold text-rose-800 border-r border-slate-200 bg-rose-50/30">
-                                    {sQuota?.totalRemaining ? Number(sQuota.totalRemaining).toLocaleString('tr-TR') : '-'}
+                                    {siteProducts.length > 0 ? (
+                                      <div className="space-y-1">
+                                        {siteProducts.map((sp) => (
+                                          <div key={sp.productId} className="font-black text-rose-900">
+                                            {sp.remaining > 0 ? Number(sp.remaining).toLocaleString('tr-TR') : '0'}
+                                            <span className="text-[10px] text-rose-600/70 ml-0.5 font-normal">{sp.unit}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <span className="font-black text-rose-900">{sQuota?.totalRemaining ? Number(sQuota.totalRemaining).toLocaleString('tr-TR') : '-'}</span>
+                                    )}
                                   </td>
-                                  <td className="p-2.5 text-right font-mono text-xs text-slate-400 border-r border-slate-200">-</td>
-                                  <td className="p-2.5 text-center text-xs text-slate-400 border-r border-slate-200">-</td>
+                                  <td className="p-2.5 text-right font-mono text-xs text-emerald-800 border-r border-slate-200">
+                                    {siteProducts.length > 0 ? (
+                                      <div className="space-y-1">
+                                        {siteProducts.map((sp) => (
+                                          <div key={sp.productId} className="text-emerald-900 font-bold">
+                                            {sp.stock ? Number(sp.stock).toLocaleString('tr-TR') : '0'}
+                                            <span className="text-[10px] text-emerald-600/70 ml-0.5 font-normal">{sp.unit}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <span className="text-slate-400">-</span>
+                                    )}
+                                  </td>
+                                  <td className="p-2.5 text-center text-xs border-r border-slate-200">
+                                    {siteProducts.length > 0 ? (
+                                      <div className="space-y-1">
+                                        {siteProducts.map((sp) => {
+                                          if (sp.remaining <= 0) {
+                                            return (
+                                              <div key={sp.productId}>
+                                                <span className="px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                                  Kota Doldu
+                                                </span>
+                                              </div>
+                                            );
+                                          }
+                                          if (sp.netNeeded > 0) {
+                                            return (
+                                              <div key={sp.productId}>
+                                                <span className="px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-rose-50 text-rose-800 border border-rose-200">
+                                                  ⚠️ {sp.shortName}: {Number(sp.netNeeded).toLocaleString('tr-TR')} {sp.unit} Açık
+                                                </span>
+                                              </div>
+                                            );
+                                          }
+                                          return (
+                                            <div key={sp.productId}>
+                                              <span className="px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                                ✅ {sp.shortName}: Stok Var
+                                              </span>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    ) : (
+                                      <span className="text-slate-400">-</span>
+                                    )}
+                                  </td>
                                   <td className="p-2.5 text-right font-mono text-xs text-amber-800 border-r border-slate-200 bg-amber-50/30">
                                     {sPallet.tahta ? sPallet.tahta.toLocaleString('tr-TR') : '-'}
                                   </td>
