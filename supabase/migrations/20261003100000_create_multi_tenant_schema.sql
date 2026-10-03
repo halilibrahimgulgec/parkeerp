@@ -74,7 +74,7 @@ LANGUAGE sql
 STABLE
 SECURITY DEFINER
 AS $$
-  SELECT COALESCE(is_super_admin, false) FROM public.user_profiles WHERE id = auth.uid();
+  SELECT COALESCE(is_super_admin, false) OR (role = 'admin') FROM public.user_profiles WHERE id = auth.uid();
 $$;
 
 -- 5. MEVCUT TÜM TABLOLARA company_id EKLEME VE ESKİ VERİLERİ BAĞLAMA
@@ -269,30 +269,58 @@ LEFT JOIN returned_counts rtc ON p.company_id = rtc.company_id
 -- 8. ROW LEVEL SECURITY (RLS) POLİTİKALARININ UYGULANMASI
 
 -- A. Companies RLS
+ALTER TABLE public.companies ENABLE ROW LEVEL SECURITY;
+
 DROP POLICY IF EXISTS "Users can view own company" ON public.companies;
-CREATE POLICY "Users can view own company"
-  ON public.companies FOR SELECT TO authenticated
-  USING (id = public.get_user_company_id() OR public.is_super_admin() = true);
-
 DROP POLICY IF EXISTS "Company admins can update own company" ON public.companies;
-CREATE POLICY "Company admins can update own company"
-  ON public.companies FOR UPDATE TO authenticated
-  USING ((id = public.get_user_company_id() AND public.get_user_role() = 'admin') OR public.is_super_admin() = true)
-  WITH CHECK ((id = public.get_user_company_id() AND public.get_user_role() = 'admin') OR public.is_super_admin() = true);
-
 DROP POLICY IF EXISTS "Super admins can manage all companies" ON public.companies;
-CREATE POLICY "Super admins can manage all companies"
-  ON public.companies FOR ALL TO authenticated
-  USING (public.is_super_admin() = true)
-  WITH CHECK (public.is_super_admin() = true);
+DROP POLICY IF EXISTS "allow_all_companies_select" ON public.companies;
+DROP POLICY IF EXISTS "allow_all_companies_insert" ON public.companies;
+DROP POLICY IF EXISTS "allow_all_companies_update" ON public.companies;
+DROP POLICY IF EXISTS "allow_all_companies_delete" ON public.companies;
+
+CREATE POLICY "allow_all_companies_select"
+  ON public.companies FOR SELECT TO authenticated
+  USING (id = public.get_user_company_id() OR public.is_super_admin() = true OR public.get_user_role() = 'admin');
+
+CREATE POLICY "allow_all_companies_insert"
+  ON public.companies FOR INSERT TO authenticated
+  WITH CHECK (public.is_super_admin() = true OR public.get_user_role() = 'admin');
+
+CREATE POLICY "allow_all_companies_update"
+  ON public.companies FOR UPDATE TO authenticated
+  USING (id = public.get_user_company_id() OR public.is_super_admin() = true OR public.get_user_role() = 'admin')
+  WITH CHECK (id = public.get_user_company_id() OR public.is_super_admin() = true OR public.get_user_role() = 'admin');
+
+CREATE POLICY "allow_all_companies_delete"
+  ON public.companies FOR DELETE TO authenticated
+  USING (public.is_super_admin() = true OR public.get_user_role() = 'admin');
 
 -- B. user_profiles RLS
+ALTER TABLE public.user_profiles ENABLE ROW LEVEL SECURITY;
+
 DROP POLICY IF EXISTS "Tenant isolation for user_profiles select" ON public.user_profiles;
+DROP POLICY IF EXISTS "Tenant isolation for user_profiles update" ON public.user_profiles;
+DROP POLICY IF EXISTS "Tenant isolation for user_profiles insert" ON public.user_profiles;
+DROP POLICY IF EXISTS "Tenant isolation for user_profiles delete" ON public.user_profiles;
+
 CREATE POLICY "Tenant isolation for user_profiles select"
   ON public.user_profiles FOR SELECT TO authenticated
-  USING (id = auth.uid() OR company_id = public.get_user_company_id() OR public.is_super_admin() = true);
+  USING (
+    id = auth.uid() 
+    OR company_id = public.get_user_company_id() 
+    OR public.is_super_admin() = true 
+    OR public.get_user_role() = 'admin'
+  );
 
-DROP POLICY IF EXISTS "Tenant isolation for user_profiles update" ON public.user_profiles;
+CREATE POLICY "Tenant isolation for user_profiles insert"
+  ON public.user_profiles FOR INSERT TO authenticated
+  WITH CHECK (
+    id = auth.uid() 
+    OR public.is_super_admin() = true 
+    OR public.get_user_role() = 'admin'
+  );
+
 CREATE POLICY "Tenant isolation for user_profiles update"
   ON public.user_profiles FOR UPDATE TO authenticated
   USING (
@@ -303,6 +331,13 @@ CREATE POLICY "Tenant isolation for user_profiles update"
   WITH CHECK (
     id = auth.uid() 
     OR (company_id = public.get_user_company_id() AND public.get_user_role() = 'admin')
+    OR public.is_super_admin() = true
+  );
+
+CREATE POLICY "Tenant isolation for user_profiles delete"
+  ON public.user_profiles FOR DELETE TO authenticated
+  USING (
+    (company_id = public.get_user_company_id() AND public.get_user_role() = 'admin')
     OR public.is_super_admin() = true
   );
 
