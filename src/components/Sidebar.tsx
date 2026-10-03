@@ -259,11 +259,18 @@ export default function Sidebar({ currentPage, onNavigate, onCloseMobile }: Side
               <p className="text-white text-xs font-semibold truncate">{profile?.full_name || 'Kullanıcı'}</p>
             </div>
           </div>
-          {profile?.role && (
-            <span className={`text-[10px] font-medium px-2 py-0.5 rounded-md ${ROLE_COLORS[profile.role] || ''}`}>
-              {ROLE_LABELS[profile.role] || profile.role}
-            </span>
-          )}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {isSuperAdmin() && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/40">
+                👑 Süper Admin
+              </span>
+            )}
+            {profile?.role && (
+              <span className={`text-[10px] font-medium px-2 py-0.5 rounded-md ${ROLE_COLORS[profile.role] || ''}`}>
+                {ROLE_LABELS[profile.role] || profile.role}
+              </span>
+            )}
+          </div>
         </div>
         <button
           onClick={signOut}

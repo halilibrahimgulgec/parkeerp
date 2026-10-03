@@ -44,12 +44,21 @@ UPDATE public.user_profiles
 SET company_id = (SELECT id FROM public.companies ORDER BY created_at ASC LIMIT 1)
 WHERE company_id IS NULL;
 
--- İlk onaylı admini süper admin yap
+-- Mevcut tüm adminleri süper admin yap
 UPDATE public.user_profiles
 SET is_super_admin = true
-WHERE role = 'admin' AND is_approved = true;
+WHERE role = 'admin';
 
 -- 4. YARDIMCI GÜVENLİK FONKSİYONLARI (RLS Hızlandırma İçin)
+CREATE OR REPLACE FUNCTION public.get_user_role()
+RETURNS text
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+AS $$
+  SELECT role FROM public.user_profiles WHERE id = auth.uid();
+$$;
+
 CREATE OR REPLACE FUNCTION public.get_user_company_id()
 RETURNS uuid
 LANGUAGE sql

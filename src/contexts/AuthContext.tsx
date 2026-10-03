@@ -26,39 +26,71 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 async function fetchProfileFromDb(userId: string, userEmail?: string): Promise<UserProfile | null> {
-  const { data } = await supabase
-    .from('user_profiles')
-    .select('*, companies(*)')
-    .eq('id', userId)
-    .maybeSingle();
-
-  if (!data) {
-    const { data: defaultComp } = await supabase
-      .from('companies')
-      .select('id')
-      .order('created_at', { ascending: true })
-      .limit(1)
-      .maybeSingle();
-
-    const { data: newProfile } = await supabase
+  try {
+    // 1. Önce user_profiles kaydını doğrudan çek (en güvenilir yol)
+    const { data: profileData, error: profileError } = await supabase
       .from('user_profiles')
-      .insert({
-        id: userId,
-        full_name: userEmail?.split('@')[0] || 'Kullanıcı',
-        role: 'field_manager',
-        company_id: defaultComp?.id || null,
-        is_approved: false,
-      })
-      .select('*, companies(*)')
+      .select('*')
+      .eq('id', userId)
       .maybeSingle();
 
-    if (!newProfile) return null;
-    const comp = Array.isArray(newProfile.companies) ? newProfile.companies[0] : newProfile.companies;
-    return { ...newProfile, company: comp };
-  }
+    if (profileError) {
+      console.warn('user_profiles sorgulama uyarısı:', profileError.message);
+    }
 
-  const comp = Array.isArray(data.companies) ? data.companies[0] : data.companies;
-  return { ...data, company: comp };
+    if (!profileData) {
+      // Profil henüz hiç yoksa oluştur
+      let defaultCompanyId: string | null = null;
+      try {
+        const { data: defaultComp } = await supabase
+          .from('companies')
+          .select('id')
+          .order('created_at', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        defaultCompanyId = defaultComp?.id || null;
+      } catch {
+        // companies henüz oluşturulmamış olabilir
+      }
+
+      const { data: newProfile } = await supabase
+        .from('user_profiles')
+        .insert({
+          id: userId,
+          full_name: userEmail?.split('@')[0] || 'Kullanıcı',
+          role: 'field_manager',
+          company_id: defaultCompanyId,
+          is_approved: false,
+        })
+        .select('*')
+        .maybeSingle();
+
+      return newProfile ? { ...newProfile, company: null } : null;
+    }
+
+    // 2. Eğer kullanıcının company_id'si varsa companies tablosundan şirket detayını çek
+    let companyData: Company | null = null;
+    if (profileData.company_id) {
+      try {
+        const { data: comp } = await supabase
+          .from('companies')
+          .select('*')
+          .eq('id', profileData.company_id)
+          .maybeSingle();
+        companyData = comp || null;
+      } catch {
+        // companies tablosu henüz yoksa hata fırlatıp girişi engelleme
+      }
+    }
+
+    return {
+      ...profileData,
+      company: companyData,
+    };
+  } catch (err) {
+    console.error('fetchProfileFromDb beklenmeyen hata:', err);
+    return null;
+  }
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -184,7 +216,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const isAdmin = () => profile?.role === 'admin' || profile?.is_super_admin === true;
   const isFieldManager = () => profile?.role === 'field_manager' || profile?.role === 'admin' || profile?.is_super_admin === true;
   const isWeighbridge = () => profile?.role === 'weighbridge' || profile?.role === 'admin' || profile?.is_super_admin === true;
-  const isSuperAdmin = () => profile?.is_super_admin === true;
+  const isSuperAdmin = () => profile?.is_super_admin === true || (profile?.role === 'admin' && !profile?.company_id);
 
   return (
     <AuthContext.Provider value={{
