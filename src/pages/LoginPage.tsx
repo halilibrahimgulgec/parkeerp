@@ -5,7 +5,7 @@ import { Factory, LogIn, UserPlus, Eye, EyeOff, Mail, ArrowLeft, CheckCircle, Cl
 type Mode = 'login' | 'register' | 'forgot';
 
 export default function LoginPage() {
-  const { signIn, signUp, sendPasswordResetEmail, pendingApproval } = useAuth();
+  const { signIn, signUp, sendPasswordResetEmail, pendingApproval, companySuspended } = useAuth();
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -27,11 +27,42 @@ export default function LoginPage() {
     setError(''); setSuccess(''); setLoading(true);
     try {
       const { error } = await signIn(email, password);
-      if (error) setError('E-posta veya şifre hatalı.');
+      if (error) setError(error.message || 'E-posta veya şifre hatalı.');
     } finally {
       setLoading(false);
     }
   };
+
+  if (companySuspended) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          <div className="text-center mb-8">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-rose-500 rounded-2xl mb-4 shadow-lg">
+              <Factory size={32} className="text-white" />
+            </div>
+            <h1 className="text-3xl font-bold text-white">Parke ERP</h1>
+          </div>
+          <div className="bg-white rounded-2xl shadow-2xl p-8 text-center">
+            <div className="w-16 h-16 bg-rose-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Clock size={32} className="text-rose-600" />
+            </div>
+            <h2 className="text-xl font-bold text-slate-800 mb-2">Firma Erişimi Askıda</h2>
+            <p className="text-slate-500 text-sm leading-relaxed mb-6">
+              Firmanızın erişim süresi dolmuş veya hesabı dondurulmuştur.
+              Lütfen şirket yetkiliniz veya sistem yöneticisi ile iletişime geçin.
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="w-full bg-slate-800 hover:bg-slate-900 text-white font-semibold py-3 rounded-xl transition-colors"
+            >
+              Tekrar Dene
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (pendingApproval) {
     return (

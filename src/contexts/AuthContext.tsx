@@ -1,22 +1,25 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import { UserProfile } from '../types';
+import { UserProfile, Company } from '../types';
 
 interface AuthContextType {
   user: User | null;
   session: Session | null;
   profile: UserProfile | null;
+  company: Company | null;
   loading: boolean;
   pendingApproval: boolean;
+  companySuspended: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signUp: (email: string, password: string, fullName: string, role: string) => Promise<{ error: Error | null }>;
+  signUp: (email: string, password: string, fullName: string, role: string, companyId?: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   sendPasswordResetEmail: (email: string) => Promise<{ error: Error | null }>;
   updatePassword: (newPassword: string) => Promise<{ error: Error | null }>;
   isAdmin: () => boolean;
   isFieldManager: () => boolean;
   isWeighbridge: () => boolean;
+  isSuperAdmin: () => boolean;
   refreshProfile: () => Promise<void>;
 }
 
@@ -25,24 +28,37 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 async function fetchProfileFromDb(userId: string, userEmail?: string): Promise<UserProfile | null> {
   const { data } = await supabase
     .from('user_profiles')
-    .select('*')
+    .select('*, companies(*)')
     .eq('id', userId)
     .maybeSingle();
 
   if (!data) {
+    const { data: defaultComp } = await supabase
+      .from('companies')
+      .select('id')
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
     const { data: newProfile } = await supabase
       .from('user_profiles')
       .insert({
         id: userId,
         full_name: userEmail?.split('@')[0] || 'Kullanıcı',
         role: 'field_manager',
+        company_id: defaultComp?.id || null,
         is_approved: false,
       })
-      .select()
+      .select('*, companies(*)')
       .maybeSingle();
-    return newProfile;
+
+    if (!newProfile) return null;
+    const comp = Array.isArray(newProfile.companies) ? newProfile.companies[0] : newProfile.companies;
+    return { ...newProfile, company: comp };
   }
-  return data;
+
+  const comp = Array.isArray(data.companies) ? data.companies[0] : data.companies;
+  return { ...data, company: comp };
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -51,6 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [pendingApproval, setPendingApproval] = useState(false);
+  const [companySuspended, setCompanySuspended] = useState(false);
 
   useEffect(() => {
     // Initial session check — only restore existing approved sessions
@@ -59,6 +76,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const p = await fetchProfileFromDb(session.user.id, session.user.email);
         if (p && p.is_approved === false) {
           await supabase.auth.signOut();
+        } else if (p && p.company && p.company.is_active === false && !p.is_super_admin) {
+          await supabase.auth.signOut();
+          setCompanySuspended(true);
         } else {
           setSession(session);
           setUser(session.user);
@@ -89,17 +109,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = async (email: string, password: string) => {
     setPendingApproval(false);
+    setCompanySuspended(false);
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { error: error as Error };
 
     if (data.user) {
       const p = await fetchProfileFromDb(data.user.id, data.user.email);
-      // p is null means RLS blocked the read — treat as approved and let them in
       // Only block if profile explicitly has is_approved = false
       if (p && p.is_approved === false) {
         await supabase.auth.signOut();
         setPendingApproval(true);
         return { error: null };
+      }
+      if (p && p.company && p.company.is_active === false && !p.is_super_admin) {
+        await supabase.auth.signOut();
+        setCompanySuspended(true);
+        return { error: new Error('Firma hesabınız askıya alınmıştır. Lütfen sistem yöneticisi ile iletişime geçin.') };
       }
       setSession(data.session);
       setUser(data.user);
@@ -108,14 +133,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error: null };
   };
 
-  const signUp = async (email: string, password: string, fullName: string, role: string) => {
+  const signUp = async (email: string, password: string, fullName: string, role: string, companyId?: string) => {
     const { data, error } = await supabase.auth.signUp({ email, password });
     if (error) return { error: error as Error };
     if (data.user) {
+      let targetCompanyId = companyId;
+      if (!targetCompanyId) {
+        const { data: defaultComp } = await supabase
+          .from('companies')
+          .select('id')
+          .order('created_at', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        targetCompanyId = defaultComp?.id;
+      }
+
       await supabase.from('user_profiles').upsert({
         id: data.user.id,
         full_name: fullName,
         role,
+        company_id: targetCompanyId || null,
         is_approved: false,
       });
       // Sign out immediately after registration — needs admin approval
@@ -126,6 +163,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     setPendingApproval(false);
+    setCompanySuspended(false);
     setUser(null);
     setSession(null);
     setProfile(null);
@@ -143,15 +181,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error: error as Error | null };
   };
 
-  const isAdmin = () => profile?.role === 'admin';
-  const isFieldManager = () => profile?.role === 'field_manager' || profile?.role === 'admin';
-  const isWeighbridge = () => profile?.role === 'weighbridge' || profile?.role === 'admin';
+  const isAdmin = () => profile?.role === 'admin' || profile?.is_super_admin === true;
+  const isFieldManager = () => profile?.role === 'field_manager' || profile?.role === 'admin' || profile?.is_super_admin === true;
+  const isWeighbridge = () => profile?.role === 'weighbridge' || profile?.role === 'admin' || profile?.is_super_admin === true;
+  const isSuperAdmin = () => profile?.is_super_admin === true;
 
   return (
     <AuthContext.Provider value={{
-      user, session, profile, loading, pendingApproval,
+      user, session, profile, company: profile?.company || null, loading, pendingApproval, companySuspended,
       signIn, signUp, signOut, sendPasswordResetEmail, updatePassword,
-      isAdmin, isFieldManager, isWeighbridge, refreshProfile,
+      isAdmin, isFieldManager, isWeighbridge, isSuperAdmin, refreshProfile,
     }}>
       {children}
     </AuthContext.Provider>

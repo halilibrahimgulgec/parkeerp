@@ -16,8 +16,9 @@ import LaborTracking from './pages/LaborTracking';
 import CustomerQuotas from './pages/CustomerQuotas';
 import Purchases from './pages/Purchases';
 import ProductionPlanning from './pages/ProductionPlanning';
+import SuperAdminCompanies from './pages/SuperAdminCompanies';
 
-type Page = 'dashboard' | 'production' | 'production_planning' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking';
+type Page = 'dashboard' | 'production' | 'production_planning' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking' | 'super_admin_companies';
 
 function AppContent() {
   const { user, loading, pendingApproval } = useAuth();
@@ -70,6 +71,7 @@ function AppContent() {
     admin_users: <AdminUsers />,
     pallet_tracking: <PalletTracking />,
     labor_tracking: <LaborTracking />,
+    super_admin_companies: <SuperAdminCompanies />,
   };
 
   return (

@@ -3,10 +3,10 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   LayoutDashboard, Factory, Truck, DollarSign, Package,
   BarChart3, LogOut, ChevronRight, ShieldCheck, Users, Boxes,
-  UserCheck, Target, ShoppingBag, Sparkles, X, Search
+  UserCheck, Target, ShoppingBag, Sparkles, X, Search, Building2
 } from 'lucide-react';
 
-type Page = 'dashboard' | 'production' | 'production_planning' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking';
+type Page = 'dashboard' | 'production' | 'production_planning' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking' | 'super_admin_companies';
 
 interface SidebarProps {
   currentPage: Page;
@@ -41,11 +41,24 @@ interface NavGroup {
 }
 
 export default function Sidebar({ currentPage, onNavigate, onCloseMobile }: SidebarProps) {
-  const { profile, signOut, isAdmin, isFieldManager, isWeighbridge } = useAuth();
+  const { profile, signOut, isAdmin, isFieldManager, isWeighbridge, isSuperAdmin } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
 
-  // 4 Temel Mantıksal Operasyonel Grup
+  // 4 Temel Mantıksal Operasyonel Grup + Süper Admin Grubu
   const navGroups: NavGroup[] = [
+    ...(isSuperAdmin() ? [{
+      title: '👑 SAAS & ÇOKLU FİRMA YÖNETİMİ',
+      items: [
+        {
+          id: 'super_admin_companies' as Page,
+          label: 'Firma & Kiracı Yönetimi',
+          icon: Building2,
+          access: true,
+          badge: 'SaaS',
+          badgeColor: 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40',
+        },
+      ],
+    }] : []),
     {
       title: '📊 KOKPİT & MASTER RAPORLAR',
       items: [
@@ -111,24 +124,37 @@ export default function Sidebar({ currentPage, onNavigate, onCloseMobile }: Side
   return (
     <aside className="w-full h-full flex flex-col bg-slate-900 text-white overflow-hidden select-none border-r border-slate-800">
       {/* Header */}
-      <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-amber-500 rounded-xl flex items-center justify-center shadow-md shadow-amber-500/20">
-            <Factory size={20} className="text-white" />
+      <div className="p-4 sm:p-5 border-b border-slate-800 flex flex-col gap-3 shrink-0">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 bg-amber-500 rounded-xl flex items-center justify-center shadow-md shadow-amber-500/20">
+              <Factory size={20} className="text-white" />
+            </div>
+            <div>
+              <h1 className="font-bold text-base sm:text-lg leading-tight text-white tracking-tight">Parke ERP</h1>
+              <p className="text-slate-400 text-[11px]">Fabrika Yönetim Sistemi</p>
+            </div>
           </div>
-          <div>
-            <h1 className="font-bold text-base sm:text-lg leading-tight text-white tracking-tight">Parke ERP</h1>
-            <p className="text-slate-400 text-[11px]">Fabrika Yönetim Sistemi</p>
-          </div>
+          {onCloseMobile && (
+            <button
+              onClick={onCloseMobile}
+              className="md:hidden p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+              aria-label="Menüyü Kapat"
+            >
+              <X size={20} />
+            </button>
+          )}
         </div>
-        {onCloseMobile && (
-          <button
-            onClick={onCloseMobile}
-            className="md:hidden p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
-            aria-label="Menüyü Kapat"
-          >
-            <X size={20} />
-          </button>
+
+        {/* Aktif Firma Göstergesi */}
+        {profile?.company?.name && (
+          <div className="px-3 py-1.5 rounded-xl bg-slate-800/90 border border-slate-700/60 flex items-center gap-2">
+            <Building2 size={13} className="text-amber-400 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Aktif Firma</div>
+              <div className="text-xs font-black text-amber-300 truncate">{profile.company.name}</div>
+            </div>
+          </div>
         )}
       </div>
 

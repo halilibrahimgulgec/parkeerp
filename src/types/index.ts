@@ -1,9 +1,28 @@
 export type UserRole = 'admin' | 'field_manager' | 'weighbridge';
 
+export interface Company {
+  id: string;
+  name: string;
+  slug: string;
+  tax_number?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  logo_url?: string | null;
+  is_active: boolean;
+  subscription_plan: 'starter' | 'pro' | 'enterprise';
+  valid_until?: string | null;
+  created_at: string;
+  updated_at?: string;
+}
+
 export interface UserProfile {
   id: string;
   full_name: string;
   role: UserRole;
+  company_id?: string | null;
+  company?: Company | null;
+  is_super_admin?: boolean;
   is_approved: boolean;
   approved_at: string | null;
   approved_by: string | null;
