@@ -1,5 +1,7 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
+import { Company, Product } from '../types';
 import {
   BarChart3,
   TrendingUp,
@@ -18,6 +20,10 @@ import {
   Clock,
   Layers,
   FileSpreadsheet,
+  Building2,
+  Target,
+  Boxes,
+  Factory,
 } from 'lucide-react';
 import DailyShipmentStockMatrixReport from '../components/DailyShipmentStockMatrixReport';
 import { calculateAllQuotas, calculateFactoryOpenOrders, CalculatedQuotaItem } from '../utils/quotaCalculator';
@@ -242,6 +248,48 @@ function DonutChart({ slices }: { slices: { value: number; color: string; label:
 }
 
 export default function Reports() {
+  const { profile, isSuperAdmin } = useAuth();
+
+  // Multi-Tenant Isolation & Super Admin Company Switching
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>(() => {
+    return localStorage.getItem('parke_matrix_selected_company') || '';
+  });
+
+  useEffect(() => {
+    if (isSuperAdmin()) {
+      supabase
+        .from('companies')
+        .select('*')
+        .eq('is_active', true)
+        .order('created_at', { ascending: true })
+        .then(({ data }) => {
+          if (data && data.length > 0) {
+            setCompanies(data);
+            if (!selectedCompanyId) {
+              const defaultId = profile?.company_id || data[0].id;
+              setSelectedCompanyId(defaultId);
+            }
+          }
+        });
+    }
+  }, [profile?.is_super_admin, profile?.company_id]);
+
+  const targetCompanyId = useMemo(() => {
+    if (isSuperAdmin()) {
+      return selectedCompanyId || profile?.company_id || (companies[0]?.id ?? null);
+    }
+    return profile?.company_id || null;
+  }, [isSuperAdmin, selectedCompanyId, profile?.company_id, companies]);
+
+  const activeCompanyName = useMemo(() => {
+    if (isSuperAdmin() && companies.length > 0) {
+      const found = companies.find((c) => c.id === targetCompanyId);
+      if (found) return found.name;
+    }
+    return profile?.company?.name || 'Parke ERP';
+  }, [isSuperAdmin, companies, targetCompanyId, profile?.company?.name]);
+
   const [activeReportTab, setActiveReportTab] = useState<'factory' | 'matrix'>('factory');
   const [periodPreset, setPeriodPreset] = useState<'today' | 'week' | 'month' | 'custom_month'>('month');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -300,6 +348,7 @@ export default function Reports() {
 
   useEffect(() => {
     const load = async () => {
+      if (!targetCompanyId) return;
       setLoading(true);
 
       const startDate = activeDateRange.start;
@@ -311,38 +360,63 @@ export default function Reports() {
       const costMonth = endDateObj.getMonth() + 1;
 
       try {
-        const [prodMonthRes, shipMonthRes, stocksRes, costsRes, shipmentsRes, quotasRes, allShipmentItemsRes] = await Promise.all([
-          supabase
-            .from('production_entries')
-            .select('product_id, net_m2, total_pallets, date, products(unit)')
-            .gte('date', startDate)
-            .lte('date', endDate),
-          supabase
-            .from('shipment_items')
-            .select('product_id, m2, unit, products(unit), shipments!inner(id, customer_id, site_id, shipment_date, status)')
-            .eq('shipments.status', 'completed')
-            .gte('shipments.shipment_date', startDate)
-            .lte('shipments.shipment_date', endDate),
-          supabase.from('v_product_stock').select('*'),
-          supabase
-            .from('cost_entries')
-            .select('cost_type, total_amount')
-            .eq('period_month', costMonth)
-            .eq('period_year', costYear),
-          supabase
-            .from('shipments')
-            .select('*, customers(name), sites(name), shipment_items(*, products(*))')
-            .gte('shipment_date', startDate)
-            .lte('shipment_date', endDate)
-            .eq('status', 'completed'),
-          supabase
-            .from('customer_quotas')
-            .select('*, customers(name), sites(name), products(name, unit)')
-            .eq('is_active', true),
-          supabase
-            .from('shipment_items')
-            .select('id, product_id, m2, unit, shipments!inner(id, customer_id, site_id, shipment_date, status)')
-            .eq('shipments.status', 'completed'),
+        let prodMonthQuery = supabase
+          .from('production_entries')
+          .select('product_id, net_m2, total_pallets, date, products(unit)')
+          .gte('date', startDate)
+          .lte('date', endDate);
+        let shipMonthQuery = supabase
+          .from('shipment_items')
+          .select('product_id, m2, unit, products(unit), shipments!inner(id, customer_id, site_id, shipment_date, status)')
+          .eq('shipments.status', 'completed')
+          .gte('shipments.shipment_date', startDate)
+          .lte('shipments.shipment_date', endDate);
+        let stocksQuery = supabase.from('v_product_stock').select('*');
+        let costsQuery = supabase
+          .from('cost_entries')
+          .select('cost_type, total_amount')
+          .eq('period_month', costMonth)
+          .eq('period_year', costYear);
+        let shipmentsQuery = supabase
+          .from('shipments')
+          .select('*, customers(name), sites(name), shipment_items(*, products(*))')
+          .gte('shipment_date', startDate)
+          .lte('shipment_date', endDate)
+          .eq('status', 'completed');
+        let quotasQuery = supabase
+          .from('customer_quotas')
+          .select('*, customers(name), sites(name), products(name, unit, thickness, color)')
+          .eq('is_active', true);
+        let allShipmentItemsQuery = supabase
+          .from('shipment_items')
+          .select('id, product_id, m2, unit, shipments!inner(id, customer_id, site_id, shipment_date, status)')
+          .eq('shipments.status', 'completed')
+          .limit(50000);
+        let productsQuery = supabase
+          .from('products')
+          .select('*')
+          .eq('is_active', true);
+
+        if (targetCompanyId) {
+          prodMonthQuery = prodMonthQuery.eq('company_id', targetCompanyId);
+          shipMonthQuery = shipMonthQuery.eq('company_id', targetCompanyId);
+          stocksQuery = stocksQuery.eq('company_id', targetCompanyId);
+          costsQuery = costsQuery.eq('company_id', targetCompanyId);
+          shipmentsQuery = shipmentsQuery.eq('company_id', targetCompanyId);
+          quotasQuery = quotasQuery.eq('company_id', targetCompanyId);
+          allShipmentItemsQuery = allShipmentItemsQuery.eq('company_id', targetCompanyId);
+          productsQuery = productsQuery.eq('company_id', targetCompanyId);
+        }
+
+        const [prodMonthRes, shipMonthRes, stocksRes, costsRes, shipmentsRes, quotasRes, allShipmentItemsRes, productsRes] = await Promise.all([
+          prodMonthQuery,
+          shipMonthQuery,
+          stocksQuery,
+          costsQuery,
+          shipmentsQuery,
+          quotasQuery,
+          allShipmentItemsQuery,
+          productsQuery,
         ]);
 
         // 1. Production Metrics
@@ -499,7 +573,8 @@ export default function Reports() {
         // 7. Customer Quotas & Open Balance Calculations (Standart quotaCalculator Motoru)
         const activeQuotas = quotasRes.data || [];
         const allItems = allShipmentItemsRes.data || [];
-        const quotaList = calculateAllQuotas(activeQuotas, allItems);
+        const productList = productsRes.data || [];
+        const quotaList = calculateAllQuotas(activeQuotas, allItems, productList);
         setQuotas(quotaList);
       } catch (err) {
         console.error('Rapor yükleme hatası:', err);
@@ -508,7 +583,7 @@ export default function Reports() {
       }
     };
     load();
-  }, [activeDateRange]);
+  }, [activeDateRange, targetCompanyId]);
 
   const displayedDailyShipments = shipmentDaysRange === 0 ? dailyShipments : dailyShipments.slice(-shipmentDaysRange);
 
@@ -540,6 +615,56 @@ export default function Reports() {
   const totalQuotaTargetM2 = factoryOpenOrders.totalTargetM2;
   const totalQuotaShippedM2 = factoryOpenOrders.totalShippedM2;
   const uniqueQuotaCustomersCount = factoryOpenOrders.activeCustomerCount;
+
+  // Stock vs Quota Analysis (Depo Stoğu Düşülmüş Net Üretim Açığı İhtiyacı)
+  const quotaStockAnalysis = useMemo(() => {
+    // 1. Ürün bazında açık sipariş ihtiyaçları
+    const productDemands: Record<string, { name: string; unit: string; demand: number; stock: number }> = {};
+    let unassignedDemand = 0;
+
+    quotas.forEach((q) => {
+      if (q.remaining_quantity <= 0) return;
+      if (q.product_id) {
+        if (!productDemands[q.product_id]) {
+          const matchingStock = stocks.find((s) => s.product_id === q.product_id);
+          productDemands[q.product_id] = {
+            name: q.product_name || matchingStock?.product_name || 'Tanımlı Ürün',
+            unit: q.unit || matchingStock?.unit || 'm²',
+            demand: 0,
+            stock: matchingStock?.current_stock || 0,
+          };
+        }
+        productDemands[q.product_id].demand += q.remaining_quantity;
+      } else {
+        unassignedDemand += q.remaining_quantity;
+      }
+    });
+
+    let totalNetDeficitM2 = 0;
+    let totalCoveredByStockM2 = 0;
+
+    Object.values(productDemands).forEach((pd) => {
+      const netDeficit = Math.max(0, pd.demand - pd.stock);
+      const covered = Math.min(pd.demand, pd.stock);
+      totalNetDeficitM2 += netDeficit;
+      totalCoveredByStockM2 += covered;
+    });
+
+    // Genel açık sipariş varsa mevcut fazla stoktan düşüm yapılır
+    const surplusStock = Math.max(0, totalStockM2 - totalCoveredByStockM2);
+    const unassignedNetNeed = Math.max(0, unassignedDemand - surplusStock);
+    const overallNetProductionNeed = totalNetDeficitM2 + unassignedNetNeed;
+
+    const isFullyCoveredByStock = totalOpenQuotaRemainingM2 > 0 && overallNetProductionNeed === 0;
+
+    return {
+      productDemands,
+      unassignedDemand,
+      totalNetDeficitM2: overallNetProductionNeed,
+      totalCoveredByStockM2,
+      isFullyCoveredByStock,
+    };
+  }, [quotas, stocks, totalOpenQuotaRemainingM2, totalStockM2]);
 
   // Filtered Quotas for Modal
   const filteredQuotas = useMemo(() => {
@@ -589,6 +714,8 @@ export default function Reports() {
               <th class="text-right">Hedef Kota</th>
               <th class="text-right">Sevk Edilen</th>
               <th class="text-right">Kalan Açık Bakiye</th>
+              <th class="text-right">Hazır Depo Stoğu</th>
+              <th class="text-right">Net Üretim İhtiyacı</th>
               <th class="text-center">Birim</th>
               <th class="text-center">Tamamlanma %</th>
               <th class="text-center">Durum</th>
@@ -599,6 +726,11 @@ export default function Reports() {
 
     filteredQuotas.forEach((q) => {
       const statusText = q.status === 'completed' ? 'Tamamlandı' : q.status === 'in_progress' ? 'Sevk Ediliyor' : 'Başlamadı';
+      const matchingStock = q.product_id ? stocks.find((s) => s.product_id === q.product_id)?.current_stock ?? 0 : null;
+      const netNeed = matchingStock !== null ? Math.max(0, q.remaining_quantity - matchingStock) : (q.remaining_quantity > 0 ? q.remaining_quantity : 0);
+      const stockText = matchingStock !== null ? matchingStock.toLocaleString('tr-TR') : '-';
+      const netNeedText = q.remaining_quantity <= 0 ? '0' : netNeed.toLocaleString('tr-TR');
+
       tableHtml += `
         <tr>
           <td>${q.customer_name}</td>
@@ -607,6 +739,8 @@ export default function Reports() {
           <td class="text-right font-bold">${q.target_quantity.toLocaleString('tr-TR')}</td>
           <td class="text-right">${q.shipped_quantity.toLocaleString('tr-TR')}</td>
           <td class="text-right font-bold" style="color: ${q.remaining_quantity > 0 ? '#b91c1c' : '#15803d'}">${q.remaining_quantity.toLocaleString('tr-TR')}</td>
+          <td class="text-right">${stockText}</td>
+          <td class="text-right font-bold" style="color: ${netNeed > 0 ? '#b91c1c' : '#15803d'}">${netNeedText}</td>
           <td class="text-center">${q.unit}</td>
           <td class="text-center font-bold">%${q.completion_pct}</td>
           <td class="text-center">${statusText}</td>
@@ -622,6 +756,8 @@ export default function Reports() {
               <td class="text-right">${totalQuotaTargetM2.toLocaleString('tr-TR')}</td>
               <td class="text-right">${totalQuotaShippedM2.toLocaleString('tr-TR')}</td>
               <td class="text-right">${totalOpenQuotaRemainingM2.toLocaleString('tr-TR')}</td>
+              <td class="text-right">${totalStockM2.toLocaleString('tr-TR')}</td>
+              <td class="text-right">${quotaStockAnalysis.totalNetDeficitM2.toLocaleString('tr-TR')}</td>
               <td class="text-center">m²</td>
               <td class="text-center">%${totalQuotaTargetM2 > 0 ? Math.round((totalQuotaShippedM2 / totalQuotaTargetM2) * 100) : 100}</td>
               <td></td>
@@ -648,13 +784,42 @@ export default function Reports() {
       {/* ── TOP HEADER ── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2 no-print">
         <div>
-          <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2">
-            <BarChart3 size={26} className="text-blue-600" /> Raporlama & Fabrika Analizleri
-          </h1>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2">
+              <BarChart3 size={26} className="text-blue-600" /> Raporlama & Fabrika Analizleri
+            </h1>
+            <span className="px-2.5 py-0.5 text-xs font-bold bg-slate-100 text-slate-700 rounded-full border border-slate-200 flex items-center gap-1.5 shadow-2xs">
+              <Building2 size={13} className="text-slate-500" />
+              {activeCompanyName}
+            </span>
+          </div>
           <p className="text-slate-500 text-sm mt-0.5">
             2 Büyük Master Rapor: Yönetici İcmali ve Müşteri-Şantiye Sevk Matrisi
           </p>
         </div>
+
+        {/* Super Admin Firma Değiştirme Seçici */}
+        {isSuperAdmin() && companies.length > 0 && (
+          <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-300 rounded-xl px-2.5 py-1.5 shadow-2xs">
+            <Building2 size={15} className="text-amber-700 shrink-0" />
+            <span className="text-[11px] font-bold text-amber-900 shrink-0">Firma:</span>
+            <select
+              value={targetCompanyId || ''}
+              onChange={(e) => {
+                const newId = e.target.value;
+                setSelectedCompanyId(newId);
+                localStorage.setItem('parke_matrix_selected_company', newId);
+              }}
+              className="text-xs font-bold text-slate-800 bg-white border border-amber-200 rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer"
+            >
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* ── TOP 2 MASTER REPORT TABS ── */}
@@ -937,32 +1102,51 @@ export default function Reports() {
               </div>
             </div>
 
-            {/* KPI 4: Açık Sipariş Bakiyesi */}
+            {/* KPI 4: Açık Sipariş Bakiyesi & Net Üretim İhtiyacı */}
             <div className="bg-gradient-to-br from-indigo-900 via-indigo-800 to-slate-900 rounded-2xl p-5 shadow-md text-white flex flex-col justify-between relative overflow-hidden">
               <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl -mr-10 -mt-10 pointer-events-none" />
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <div className="w-10 h-10 bg-white/10 backdrop-blur-xs text-indigo-200 rounded-xl flex items-center justify-center font-bold">
-                    <Table size={20} />
+                    <Factory size={20} />
                   </div>
-                  <span className="text-[11px] font-bold text-indigo-200 bg-white/10 px-2 py-0.5 rounded-full border border-white/15">
-                    {uniqueQuotaCustomersCount} Kotalı Müşteri
-                  </span>
+                  <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                    <span className="text-[11px] font-bold text-indigo-200 bg-white/10 px-2 py-0.5 rounded-full border border-white/15">
+                      {uniqueQuotaCustomersCount} Kotalı Müşteri
+                    </span>
+                    {quotaStockAnalysis.isFullyCoveredByStock ? (
+                      <span className="text-[10px] font-bold text-emerald-300 bg-emerald-500/25 px-2 py-0.5 rounded-full border border-emerald-400/40 flex items-center gap-1 shadow-2xs">
+                        <CheckCircle2 size={11} /> Stok Karşılıyor
+                      </span>
+                    ) : quotaStockAnalysis.totalNetDeficitM2 > 0 ? (
+                      <span className="text-[10px] font-bold text-amber-300 bg-amber-500/25 px-2 py-0.5 rounded-full border border-amber-400/40 flex items-center gap-1 shadow-2xs">
+                        <AlertTriangle size={11} /> Üretim Gerekli
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
-                <p className="text-2xl font-black text-white tracking-tight">
-                  {totalOpenQuotaRemainingM2.toLocaleString('tr-TR', { maximumFractionDigits: 0 })}{' '}
-                  <span className="text-base font-semibold text-indigo-200">m²</span>
+                <div className="flex items-baseline gap-2">
+                  <p className="text-2xl font-black text-white tracking-tight">
+                    {quotaStockAnalysis.totalNetDeficitM2.toLocaleString('tr-TR', { maximumFractionDigits: 0 })}{' '}
+                    <span className="text-base font-semibold text-indigo-200">m²</span>
+                  </p>
+                </div>
+                <p className="text-xs text-indigo-200 mt-0.5 font-medium flex items-center gap-1">
+                  <span>Net Üretim Açığı</span>
+                  <span className="text-[10px] text-indigo-300/80">(Hazır Depo Stoğu Düşülmüş)</span>
                 </p>
-                <p className="text-xs text-indigo-200 mt-0.5">Kalan Açık Sipariş / Taahhüt</p>
               </div>
-              <div className="mt-4 pt-3 border-t border-white/15 flex items-center justify-between">
-                <div className="text-[11px] text-indigo-200">
-                  Toplam: <span className="font-bold text-white">{totalQuotaTargetM2.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} m²</span>
+
+              <div className="mt-4 pt-3 border-t border-white/15 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="text-[11px] text-indigo-200 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                  <span>Brüt Sipariş: <strong className="text-white">{totalOpenQuotaRemainingM2.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} m²</strong></span>
+                  <span>•</span>
+                  <span>Hazır Stok: <strong className="text-emerald-300">{totalStockM2.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} m²</strong></span>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsQuotaModalOpen(true)}
-                  className="px-2.5 py-1 bg-white text-indigo-900 hover:bg-indigo-50 font-bold text-xs rounded-lg transition-all shadow-xs cursor-pointer flex items-center gap-1"
+                  className="px-2.5 py-1 bg-white text-indigo-900 hover:bg-indigo-50 font-bold text-xs rounded-lg transition-all shadow-xs cursor-pointer flex items-center justify-center gap-1 self-start sm:self-auto"
                 >
                   <span>🔍 Dökümü Gör</span>
                 </button>
@@ -1344,7 +1528,7 @@ export default function Reports() {
             </div>
 
             {/* Modal Summary Pills */}
-            <div className="p-4 bg-indigo-50/40 border-b border-indigo-100/60 grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+            <div className="p-4 bg-indigo-50/40 border-b border-indigo-100/60 grid grid-cols-2 sm:grid-cols-5 gap-3 text-center">
               <div className="bg-white p-3 rounded-xl border border-indigo-100 shadow-2xs">
                 <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Toplam Kota</div>
                 <div className="text-lg font-black text-slate-900 mt-0.5">
@@ -1358,15 +1542,21 @@ export default function Reports() {
                 </div>
               </div>
               <div className="bg-white p-3 rounded-xl border border-indigo-100 shadow-2xs">
-                <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Kalan Açık Bakiye</div>
+                <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Brüt Açık Bakiye</div>
                 <div className="text-lg font-black text-amber-700 mt-0.5">
                   {totalOpenQuotaRemainingM2.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} <span className="text-xs font-semibold">m²</span>
                 </div>
               </div>
               <div className="bg-white p-3 rounded-xl border border-indigo-100 shadow-2xs">
-                <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Genel Tamamlanma</div>
+                <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Hazır Depo Stoğu</div>
                 <div className="text-lg font-black text-emerald-700 mt-0.5">
-                  %{totalQuotaTargetM2 > 0 ? Math.round((totalQuotaShippedM2 / totalQuotaTargetM2) * 100) : 100}
+                  {totalStockM2.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} <span className="text-xs font-semibold">m²</span>
+                </div>
+              </div>
+              <div className={`p-3 rounded-xl border shadow-2xs ${quotaStockAnalysis.totalNetDeficitM2 === 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'}`}>
+                <div className="text-[11px] font-semibold text-slate-600 uppercase tracking-wider">Net Üretim Açığı</div>
+                <div className={`text-lg font-black mt-0.5 ${quotaStockAnalysis.totalNetDeficitM2 === 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  {quotaStockAnalysis.totalNetDeficitM2.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} <span className="text-xs font-semibold">m²</span>
                 </div>
               </div>
             </div>
@@ -1449,13 +1639,16 @@ export default function Reports() {
                         <th className="py-3 px-3 text-right">Hedef Kota</th>
                         <th className="py-3 px-3 text-right">Sevk Edilen</th>
                         <th className="py-3 px-3 text-right">Kalan Bakiye</th>
-                        <th className="py-3 px-3 text-center w-36">İlerleme</th>
+                        <th className="py-3 px-3 text-center">Depo & Net İhtiyaç</th>
+                        <th className="py-3 px-3 text-center w-32">İlerleme</th>
                         <th className="py-3 px-3 text-center">Durum</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-slate-700">
                       {filteredQuotas.map((q) => {
                         const isDone = q.remaining_quantity <= 0;
+                        const matchingStock = q.product_id ? stocks.find((s) => s.product_id === q.product_id)?.current_stock ?? 0 : null;
+                        const netNeed = matchingStock !== null ? Math.max(0, q.remaining_quantity - matchingStock) : null;
                         return (
                           <tr key={q.id} className="hover:bg-slate-50/70 transition-colors">
                             <td className="py-2.5 px-3 font-bold text-slate-900">{q.customer_name}</td>
@@ -1483,6 +1676,30 @@ export default function Reports() {
                               <span className={isDone ? 'text-emerald-600' : 'text-amber-700'}>
                                 {q.remaining_quantity.toLocaleString('tr-TR')} {q.unit}
                               </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
+                              {isDone ? (
+                                <span className="text-[10px] text-slate-400 font-medium">-</span>
+                              ) : matchingStock !== null ? (
+                                matchingStock >= q.remaining_quantity ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                    <CheckCircle2 size={11} /> Stokta Hazır ({matchingStock.toLocaleString('tr-TR')} {q.unit})
+                                  </span>
+                                ) : matchingStock > 0 ? (
+                                  <div className="flex flex-col items-center">
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                                      Net Açık: {netNeed?.toLocaleString('tr-TR')} {q.unit}
+                                    </span>
+                                    <span className="text-[9px] text-slate-500 mt-0.5">Stok: {matchingStock.toLocaleString('tr-TR')} {q.unit}</span>
+                                  </div>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                                    Stok Yok (Üretilmeli)
+                                  </span>
+                                )
+                              ) : (
+                                <span className="text-[10px] text-slate-500 font-medium">Genel Havuz</span>
+                              )}
                             </td>
                             <td className="py-2.5 px-3">
                               <div className="w-full flex items-center gap-2">
