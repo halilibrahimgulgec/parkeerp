@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import { Product, Customer, Site, BOMItem, RawMaterial } from '../types';
 import Modal from '../components/Modal';
 import { Package, Users, MapPin, BookOpen, Plus, CreditCard as Edit2, Trash2, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react';
@@ -19,6 +20,7 @@ function InputField({ label, value, onChange, type = 'text', placeholder = '', r
 }
 
 function ProductFormComp({ initial, onSave, onClose }: { initial?: Product; onSave: () => void; onClose: () => void }) {
+  const { profile } = useAuth();
   const [form, setForm] = useState({
     name: initial?.name || '',
     product_type: initial?.product_type || 'Kilitli',
@@ -49,10 +51,14 @@ function ProductFormComp({ initial, onSave, onClose }: { initial?: Product; onSa
         err = retryRes.error;
       }
     } else {
-      const res = await supabase.from('products').insert(form).select().single();
+      const payload = {
+        ...form,
+        ...(profile?.company_id ? { company_id: profile.company_id } : {})
+      };
+      const res = await supabase.from('products').insert(payload).select().single();
       err = res.error;
       if (err && (err.message?.includes('unit_price') || err.message?.includes('column "unit_price"'))) {
-        const { unit_price, ...rest } = form;
+        const { unit_price, ...rest } = payload;
         const retryRes = await supabase.from('products').insert(rest).select().single();
         err = retryRes.error;
         if (retryRes.data) savedId = retryRes.data.id;
@@ -142,6 +148,7 @@ function ProductFormComp({ initial, onSave, onClose }: { initial?: Product; onSa
 }
 
 function CustomerFormComp({ initial, onSave, onClose }: { initial?: Customer; onSave: (customer: Customer) => void; onClose: () => void }) {
+  const { profile } = useAuth();
   const [form, setForm] = useState({
     name: initial?.name || '',
     phone: initial?.phone || '',
@@ -173,7 +180,11 @@ function CustomerFormComp({ initial, onSave, onClose }: { initial?: Customer; on
       setSaving(false);
       onSave({ ...initial, ...form });
     } else {
-      const { data, error: err } = await supabase.from('customers').insert(form).select().single();
+      const payload = {
+        ...form,
+        ...(profile?.company_id ? { company_id: profile.company_id } : {})
+      };
+      const { data, error: err } = await supabase.from('customers').insert(payload).select().single();
       if (err) { setError(err.message); setSaving(false); return; }
       setSaving(false);
       setSavedCustomer(data as Customer);
@@ -182,7 +193,12 @@ function CustomerFormComp({ initial, onSave, onClose }: { initial?: Customer; on
 
   const addSite = async () => {
     if (!activeCustomerId || !siteForm.name) return;
-    await supabase.from('sites').insert({ ...siteForm, customer_id: activeCustomerId, is_active: true });
+    await supabase.from('sites').insert({
+      ...siteForm,
+      customer_id: activeCustomerId,
+      ...(profile?.company_id ? { company_id: profile.company_id } : {}),
+      is_active: true
+    });
     setSiteForm({ name: '', address: '', contact_person: '', contact_phone: '' });
     setShowSiteForm(false);
     supabase.from('sites').select('*').eq('customer_id', activeCustomerId).order('name').then(({ data }) => setSites(data || []));
