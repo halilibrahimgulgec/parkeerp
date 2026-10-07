@@ -74,7 +74,7 @@ LANGUAGE sql
 STABLE
 SECURITY DEFINER
 AS $$
-  SELECT COALESCE(is_super_admin, false) OR (role = 'admin') FROM public.user_profiles WHERE id = auth.uid();
+  SELECT COALESCE(is_super_admin, false) FROM public.user_profiles WHERE id = auth.uid();
 $$;
 
 -- 5. MEVCUT TÜM TABLOLARA company_id EKLEME VE ESKİ VERİLERİ BAĞLAMA
@@ -169,7 +169,9 @@ END $$;
 -- 7. GÖRÜNÜMLERİN (VIEWS) company_id İLE GÜNCELLENMESİ
 
 -- v_product_stock
-CREATE OR REPLACE VIEW public.v_product_stock AS
+CREATE OR REPLACE VIEW public.v_product_stock
+WITH (security_invoker = true)
+AS
 SELECT 
   p.id AS product_id,
   p.company_id,
@@ -345,6 +347,7 @@ CREATE POLICY "Tenant isolation for user_profiles delete"
 DO $$
 DECLARE
   t text;
+  pol record;
   tables text[] := ARRAY[
     'raw_materials',
     'products',
@@ -372,7 +375,13 @@ BEGIN
   FOREACH t IN ARRAY tables LOOP
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = t) THEN
       EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
-      EXECUTE format('DROP POLICY IF EXISTS "tenant_isolation_%I" ON public.%I', t, t);
+
+      -- Tablodaki TÜM eski politikaları sil (eski serbest USING (true) politikaları temizlensin)
+      FOR pol IN (SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = t) LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', pol.policyname, t);
+      END LOOP;
+
+      -- Yeni katı Şirket İzolasyonu Politikasını uygula
       EXECUTE format('
         CREATE POLICY "tenant_isolation_%I" ON public.%I
         FOR ALL TO authenticated
