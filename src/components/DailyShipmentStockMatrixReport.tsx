@@ -618,9 +618,13 @@ export default function DailyShipmentStockMatrixReport() {
     }, 0);
   }, [filteredProducts, dailyProductionMap]);
 
-  const totalNetBalance = useMemo(() => {
-    return totalFactoryStock + totalDailyProduction - grandTotalShipped;
+  // Güne Başlangıç Devir Stoğu = Anlık Depo Stoğu - Günlük Üretim + Günlük Sevkiyat
+  const totalOpeningStock = useMemo(() => {
+    return totalFactoryStock - totalDailyProduction + grandTotalShipped;
   }, [totalFactoryStock, totalDailyProduction, grandTotalShipped]);
+
+  // Gün Sonu Fiili Depo Stoğu (Güne Başlangıç + Üretim - Sevk = Mevcut Depo Stoğu)
+  const totalNetBalance = totalFactoryStock;
 
   // Product Production Need Summaries for Top Cards & Planning View
   const productProductionSummaries = useMemo(() => {
@@ -1096,33 +1100,25 @@ export default function DailyShipmentStockMatrixReport() {
             <td style="padding: 8px; text-align: right; color: #9a3412;">${grandTotalUretimSevkiyatPallet ? grandTotalUretimSevkiyatPallet.toLocaleString('tr-TR') : '-'}</td>
           </tr>
 
-          <!-- GÜNLÜK SEVKİYAT (SEÇİLİ GÜN) -->
-          <tr style="background-color: #eff6ff; font-weight: bold; font-size: 11px;">
-            <td style="padding: 7px;">GÜNLÜK SEVKİYAT (SEÇİLİ GÜN)</td>
-            ${filteredProducts.map((p) => {
-              const pTot = productTotals[p.id] || 0;
-              return `<td style="padding: 7px; text-align: right; color: #2563eb;">${pTot ? pTot.toLocaleString('tr-TR') : '-'}</td>`;
-            }).join('')}
-            <td style="padding: 7px; text-align: right; color: #2563eb;">${grandTotalShipped.toLocaleString('tr-TR')}</td>
-            <td colspan="5" style="padding: 7px; text-align: center; color: #64748b; font-weight: normal;">Günlük Gerçekleşen Dağılım</td>
-          </tr>
-
-          <!-- MEVCUT DEPO STOK -->
-          <tr style="background-color: #dcfce7; font-weight: bold; font-size: 12px;">
-            <td style="padding: 8px; color: #166534;">MEVCUT DEPO STOK</td>
+          <!-- 1. GÜNE BAŞLANGIÇ STOĞU (DEVİR) -->
+          <tr style="background-color: #f1f5f9; font-weight: bold; font-size: 12px;">
+            <td style="padding: 8px; color: #334155;">GÜNE BAŞLANGIÇ STOĞU (DEVİR)</td>
             ${filteredProducts.map((p) => {
               const stk = stockMap[p.id] || 0;
-              return `<td style="padding: 8px; text-align: right; color: #166534;">${stk ? stk.toLocaleString('tr-TR') : '-'}</td>`;
+              const prd = dailyProductionMap[p.id] || 0;
+              const gdn = productTotals[p.id] || 0;
+              const openStk = stk - prd + gdn;
+              return `<td style="padding: 8px; text-align: right; color: #334155;">${openStk ? openStk.toLocaleString('tr-TR') : '0'}</td>`;
             }).join('')}
-            <td colspan="3" style="padding: 8px; text-align: right; color: #166534; font-weight: bold;">TOPLAM DEPO STOĞU:</td>
-            <td style="padding: 8px; text-align: right; color: #166534; font-size: 13px; font-weight: bold;">${totalFactoryStock.toLocaleString('tr-TR')}</td>
-            <td style="padding: 8px; text-align: center; color: #166534;">-</td>
-            <td style="padding: 8px; text-align: center; color: #166534;">-</td>
+            <td colspan="3" style="padding: 8px; text-align: right; color: #334155; font-weight: bold;">TOPLAM GÜN BAŞI STOK:</td>
+            <td style="padding: 8px; text-align: right; color: #334155; font-size: 13px; font-weight: bold;">${totalOpeningStock.toLocaleString('tr-TR')}</td>
+            <td style="padding: 8px; text-align: center; color: #334155;">-</td>
+            <td style="padding: 8px; text-align: center; color: #334155;">-</td>
           </tr>
 
-          <!-- GÜNLÜK ÜRETİM MİKTARI -->
+          <!-- 2. GÜNLÜK ÜRETİM MİKTARI -->
           <tr style="background-color: #fef3c7; font-weight: bold; font-size: 12px;">
-            <td style="padding: 8px; color: #92400e;">GÜNLÜK ÜRETİM MİKTARI</td>
+            <td style="padding: 8px; color: #92400e;">(+) GÜNLÜK ÜRETİM MİKTARI</td>
             ${filteredProducts.map((p) => {
               const prd = dailyProductionMap[p.id] || 0;
               return `<td style="padding: 8px; text-align: right; color: #92400e;">${prd ? Number(prd).toLocaleString('tr-TR') : '-'}</td>`;
@@ -1133,20 +1129,30 @@ export default function DailyShipmentStockMatrixReport() {
             <td style="padding: 8px; text-align: center; color: #92400e;">-</td>
           </tr>
 
-          <!-- GÜN SONU DENGE -->
-          <tr style="background-color: #f3e8ff; font-weight: bold; font-size: 12px;">
-            <td style="padding: 8px; color: #6b21a8;">GÜN SONU / NET KALAN DENGE</td>
+          <!-- 3. GÜNLÜK SEVKİYAT (SEÇİLİ GÜN) -->
+          <tr style="background-color: #eff6ff; font-weight: bold; font-size: 12px;">
+            <td style="padding: 8px; color: #1e40af;">(-) GÜNLÜK SEVKİYAT</td>
+            ${filteredProducts.map((p) => {
+              const pTot = productTotals[p.id] || 0;
+              return `<td style="padding: 8px; text-align: right; color: #1e40af;">${pTot ? pTot.toLocaleString('tr-TR') : '-'}</td>`;
+            }).join('')}
+            <td colspan="3" style="padding: 8px; text-align: right; color: #1e40af; font-weight: bold;">TOPLAM GÜNLÜK SEVKİYAT:</td>
+            <td style="padding: 8px; text-align: right; color: #1e40af; font-size: 13px; font-weight: bold;">${grandTotalShipped.toLocaleString('tr-TR')}</td>
+            <td style="padding: 8px; text-align: center; color: #1e40af;">-</td>
+            <td style="padding: 8px; text-align: center; color: #1e40af;">-</td>
+          </tr>
+
+          <!-- 4. GÜN SONU / MEVCUT DEPO STOK -->
+          <tr style="background-color: #dcfce7; font-weight: bold; font-size: 12px;">
+            <td style="padding: 8px; color: #166534;">(=) GÜN SONU / MEVCUT DEPO STOK</td>
             ${filteredProducts.map((p) => {
               const stk = stockMap[p.id] || 0;
-              const prd = dailyProductionMap[p.id] || 0;
-              const gdn = productTotals[p.id] || 0;
-              const balance = stk + prd - gdn;
-              return `<td style="padding: 8px; text-align: right; color: #6b21a8;">${balance.toLocaleString('tr-TR')}</td>`;
+              return `<td style="padding: 8px; text-align: right; color: #166534; font-weight: bold;">${stk ? stk.toLocaleString('tr-TR') : '0'}</td>`;
             }).join('')}
-            <td colspan="3" style="padding: 8px; text-align: right; color: #6b21a8; font-weight: bold;">NET GÜN SONU BAKİYE:</td>
-            <td style="padding: 8px; text-align: right; color: #6b21a8; font-size: 13px; font-weight: bold;">${totalNetBalance.toLocaleString('tr-TR')}</td>
-            <td style="padding: 8px; text-align: center; color: #6b21a8;">-</td>
-            <td style="padding: 8px; text-align: center; color: #6b21a8;">-</td>
+            <td colspan="3" style="padding: 8px; text-align: right; color: #166534; font-weight: bold;">GÜN SONU FİİLİ DEPO STOĞU:</td>
+            <td style="padding: 8px; text-align: right; color: #166534; font-size: 13px; font-weight: bold;">${totalFactoryStock.toLocaleString('tr-TR')}</td>
+            <td style="padding: 8px; text-align: center; color: #166534;">-</td>
+            <td style="padding: 8px; text-align: center; color: #166534;">-</td>
           </tr>
 
           <!-- TOPLAM AÇIK SİPARİŞ / KOTA İHTİYACI -->
@@ -3178,100 +3184,54 @@ export default function DailyShipmentStockMatrixReport() {
                   </td>
                 </tr>
 
-                {/* 1.1 GÜNLÜK SEVKİYAT (BU GÜN GİDEN) */}
-                {matrixCellMode !== 'daily' && (
-                  <tr className="bg-sky-50/80 text-sky-950 font-bold">
-                    <td
-                      className="p-2 matrix-col-cust print-col-cust sticky left-0 z-10 bg-sky-100/90 border-r border-sky-200 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="print:text-[8px] print:font-bold text-sky-900 truncate">GÜNLÜK SEVKİYAT</span>
-                        <span className="text-[9.5px] text-sky-700 bg-sky-200/60 px-1 py-0.2 rounded print:hidden font-normal shrink-0">
-                          Bu Gün Giden
-                        </span>
-                      </div>
-                    </td>
-                    {filteredProducts.map((prod) => {
-                      const dailyTotal = productTotals[prod.id] || 0;
-                      return (
-                        <td
-                          key={prod.id}
-                          style={{ width: `${productColWidthPct}%` }}
-                          className="p-1.5 text-right font-mono font-bold border-r border-sky-100 text-sky-900 text-xs matrix-col-product print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
-                        >
-                          {dailyTotal ? Number(dailyTotal).toLocaleString('tr-TR') : '-'}
-                        </td>
-                      );
-                    })}
-                    <td
-                      className="p-2 matrix-col-daily print-col-daily text-right font-mono text-xs font-bold text-sky-950 bg-sky-100 border-l border-sky-200 print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
-                    >
-                      {grandTotalShipped.toLocaleString('tr-TR')}
-                    </td>
-                    <td
-                      colSpan={3}
-                      className="p-2 text-center text-sky-800 bg-sky-50 font-mono text-[10px] border-l border-sky-200 print:p-0.5 print:text-[7px] print:border-slate-500"
-                    >
-                      Seçili Günün Ürün Dağılımı ({grandTotalShipped.toLocaleString('tr-TR')} m²)
-                    </td>
-                    <td
-                      className="p-2 matrix-col-pallet-tahta print-col-pallet-tahta text-center text-slate-400 bg-sky-50 border-l border-sky-200 font-mono text-xs print:p-0.5"
-                    >
-                      -
-                    </td>
-                    <td
-                      className="p-2 matrix-col-pallet-uretim print-col-pallet-uretim text-center text-slate-400 bg-sky-50 border-l border-sky-200 font-mono text-xs print:p-0.5"
-                    >
-                      -
-                    </td>
-                  </tr>
-                )}
-
-                {/* 2. MEVCUT FABRİKA STOĞU */}
-                <tr className="bg-emerald-50/90 text-emerald-950">
+                {/* 1. GÜNE BAŞLANGIÇ STOĞU (DEVİR) */}
+                <tr className="bg-slate-100/90 text-slate-950 border-t border-slate-300">
                   <td
-                    className="p-2 matrix-col-cust print-col-cust sticky left-0 z-10 bg-emerald-100/90 border-r border-emerald-200 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
+                    className="p-2 matrix-col-cust print-col-cust sticky left-0 z-10 bg-slate-200/90 border-r border-slate-300 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-emerald-900 print:text-[8px] print:font-black truncate">FABRİKA STOĞU</span>
-                      <span className="text-[10px] text-emerald-700 bg-emerald-200/60 px-1.5 py-0.5 rounded font-normal print:hidden shrink-0">
-                        Depo
+                      <span className="font-bold text-slate-900 print:text-[8px] print:font-black truncate">GÜNE BAŞLANGIÇ STOĞU</span>
+                      <span className="text-[10px] text-slate-700 bg-slate-300/60 px-1.5 py-0.5 rounded font-normal print:hidden shrink-0">
+                        Sabah Devir
                       </span>
                     </div>
                   </td>
                   {filteredProducts.map((prod) => {
                     const stk = stockMap[prod.id] || 0;
+                    const prd = dailyProductionMap[prod.id] || 0;
+                    const gdn = productTotals[prod.id] || 0;
+                    const openStk = stk - prd + gdn;
                     return (
                       <td
                         key={prod.id}
                         style={{ width: `${productColWidthPct}%` }}
-                        className="p-1.5 text-right font-mono font-bold border-r border-emerald-100 text-emerald-900 text-xs matrix-col-product print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                        className="p-1.5 text-right font-mono font-bold border-r border-slate-200 text-slate-900 text-xs matrix-col-product print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
                       >
-                        {stk ? stk.toLocaleString('tr-TR') : '-'}
+                        {openStk ? openStk.toLocaleString('tr-TR') : '0'}
                       </td>
                     );
                   })}
-                  <td colSpan={3} className="p-2 text-right text-emerald-800 bg-emerald-100/50 border-l border-emerald-200 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
-                    Toplam Fabrika Depo Stoğu:
+                  <td colSpan={3} className="p-2 text-right text-slate-800 bg-slate-200/50 border-l border-slate-300 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
+                    Güne Başlangıç Devir Stoğu:
                   </td>
-                  <td className="p-2 matrix-col-rem print-col-rem text-right font-mono text-sm font-black text-emerald-950 bg-emerald-200/90 border-l border-emerald-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8px]">
-                    {totalFactoryStock.toLocaleString('tr-TR')}
+                  <td className="p-2 matrix-col-rem print-col-rem text-right font-mono text-sm font-black text-slate-950 bg-slate-300/90 border-l border-slate-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8px]">
+                    {totalOpeningStock.toLocaleString('tr-TR')}
                   </td>
-                  <td className="p-2 matrix-col-pallet-tahta print-col-pallet-tahta text-center text-slate-400 bg-emerald-100/30 border-l border-emerald-200 font-mono text-xs print:p-0.5">
+                  <td className="p-2 matrix-col-pallet-tahta print-col-pallet-tahta text-center text-slate-400 bg-slate-100/30 border-l border-slate-200 font-mono text-xs print:p-0.5">
                     -
                   </td>
-                  <td className="p-2 matrix-col-pallet-uretim print-col-pallet-uretim text-center text-slate-400 bg-emerald-100/30 border-l border-emerald-200 font-mono text-xs print:p-0.5">
+                  <td className="p-2 matrix-col-pallet-uretim print-col-pallet-uretim text-center text-slate-400 bg-slate-100/30 border-l border-slate-200 font-mono text-xs print:p-0.5">
                     -
                   </td>
                 </tr>
 
-                {/* 3. GÜNLÜK ÜRETİM MİKTARI (OTOMATİK - SİSTEM İMALAT VERİSİ) */}
+                {/* 2. GÜNLÜK ÜRETİM MİKTARI (OTOMATİK - SİSTEM İMALAT VERİSİ) */}
                 <tr className="bg-amber-50/90 text-amber-950">
                   <td
                     className="p-2 matrix-col-cust print-col-cust sticky left-0 z-10 bg-amber-100/90 border-r border-amber-200 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-amber-900 print:text-[8px] print:font-black truncate">GÜNLÜK ÜRETİM</span>
+                      <span className="font-bold text-amber-900 print:text-[8px] print:font-black truncate">(+) GÜNLÜK ÜRETİM</span>
                       <span className="text-[10px] text-amber-700 bg-amber-200/60 px-1.5 py-0.5 rounded font-normal print:hidden shrink-0">
                         İmalat
                       </span>
@@ -3303,50 +3263,84 @@ export default function DailyShipmentStockMatrixReport() {
                   </td>
                 </tr>
 
-                {/* 4. GÜN SONU / NET KALAN DENGE */}
-                <tr className="bg-purple-100/80 text-purple-950 font-black">
+                {/* 3. GÜNLÜK SEVKİYAT (SEVK) */}
+                <tr className="bg-sky-50/90 text-sky-950">
                   <td
-                    className="p-2 matrix-col-cust print-col-cust sticky left-0 z-10 bg-purple-200/90 border-r border-purple-300 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
+                    className="p-2 matrix-col-cust print-col-cust sticky left-0 z-10 bg-sky-100/90 border-r border-sky-200 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-black text-purple-950 print:text-[8px] truncate">GÜN SONU DENGE</span>
-                      <span className="text-[10px] text-purple-800 font-normal print:hidden shrink-0">
-                        Stok+Üretim-Sevk
+                      <span className="font-bold text-sky-900 print:text-[8px] print:font-black truncate">(-) GÜNLÜK SEVKİYAT</span>
+                      <span className="text-[10px] text-sky-700 bg-sky-200/60 px-1.5 py-0.5 rounded font-normal print:hidden shrink-0">
+                        Sevk
+                      </span>
+                    </div>
+                  </td>
+                  {filteredProducts.map((prod) => {
+                    const dailyTotal = productTotals[prod.id] || 0;
+                    return (
+                      <td
+                        key={prod.id}
+                        style={{ width: `${productColWidthPct}%` }}
+                        className="p-1.5 text-right font-mono font-bold border-r border-sky-100 text-sky-900 text-xs matrix-col-product print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px]"
+                      >
+                        {dailyTotal ? Number(dailyTotal).toLocaleString('tr-TR') : '-'}
+                      </td>
+                    );
+                  })}
+                  <td colSpan={3} className="p-2 text-right text-sky-800 bg-sky-100/50 border-l border-sky-200 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
+                    Toplam Günlük Sevkiyat:
+                  </td>
+                  <td className="p-2 matrix-col-rem print-col-rem text-right font-mono text-sm font-black text-sky-950 bg-sky-200/90 border-l border-sky-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8px]">
+                    {grandTotalShipped.toLocaleString('tr-TR')}
+                  </td>
+                  <td className="p-2 matrix-col-pallet-tahta print-col-pallet-tahta text-center text-slate-400 bg-sky-100/30 border-l border-sky-200 font-mono text-xs print:p-0.5">
+                    -
+                  </td>
+                  <td className="p-2 matrix-col-pallet-uretim print-col-pallet-uretim text-center text-slate-400 bg-sky-100/30 border-l border-sky-200 font-mono text-xs print:p-0.5">
+                    -
+                  </td>
+                </tr>
+
+                {/* 4. GÜN SONU / MEVCUT DEPO STOĞU */}
+                <tr className="bg-emerald-100/90 text-emerald-950 font-black">
+                  <td
+                    className="p-2 matrix-col-cust print-col-cust sticky left-0 z-10 bg-emerald-200/90 border-r border-emerald-300 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-black text-emerald-950 print:text-[8px] truncate">(=) GÜN SONU DEPO STOĞU</span>
+                      <span className="text-[10px] text-emerald-800 font-normal print:hidden shrink-0">
+                        Mevcut Stok
                       </span>
                     </div>
                   </td>
                   {filteredProducts.map((prod) => {
                     const stk = stockMap[prod.id] || 0;
-                    const prd = dailyProductionMap[prod.id] || 0;
-                    const gdn = productTotals[prod.id] || 0;
-                    const balance = stk + prd - gdn;
-
                     return (
                       <td
                         key={prod.id}
                         style={{ width: `${productColWidthPct}%` }}
-                        className={`p-1.5 text-right font-mono font-black border-r border-purple-200 text-xs matrix-col-product print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px] ${
-                          balance < 0
+                        className={`p-1.5 text-right font-mono font-black border-r border-emerald-200 text-xs matrix-col-product print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px] ${
+                          stk < 0
                             ? 'text-rose-700 bg-rose-100/70'
-                            : balance > 0
-                            ? 'text-purple-950 bg-purple-50'
+                            : stk > 0
+                            ? 'text-emerald-950 bg-emerald-50'
                             : 'text-slate-400'
                         }`}
                       >
-                        {balance ? Number(balance).toLocaleString('tr-TR') : '0'}
+                        {stk ? Number(stk).toLocaleString('tr-TR') : '0'}
                       </td>
                     );
                   })}
-                  <td colSpan={3} className="p-2 text-right text-purple-900 bg-purple-200/60 border-l border-purple-300 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
-                    Net Gün Sonu Bakiye:
+                  <td colSpan={3} className="p-2 text-right text-emerald-900 bg-emerald-200/60 border-l border-emerald-300 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
+                    Gün Sonu Net Depo Stoğu:
                   </td>
-                  <td className={`p-2 matrix-col-rem print-col-rem text-right font-mono text-sm font-black bg-purple-200/90 border-l border-purple-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8px] ${totalNetBalance < 0 ? 'text-rose-700' : 'text-purple-950'}`}>
-                    {totalNetBalance.toLocaleString('tr-TR')}
+                  <td className={`p-2 matrix-col-rem print-col-rem text-right font-mono text-sm font-black bg-emerald-200/90 border-l border-emerald-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8px] ${totalFactoryStock < 0 ? 'text-rose-700' : 'text-emerald-950'}`}>
+                    {totalFactoryStock.toLocaleString('tr-TR')}
                   </td>
-                  <td className="p-2 matrix-col-pallet-tahta print-col-pallet-tahta text-center text-slate-400 bg-purple-100/30 border-l border-purple-200 font-mono text-xs print:p-0.5">
+                  <td className="p-2 matrix-col-pallet-tahta print-col-pallet-tahta text-center text-slate-400 bg-emerald-100/30 border-l border-emerald-200 font-mono text-xs print:p-0.5">
                     -
                   </td>
-                  <td className="p-2 matrix-col-pallet-uretim print-col-pallet-uretim text-center text-slate-400 bg-purple-100/30 border-l border-purple-200 font-mono text-xs print:p-0.5">
+                  <td className="p-2 matrix-col-pallet-uretim print-col-pallet-uretim text-center text-slate-400 bg-emerald-100/30 border-l border-emerald-200 font-mono text-xs print:p-0.5">
                     -
                   </td>
                 </tr>
