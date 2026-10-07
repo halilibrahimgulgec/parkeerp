@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { supabase } from '../lib/supabase';
+import { supabase, createIsolatedClient } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { UserProfile, Company, UserRole } from '../types';
 import {
@@ -150,8 +150,9 @@ export default function AdminUsers() {
         throw new Error('Lütfen kullanıcının atanacağı firmayı seçin.');
       }
 
-      // Create user via supabase signUp
-      const { data, error } = await supabase.auth.signUp({
+      // Create user via isolated client so current admin session is not lost
+      const isolatedClient = createIsolatedClient();
+      const { data, error } = await isolatedClient.auth.signUp({
         email: addEmail.trim(),
         password: addPassword,
       });
