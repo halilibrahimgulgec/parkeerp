@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { Product, Customer, Site } from '../types';
+import { Product, Customer, Site, Company } from '../types';
 import {
   Table, ChevronLeft, ChevronRight, ChevronDown, ChevronsUpDown, Download, Printer,
   RefreshCw, Layers, Building2, Package, Check, AlertTriangle,
@@ -37,7 +37,49 @@ interface PalletBalanceEntry {
 }
 
 export default function DailyShipmentStockMatrixReport() {
-  const { user } = useAuth();
+  const { user, profile, isSuperAdmin } = useAuth();
+
+  // Multi-Tenant Isolation & Super Admin Company Switching
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>(() => {
+    return localStorage.getItem('parke_matrix_selected_company') || '';
+  });
+
+  // Fetch all companies if Super Admin to enable tenant switching
+  useEffect(() => {
+    if (isSuperAdmin()) {
+      supabase
+        .from('companies')
+        .select('*')
+        .eq('is_active', true)
+        .order('created_at', { ascending: true })
+        .then(({ data }) => {
+          if (data && data.length > 0) {
+            setCompanies(data);
+            if (!selectedCompanyId) {
+              const defaultId = profile?.company_id || data[0].id;
+              setSelectedCompanyId(defaultId);
+            }
+          }
+        });
+    }
+  }, [profile?.is_super_admin, profile?.company_id]);
+
+  // Target Company ID: strictly isolates queries by company
+  const targetCompanyId = useMemo(() => {
+    if (isSuperAdmin()) {
+      return selectedCompanyId || profile?.company_id || (companies[0]?.id ?? null);
+    }
+    return profile?.company_id || null;
+  }, [isSuperAdmin, selectedCompanyId, profile?.company_id, companies]);
+
+  const activeCompanyName = useMemo(() => {
+    if (isSuperAdmin() && companies.length > 0) {
+      const found = companies.find((c) => c.id === targetCompanyId);
+      if (found) return found.name;
+    }
+    return profile?.company?.name || 'Parke ERP';
+  }, [isSuperAdmin, companies, targetCompanyId, profile?.company?.name]);
 
   // View Mode: 'plan' (Sade Sipariş & Üretim Planlama Tablosu - Varsayılan) | 'matrix' (Geniş Ürün Matrisi)
   const [activeViewMode, setActiveViewMode] = useState<'plan' | 'matrix'>('plan');
@@ -80,73 +122,101 @@ export default function DailyShipmentStockMatrixReport() {
 
   // Load Data
   const loadData = async () => {
+    if (!targetCompanyId) {
+      return;
+    }
     setLoading(true);
     try {
       const qStart = dateMode === 'single' ? selectedDate : startDate;
       const qEnd = dateMode === 'single' ? selectedDate : endDate;
 
-      const [prodRes, custRes, sitesRes, palletBalRes, shipRes, prodEntriesRes, stockRes, latestShipRes, quotasRes, cumShipItemsRes] = await Promise.all([
-        supabase.from('products').select('*').eq('is_active', true).order('name'),
-        supabase.from('customers').select('*').eq('is_active', true).order('name'),
-        supabase.from('sites').select('*').order('name'),
-        supabase.from('v_pallet_balances').select('*'),
-        supabase
-          .from('shipments')
-          .select(`
-            id,
-            shipment_date,
-            customer_id,
-            site_id,
-            status,
-            invoice_no,
-            vehicle_plate,
-            customers(name),
-            sites(name),
-            shipment_items (
-              id,
-              product_id,
-              m2,
-              unit,
-              pallets,
-              pallet_type
-            )
-          `)
-          .eq('status', 'completed')
-          .gte('shipment_date', qStart)
-          .lte('shipment_date', qEnd),
-        supabase
-          .from('production_entries')
-          .select('id, date, product_id, net_m2, total_m2, shift, machine_no, notes')
-          .gte('date', qStart)
-          .lte('date', qEnd),
-        supabase.from('v_product_stock').select('*'),
-        supabase
-          .from('shipments')
-          .select('shipment_date')
-          .eq('status', 'completed')
-          .order('shipment_date', { ascending: false })
-          .limit(1),
-        supabase
-          .from('customer_quotas')
-          .select('*, products(*), sites(*)')
-          .eq('is_active', true),
-        supabase
-          .from('shipment_items')
-          .select(`
+      let prodQuery = supabase.from('products').select('*').eq('is_active', true).order('name');
+      let custQuery = supabase.from('customers').select('*').eq('is_active', true).order('name');
+      let sitesQuery = supabase.from('sites').select('*').order('name');
+      let palletBalQuery = supabase.from('v_pallet_balances').select('*');
+      let shipQuery = supabase
+        .from('shipments')
+        .select(`
+          id,
+          shipment_date,
+          customer_id,
+          site_id,
+          status,
+          invoice_no,
+          vehicle_plate,
+          customers(name),
+          sites(name),
+          shipment_items (
             id,
             product_id,
             m2,
             unit,
-            shipments!inner (
-              id,
-              shipment_date,
-              customer_id,
-              site_id,
-              status
-            )
-          `)
-          .eq('shipments.status', 'completed')
-          .limit(50000),
+            pallets,
+            pallet_type
+          )
+        `)
+        .eq('status', 'completed')
+        .gte('shipment_date', qStart)
+        .lte('shipment_date', qEnd);
+      let prodEntriesQuery = supabase
+        .from('production_entries')
+        .select('id, date, product_id, net_m2, total_m2, shift, machine_no, notes')
+        .gte('date', qStart)
+        .lte('date', qEnd);
+      let stockQuery = supabase.from('v_product_stock').select('*');
+      let latestShipQuery = supabase
+        .from('shipments')
+        .select('shipment_date')
+        .eq('status', 'completed')
+        .order('shipment_date', { ascending: false })
+        .limit(1);
+      let quotasQuery = supabase
+        .from('customer_quotas')
+        .select('*, products(*), sites(*)')
+        .eq('is_active', true);
+      let cumShipItemsQuery = supabase
+        .from('shipment_items')
+        .select(`
+          id,
+          product_id,
+          m2,
+          unit,
+          shipments!inner (
+            id,
+            shipment_date,
+            customer_id,
+            site_id,
+            status
+          )
+        `)
+        .eq('shipments.status', 'completed')
+        .limit(50000);
+
+      // Multi-tenant isolation: strictly filter all tables and views by targetCompanyId
+      if (targetCompanyId) {
+        prodQuery = prodQuery.eq('company_id', targetCompanyId);
+        custQuery = custQuery.eq('company_id', targetCompanyId);
+        sitesQuery = sitesQuery.eq('company_id', targetCompanyId);
+        palletBalQuery = palletBalQuery.eq('company_id', targetCompanyId);
+        shipQuery = shipQuery.eq('company_id', targetCompanyId);
+        prodEntriesQuery = prodEntriesQuery.eq('company_id', targetCompanyId);
+        stockQuery = stockQuery.eq('company_id', targetCompanyId);
+        latestShipQuery = latestShipQuery.eq('company_id', targetCompanyId);
+        quotasQuery = quotasQuery.eq('company_id', targetCompanyId);
+        cumShipItemsQuery = cumShipItemsQuery.eq('company_id', targetCompanyId);
+      }
+
+      const [prodRes, custRes, sitesRes, palletBalRes, shipRes, prodEntriesRes, stockRes, latestShipRes, quotasRes, cumShipItemsRes] = await Promise.all([
+        prodQuery,
+        custQuery,
+        sitesQuery,
+        palletBalQuery,
+        shipQuery,
+        prodEntriesQuery,
+        stockQuery,
+        latestShipQuery,
+        quotasQuery,
+        cumShipItemsQuery,
       ]);
 
       if (prodRes.data) setProducts(prodRes.data);
@@ -193,8 +263,10 @@ export default function DailyShipmentStockMatrixReport() {
   };
 
   useEffect(() => {
+    setSelectedCustomerIds(new Set());
+    setExpandedCustomerIds(new Set());
     loadData();
-  }, [dateMode, selectedDate, startDate, endDate]);
+  }, [dateMode, selectedDate, startDate, endDate, targetCompanyId]);
 
   // Quick Day Navigation
   const handlePrevDay = () => {
@@ -1514,12 +1586,18 @@ export default function DailyShipmentStockMatrixReport() {
               <Table size={22} />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                Günlük Sevk, Üretim & Stok Planlama Matrisi
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-lg font-bold text-slate-900">
+                  Günlük Sevk, Üretim & Stok Planlama Matrisi
+                </h2>
                 <span className="px-2 py-0.5 text-[11px] font-bold bg-emerald-100 text-emerald-800 rounded-full border border-emerald-200">
                   Üretim Planlama & Excel
                 </span>
-              </h2>
+                <span className="px-2.5 py-0.5 text-xs font-bold bg-slate-100 text-slate-700 rounded-full border border-slate-200 flex items-center gap-1.5 shadow-2xs">
+                  <Building2 size={13} className="text-slate-500" />
+                  {activeCompanyName}
+                </span>
+              </div>
               <p className="text-xs text-slate-500 mt-0.5">
                 Müşteri kotaları, şantiye dağılımları ve zimmetli palet bakiyeleriyle entegre fabrika sevk ve üretim denge tablosu
               </p>
@@ -1527,6 +1605,28 @@ export default function DailyShipmentStockMatrixReport() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {/* Super Admin Firma Değiştirme Seçici */}
+            {isSuperAdmin() && companies.length > 0 && (
+              <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-300 rounded-xl px-2.5 py-1 shadow-2xs">
+                <Building2 size={15} className="text-amber-700 shrink-0" />
+                <span className="text-[11px] font-bold text-amber-900 shrink-0">Firma:</span>
+                <select
+                  value={targetCompanyId || ''}
+                  onChange={(e) => {
+                    const newId = e.target.value;
+                    setSelectedCompanyId(newId);
+                    localStorage.setItem('parke_matrix_selected_company', newId);
+                  }}
+                  className="text-xs font-bold text-slate-800 bg-white border border-amber-200 rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer"
+                >
+                  {companies.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <button
               type="button"
               onClick={expandedCustomerIds.size === 0 ? handleExpandAll : handleCollapseAll}
