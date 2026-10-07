@@ -1155,15 +1155,31 @@ export default function DailyShipmentStockMatrixReport() {
             <td style="padding: 8px; text-align: center; color: #166534;">-</td>
           </tr>
 
-          <!-- TOPLAM AÇIK SİPARİŞ / KOTA İHTİYACI -->
-          <tr style="background-color: #ffe4e6; font-weight: bold; font-size: 12px;">
-            <td style="padding: 8px; color: #be123c;">AÇIK SİPARİŞ / KOTA İHTİYACI</td>
+          <!-- TOPLAM AÇIK SİPARİŞ / STOK VE ÜRETİM DURUMU -->
+          <tr style="background-color: ${totalNetProductionDemandSum === 0 ? '#f0fdf4' : '#fff1f2'}; font-weight: bold; font-size: 12px;">
+            <td style="padding: 8px; color: ${totalNetProductionDemandSum === 0 ? '#166534' : '#be123c'};">
+              AÇIK SİPARİŞ & STOK DURUMU<br/>
+              <span style="font-size: 9px; font-weight: normal; color: ${totalNetProductionDemandSum === 0 ? '#15803d' : '#9f1239'};">
+                ${totalNetProductionDemandSum === 0 ? '✅ Stok Karşılıyor (0 Üretim)' : '⚠️ Üretim / İmalat Gerekli'}
+              </span>
+            </td>
             ${filteredProducts.map((p) => {
               const demand = productQuotaDemands[p.id] || 0;
-              return `<td style="padding: 8px; text-align: right; color: #be123c;">${demand ? demand.toLocaleString('tr-TR') : '-'}</td>`;
+              const stock = stockMap[p.id] || 0;
+              if (!demand) return `<td style="padding: 8px; text-align: right; color: #94a3b8;">-</td>`;
+              if (stock >= demand) {
+                return `<td style="padding: 8px; text-align: right; color: #166534; background-color: #dcfce7;">${demand.toLocaleString('tr-TR')}<br/><span style="font-size: 9px; font-weight: normal; color: #15803d;">(✅ Stok Yeterli)</span></td>`;
+              } else {
+                const def = demand - stock;
+                return `<td style="padding: 8px; text-align: right; color: #be123c; background-color: #fee2e2;">${demand.toLocaleString('tr-TR')}<br/><span style="font-size: 9px; font-weight: bold; color: #b91c1c;">(⚠️ ${def.toLocaleString('tr-TR')} Açık)</span></td>`;
+              }
             }).join('')}
-            <td colspan="3" style="padding: 8px; text-align: right; color: #be123c;">TOPLAM AÇIK İHTİYAÇ:</td>
-            <td style="padding: 8px; text-align: right; color: #be123c; font-size: 13px;">${totalQuotaRemainingSum.toLocaleString('tr-TR')}</td>
+            <td colspan="3" style="padding: 8px; text-align: right; color: ${totalNetProductionDemandSum === 0 ? '#166534' : '#be123c'}; font-size: 11px;">
+              ${totalNetProductionDemandSum === 0 ? 'GENEL DURUM: TÜM SİPARİŞİ STOK KARŞILIYOR (0 İHTİYAÇ)' : `TOPLAM NET ÜRETİM AÇIĞI: ${Number(totalNetProductionDemandSum).toLocaleString('tr-TR')} m²`}
+            </td>
+            <td style="padding: 8px; text-align: right; color: ${totalNetProductionDemandSum === 0 ? '#166534' : '#be123c'}; font-size: 13px; font-weight: bold;">
+              ${totalQuotaRemainingSum ? totalQuotaRemainingSum.toLocaleString('tr-TR') : '-'}
+            </td>
             <td style="padding: 8px; text-align: center; color: #94a3b8;">-</td>
             <td style="padding: 8px; text-align: center; color: #94a3b8;">-</td>
           </tr>
@@ -3345,58 +3361,103 @@ export default function DailyShipmentStockMatrixReport() {
                   </td>
                 </tr>
 
-                {/* 5. TOPLAM AÇIK SİPARİŞ / KOTA İHTİYACI (ÜRETİM PLANLAMA KILAVUZU) */}
-                <tr className="bg-rose-100/80 text-rose-950 font-black">
+                {/* 5. AÇIK SİPARİŞ & STOK / ÜRETİM DURUMU (AKILLI DURUM SATIRI) */}
+                <tr className={`${totalNetProductionDemandSum === 0 ? 'bg-emerald-50/80 text-emerald-950' : 'bg-rose-50/80 text-rose-950'} font-black border-t ${totalNetProductionDemandSum === 0 ? 'border-emerald-200' : 'border-rose-200'}`}>
                   <td
-                    className="p-2 matrix-col-cust print-col-cust sticky left-0 z-10 bg-rose-200/90 border-r border-rose-300 shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500"
+                    className={`p-2 matrix-col-cust print-col-cust sticky left-0 z-10 ${totalNetProductionDemandSum === 0 ? 'bg-emerald-100/90 border-r border-emerald-300' : 'bg-rose-100/90 border-r border-rose-300'} shadow-xs print:static print:left-auto print:shadow-none print:p-1 print:pl-2 print:min-w-0 print:border-slate-500`}
                   >
                     <div className="flex items-center justify-between">
                       <div>
-                        <span className="font-black text-rose-950 uppercase print:text-[8px] truncate">AÇIK KOTA İHTİYACI</span>
-                        <div className="text-[10px] text-rose-800 font-normal print:hidden">Planlanacak Üretim Talebi</div>
+                        <span className={`font-black uppercase print:text-[8px] truncate ${totalNetProductionDemandSum === 0 ? 'text-emerald-950' : 'text-rose-950'}`}>
+                          AÇIK SİPARİŞ & STOK DURUMU
+                        </span>
+                        <div className={`text-[10px] font-normal print:hidden ${totalNetProductionDemandSum === 0 ? 'text-emerald-700 font-semibold' : 'text-rose-700'}`}>
+                          {totalNetProductionDemandSum === 0 ? '✅ Depo Stoğu Karşılıyor (0 İhtiyaç)' : '⚠️ Üretim / İmalat İhtiyacı'}
+                        </div>
                       </div>
-                      <Target size={14} className="text-rose-800 print:hidden shrink-0" />
+                      <Target size={14} className={`${totalNetProductionDemandSum === 0 ? 'text-emerald-800' : 'text-rose-800'} print:hidden shrink-0`} />
                     </div>
                   </td>
                   {filteredProducts.map((prod) => {
                     const demand = productQuotaDemands[prod.id] || 0;
+                    const stock = stockMap[prod.id] || 0;
+                    const isCovered = demand > 0 && stock >= demand;
+                    const isDeficit = demand > 0 && stock < demand;
+                    const deficit = isDeficit ? demand - stock : 0;
+                    const surplus = isCovered ? stock - demand : 0;
+
                     return (
                       <td
                         key={prod.id}
                         style={{ width: `${productColWidthPct}%` }}
-                        className={`p-1.5 text-right font-mono font-black border-r border-rose-200 text-xs matrix-col-product print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px] ${
-                          demand > 0 ? 'text-rose-900 bg-rose-50' : 'text-slate-300'
+                        className={`p-1 text-right font-mono font-black border-r text-xs matrix-col-product print:p-0.5 print:min-w-0 print:border-slate-500 print:text-[8px] ${
+                          isCovered
+                            ? 'bg-emerald-50 text-emerald-950 border-emerald-200'
+                            : isDeficit
+                            ? 'bg-rose-100 text-rose-950 border-rose-200'
+                            : 'text-slate-300 border-slate-200'
                         }`}
-                        title={`${prod.name} için teslim edilmesi gereken toplam açık taahhüt`}
+                        title={
+                          isCovered
+                            ? `${prod.name}: ${demand.toLocaleString('tr-TR')} m² açık siparişe karşılık depoda ${stock.toLocaleString('tr-TR')} m² var. Stok fazlasıyla yetiyor (+${surplus.toLocaleString('tr-TR')} m² serbest kalır).`
+                            : isDeficit
+                            ? `${prod.name}: ${demand.toLocaleString('tr-TR')} m² sipariş var, depoda ${stock.toLocaleString('tr-TR')} m² var. ${deficit.toLocaleString('tr-TR')} m² ACİL ÜRETİLMELİ!`
+                            : undefined
+                        }
                       >
-                        {demand ? Number(demand).toLocaleString('tr-TR') : '-'}
+                        {demand > 0 ? (
+                          <div>
+                            <div className="text-xs font-bold leading-tight">
+                              {Number(demand).toLocaleString('tr-TR')}
+                            </div>
+                            {isCovered ? (
+                              <div className="text-[9px] font-bold text-emerald-700 print:text-[6.5px] whitespace-nowrap leading-tight mt-0.5">
+                                ✅ Stok Karşılıyor
+                              </div>
+                            ) : isDeficit ? (
+                              <div className="text-[9px] font-bold text-rose-700 print:text-[6.5px] whitespace-nowrap leading-tight mt-0.5">
+                                ⚠️ {deficit.toLocaleString('tr-TR')} Açık
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : (
+                          '-'
+                        )}
                       </td>
                     );
                   })}
-                  <td colSpan={3} className="p-2 text-right text-rose-900 bg-rose-200/60 border-l border-rose-300 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
+                  <td colSpan={3} className={`p-2 text-right border-l font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500 ${totalNetProductionDemandSum === 0 ? 'text-emerald-900 bg-emerald-100/60 border-emerald-300' : 'text-rose-900 bg-rose-100/60 border-rose-300'}`}>
                     <div className="leading-tight">
-                      <div className="font-black">TÜM AÇIK SİPARİŞ BAKİYESİ:</div>
-                      {totalUnassignedQuotaRemainingSum > 0 && (
-                        <div className="text-[9px] text-rose-800 font-medium print:text-[6.5px]">
-                          (Ürünlü: {Number(totalProductQuotaDemandSum).toLocaleString('tr-TR')} + Genel: {Number(totalUnassignedQuotaRemainingSum).toLocaleString('tr-TR')})
+                      <div className="font-black">
+                        {totalNetProductionDemandSum === 0 ? 'GENEL SİPARİŞ & STOK DURUMU:' : 'TÜM AÇIK SİPARİŞ BAKİYESİ:'}
+                      </div>
+                      {totalNetProductionDemandSum === 0 ? (
+                        <div className="text-[9.5px] text-emerald-700 font-bold print:text-[6.5px]">
+                          ✅ Tüm açık siparişler mevcut stoktan teslim edilebilir. Üretime gerek yok.
+                        </div>
+                      ) : (
+                        <div className="text-[9.5px] text-rose-800 font-bold print:text-[6.5px]">
+                          ⚠️ Toplam {Number(totalNetProductionDemandSum).toLocaleString('tr-TR')} m² Net Üretim Açığı Var
                         </div>
                       )}
                     </div>
                   </td>
                   <td
-                    className="p-2 matrix-col-rem print-col-rem text-right font-mono text-sm font-black text-rose-950 bg-rose-300/80 border-l border-rose-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8.5px]"
-                    title={
-                      totalUnassignedQuotaRemainingSum > 0
-                        ? `Taş Tanımlı Açık İhtiyaç: ${Number(totalProductQuotaDemandSum).toLocaleString('tr-TR')} m²\nGenel (Taşsız) Kotalar: ${Number(totalUnassignedQuotaRemainingSum).toLocaleString('tr-TR')} m² [${unassignedCustomerNames.join(', ')}]`
-                        : undefined
-                    }
+                    className={`p-2 matrix-col-rem print-col-rem text-right font-mono text-sm font-black border-l print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8.5px] ${
+                      totalNetProductionDemandSum === 0
+                        ? 'text-emerald-950 bg-emerald-200/90 border-emerald-300'
+                        : 'text-rose-950 bg-rose-300/80 border-rose-300'
+                    }`}
                   >
-                    {totalQuotaRemainingSum ? Number(totalQuotaRemainingSum).toLocaleString('tr-TR') : '-'}
+                    <div>{totalQuotaRemainingSum ? Number(totalQuotaRemainingSum).toLocaleString('tr-TR') : '-'}</div>
+                    <div className={`text-[9px] font-bold ${totalNetProductionDemandSum === 0 ? 'text-emerald-800' : 'text-rose-800'}`}>
+                      {totalNetProductionDemandSum === 0 ? 'Stok Yeterli (0 İhtiyaç)' : `${Number(totalNetProductionDemandSum).toLocaleString('tr-TR')} Açık`}
+                    </div>
                   </td>
-                  <td className="p-2 matrix-col-pallet-tahta print-col-pallet-tahta text-center text-slate-400 bg-rose-200/40 border-l border-rose-300 font-mono text-xs print:p-0.5">
+                  <td className={`p-2 matrix-col-pallet-tahta print-col-pallet-tahta text-center text-slate-400 border-l font-mono text-xs print:p-0.5 ${totalNetProductionDemandSum === 0 ? 'bg-emerald-100/30 border-emerald-300' : 'bg-rose-100/30 border-rose-300'}`}>
                     -
                   </td>
-                  <td className="p-2 matrix-col-pallet-uretim print-col-pallet-uretim text-center text-slate-400 bg-rose-200/40 border-l border-rose-300 font-mono text-xs print:p-0.5">
+                  <td className={`p-2 matrix-col-pallet-uretim print-col-pallet-uretim text-center text-slate-400 border-l font-mono text-xs print:p-0.5 ${totalNetProductionDemandSum === 0 ? 'bg-emerald-100/30 border-emerald-300' : 'bg-rose-100/30 border-rose-300'}`}>
                     -
                   </td>
                 </tr>
