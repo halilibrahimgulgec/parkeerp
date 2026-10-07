@@ -169,7 +169,8 @@ END $$;
 -- 7. GÖRÜNÜMLERİN (VIEWS) company_id İLE GÜNCELLENMESİ
 
 -- v_product_stock
-CREATE OR REPLACE VIEW public.v_product_stock
+DROP VIEW IF EXISTS public.v_product_stock CASCADE;
+CREATE VIEW public.v_product_stock
 WITH (security_invoker = true)
 AS
 SELECT 
@@ -186,7 +187,10 @@ FROM public.products p
 WHERE p.is_active = true;
 
 -- v_pallet_balances
-CREATE OR REPLACE VIEW public.v_pallet_balances AS
+DROP VIEW IF EXISTS public.v_pallet_balances CASCADE;
+CREATE VIEW public.v_pallet_balances
+WITH (security_invoker = true)
+AS
 WITH sent_counts AS (
   SELECT 
     customer_id,
@@ -230,7 +234,10 @@ LEFT JOIN returned_counts rc ON p.customer_id = rc.customer_id
   AND p.pallet_type = rc.pallet_type;
 
 -- v_supplier_pallet_balances
-CREATE OR REPLACE VIEW public.v_supplier_pallet_balances AS
+DROP VIEW IF EXISTS public.v_supplier_pallet_balances CASCADE;
+CREATE VIEW public.v_supplier_pallet_balances
+WITH (security_invoker = true)
+AS
 WITH received_counts AS (
   SELECT 
     company_id,
