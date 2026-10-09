@@ -97,6 +97,40 @@ function ProductionForm({ products, onSave, onClose, initial, targetCompanyId }:
       .catch(() => setBomItems([]));
   }, [form.product_id]);
 
+  // Load Current Warehouse Stock (Depo Stok Miktarı) for the selected product
+  const [currentStock, setCurrentStock] = useState<number | null>(null);
+  const [stockLoading, setStockLoading] = useState(false);
+
+  useEffect(() => {
+    if (!form.product_id) {
+      setCurrentStock(null);
+      return;
+    }
+    setStockLoading(true);
+    let q = supabase
+      .from('v_product_stock')
+      .select('current_stock')
+      .eq('product_id', form.product_id);
+
+    if (targetCompanyId) {
+      q = q.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+    }
+
+    q.maybeSingle()
+      .then(({ data, error }) => {
+        if (!error && data) {
+          setCurrentStock(Number(data.current_stock) || 0);
+        } else {
+          setCurrentStock(0);
+        }
+        setStockLoading(false);
+      })
+      .catch(() => {
+        setCurrentStock(0);
+        setStockLoading(false);
+      });
+  }, [form.product_id, targetCompanyId]);
+
   const selectedProduct = products.find(p => p.id === form.product_id);
 
   const handleProductChange = (productId: string) => {
@@ -305,9 +339,17 @@ function ProductionForm({ products, onSave, onClose, initial, targetCompanyId }:
           ))}
         </select>
         {selectedProduct && (
-          <div className="flex items-center justify-between mt-1 text-xs text-slate-500">
+          <div className="flex items-center justify-between mt-1 text-xs text-slate-500 flex-wrap gap-1.5">
             <span>📦 1 Palet = <strong>{selectedProduct.m2_per_pallet}</strong> {selectedProduct.unit === 'metre' ? 'Metre' : selectedProduct.unit === 'adet' ? 'Adet' : 'm²'}</span>
-            <span className="text-amber-600 font-medium">Birim: {selectedProduct.unit || 'm²'}</span>
+            <div className="flex items-center gap-2">
+              {currentStock !== null && (
+                <span className="bg-blue-50 text-blue-800 px-2.5 py-0.5 rounded-full font-bold text-[11px] border border-blue-200 flex items-center gap-1 shadow-2xs">
+                  <Package size={12} className="text-blue-600" />
+                  Mevcut Depo Stoğu: <strong>{Number(currentStock).toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {selectedProduct.unit === 'metre' ? 'Metre' : selectedProduct.unit === 'adet' ? 'Adet' : 'm²'}</strong>
+                </span>
+              )}
+              <span className="text-amber-600 font-medium">Birim: {selectedProduct.unit || 'm²'}</span>
+            </div>
           </div>
         )}
       </div>
@@ -359,14 +401,64 @@ function ProductionForm({ products, onSave, onClose, initial, targetCompanyId }:
         </div>
       </div>
 
-      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-center justify-between text-sm">
-        <span className="font-semibold text-amber-900">
-          Net Üretim ({selectedProduct?.unit === 'metre' ? 'Metre' : selectedProduct?.unit === 'adet' ? 'Adet' : 'm²'}):
-        </span>
-        <span className="text-base font-bold text-amber-800">
-          {Math.max(form.total_m2 - form.waste_m2, 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 })}{' '}
-          {selectedProduct?.unit === 'metre' ? 'Metre' : selectedProduct?.unit === 'adet' ? 'Adet' : 'm²'}
-        </span>
+      {/* 🏭 Net Üretim & Depo Stok Bilgisi Kartları */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {/* Net Vardiya Üretimi */}
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex flex-col justify-between">
+          <span className="text-xs font-bold text-amber-900 uppercase tracking-wide flex items-center gap-1">
+            <span>⚡</span> Net Vardiya Üretimi
+          </span>
+          <div className="mt-1.5 flex items-baseline justify-between">
+            <span className="text-xl font-black text-amber-900">
+              {Math.max(form.total_m2 - form.waste_m2, 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 })}{' '}
+              <span className="text-xs font-bold text-amber-700">{selectedProduct?.unit === 'metre' ? 'Metre' : selectedProduct?.unit === 'adet' ? 'Adet' : 'm²'}</span>
+            </span>
+            {form.total_pallets > 0 && (
+              <span className="text-xs font-bold text-amber-800 bg-amber-100/90 px-2 py-0.5 rounded-md border border-amber-200">
+                {form.total_pallets} Palet
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Depodaki Mevcut Stok */}
+        <div className="bg-blue-50/90 border border-blue-200 rounded-xl p-3 flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-blue-900 uppercase tracking-wide flex items-center gap-1.5">
+              <Package size={14} className="text-blue-600" />
+              Depodaki Mevcut Hazır Stok
+            </span>
+            {stockLoading && (
+              <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            )}
+          </div>
+          <div className="mt-1.5 flex items-baseline justify-between">
+            <span className="text-xl font-black text-blue-950">
+              {currentStock !== null
+                ? Number(currentStock).toLocaleString('tr-TR', { maximumFractionDigits: 2 })
+                : '—'}{' '}
+              <span className="text-xs font-bold text-blue-700">
+                {selectedProduct?.unit === 'metre' ? 'Metre' : selectedProduct?.unit === 'adet' ? 'Adet' : 'm²'}
+              </span>
+            </span>
+            {selectedProduct && selectedProduct.m2_per_pallet > 0 && currentStock !== null && (
+              <span className="text-xs font-bold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-md border border-blue-200">
+                ~{Math.round(currentStock / selectedProduct.m2_per_pallet)} Palet
+              </span>
+            )}
+          </div>
+
+          {/* Üretim Sonrası Yeni Stok (Mevcut + Net) */}
+          {!initial && currentStock !== null && Math.max(form.total_m2 - form.waste_m2, 0) > 0 && (
+            <div className="mt-2 pt-1.5 border-t border-blue-200/80 flex items-center justify-between text-[11px] text-blue-900 font-medium">
+              <span>Üretim Sonrası Tahmini Stok:</span>
+              <span className="font-black text-blue-950">
+                {(currentStock + Math.max(form.total_m2 - form.waste_m2, 0)).toLocaleString('tr-TR', { maximumFractionDigits: 2 })}{' '}
+                {selectedProduct?.unit === 'metre' ? 'Metre' : selectedProduct?.unit === 'adet' ? 'Adet' : 'm²'}
+              </span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 🧪 Reçeteye Göre Canlı Hammadde Sarfiyat Önizlemesi */}
