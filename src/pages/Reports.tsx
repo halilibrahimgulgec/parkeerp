@@ -26,6 +26,7 @@ import {
   Factory,
 } from 'lucide-react';
 import DailyShipmentStockMatrixReport from '../components/DailyShipmentStockMatrixReport';
+import StockLedgerReport from '../components/StockLedgerReport';
 import { calculateAllQuotas, calculateFactoryOpenOrders, CalculatedQuotaItem } from '../utils/quotaCalculator';
 
 const MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
@@ -290,7 +291,8 @@ export default function Reports() {
     return profile?.company?.name || 'Parke ERP';
   }, [isSuperAdmin, companies, targetCompanyId, profile?.company?.name]);
 
-  const [activeReportTab, setActiveReportTab] = useState<'factory' | 'matrix'>('factory');
+  const [activeReportTab, setActiveReportTab] = useState<'factory' | 'matrix' | 'ledger'>('factory');
+  const [selectedLedgerProductId, setSelectedLedgerProductId] = useState<string>('');
   const [periodPreset, setPeriodPreset] = useState<'today' | 'week' | 'month' | 'custom_month'>('month');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
@@ -822,7 +824,7 @@ export default function Reports() {
         )}
       </div>
 
-      {/* ── TOP 2 MASTER REPORT TABS ── */}
+      {/* ── TOP MASTER REPORT TABS ── */}
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3 no-print">
         <button
           type="button"
@@ -855,11 +857,33 @@ export default function Reports() {
             Şantiye Kırılımlı
           </span>
         </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveReportTab('ledger')}
+          className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl font-bold text-sm transition-all cursor-pointer ${
+            activeReportTab === 'ledger'
+              ? 'bg-amber-600 text-white shadow-md shadow-amber-500/20'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <Boxes size={18} />
+          <span>3. Ürün Stok Hareket Ekstresi (Stok Kartı)</span>
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+            Tarihçe & Bakiye
+          </span>
+        </button>
       </div>
 
-      {/* ── TAB 2: MASTER MATRIX REPORT ── */}
+      {/* ── REPORT CONTENT ── */}
       {activeReportTab === 'matrix' ? (
         <DailyShipmentStockMatrixReport />
+      ) : activeReportTab === 'ledger' ? (
+        <StockLedgerReport
+          targetCompanyId={targetCompanyId}
+          initialProductId={selectedLedgerProductId}
+          onBackToFactorySummary={() => setActiveReportTab('factory')}
+        />
       ) : loading ? (
         <div className="flex flex-col items-center justify-center py-28 gap-3">
           <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
@@ -1420,8 +1444,8 @@ export default function Reports() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-slate-500 bg-slate-50 border-b border-slate-100">
-                    {['Ürün', 'Kalınlık', 'Renk', 'Birim', 'Üretilen Miktar', 'Sevk Edilen Miktar', 'Mevcut Stok', 'Min. Uyarı', 'Durum'].map((h, i) => (
-                      <th key={i} className="px-4 py-3 font-medium text-xs uppercase tracking-wider">
+                    {['Ürün', 'Kalınlık', 'Renk', 'Birim', 'Üretilen Miktar', 'Sevk Edilen Miktar', 'Mevcut Stok', 'Min. Uyarı', 'Durum', 'İşlem'].map((h, i) => (
+                      <th key={i} className={`px-4 py-3 font-medium text-xs uppercase tracking-wider ${h === 'İşlem' ? 'text-right' : ''}`}>
                         {h}
                       </th>
                     ))}
@@ -1458,6 +1482,20 @@ export default function Reports() {
                             <span className="text-xs font-medium text-green-600">Normal</span>
                           )}
                         </td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedLedgerProductId(s.product_id);
+                              setActiveReportTab('ledger');
+                            }}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 transition-colors cursor-pointer"
+                            title="Ürün Stok Hareket Ekstresini Aç"
+                          >
+                            <Boxes size={13} className="text-amber-600" />
+                            <span>Ekstre</span>
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
@@ -1470,7 +1508,7 @@ export default function Reports() {
                     <td className="px-4 py-2.5 text-amber-700 font-bold">{totalProdM2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²</td>
                     <td className="px-4 py-2.5 text-blue-700 font-bold">{totalShipM2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²</td>
                     <td className="px-4 py-2.5 text-slate-900 font-bold">{totalStockM2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²</td>
-                    <td colSpan={2} className="px-4 py-2.5"></td>
+                    <td colSpan={3} className="px-4 py-2.5"></td>
                   </tr>
                   <tr>
                     <td colSpan={4} className="px-4 py-2.5 text-slate-700">
@@ -1479,7 +1517,7 @@ export default function Reports() {
                     <td className="px-4 py-2.5 text-amber-700 font-bold">{totalProdMetre.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Metre</td>
                     <td className="px-4 py-2.5 text-blue-700 font-bold">{totalShipMetre.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Metre</td>
                     <td className="px-4 py-2.5 text-slate-900 font-bold">{totalStockMetre.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Metre</td>
-                    <td colSpan={2} className="px-4 py-2.5"></td>
+                    <td colSpan={3} className="px-4 py-2.5"></td>
                   </tr>
                   {stocks.some((s) => s.unit === 'adet') && (
                     <tr>
@@ -1489,7 +1527,7 @@ export default function Reports() {
                       <td className="px-4 py-2.5 text-amber-700 font-bold">{totalProdAdet.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Adet</td>
                       <td className="px-4 py-2.5 text-blue-700 font-bold">{totalShipAdet.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Adet</td>
                       <td className="px-4 py-2.5 text-slate-900 font-bold">{totalStockAdet.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Adet</td>
-                      <td colSpan={2} className="px-4 py-2.5"></td>
+                      <td colSpan={3} className="px-4 py-2.5"></td>
                     </tr>
                   )}
                 </tfoot>

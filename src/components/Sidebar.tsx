@@ -60,15 +60,15 @@ export default function Sidebar({ currentPage, onNavigate, onCloseMobile }: Side
       ],
     }] : []),
     {
-      title: '📊 KOKPİT & MASTER RAPORLAR',
+      title: '📊 KOKPİT & RAPORLAR',
       items: [
         { id: 'dashboard', label: 'Genel Bakış (Dashboard)', icon: LayoutDashboard, access: true },
         { 
           id: 'reports', 
-          label: 'Master Raporlar', 
+          label: 'Fabrika Raporu & Stok Ekstresi', 
           icon: BarChart3, 
           access: true,
-          badge: '2 Rapor',
+          badge: '3 Rapor',
           badgeColor: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
         },
       ],

@@ -3135,7 +3135,8 @@ export default function ShipmentPage() {
       s.vehicle_plate.toLowerCase().includes(q) ||
       (s.driver_name && s.driver_name.toLowerCase().includes(q)) ||
       (sup.isExternal && sup.supplierName.toLowerCase().includes(q)) ||
-      (s.notes && s.notes.toLowerCase().includes(q));
+      (s.notes && s.notes.toLowerCase().includes(q)) ||
+      (s.shipment_items && s.shipment_items.some((it: any) => it.products?.name?.toLowerCase().includes(q)));
     const dateMatch = !filterDate || s.shipment_date === filterDate;
     return match && dateMatch;
   });
