@@ -70,6 +70,7 @@ export default function MoldsPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'mounted' | 'active' | 'maintenance' | 'retired'>('all');
   const [machineFilter, setMachineFilter] = useState<string>('all');
+  const [schemaMissing, setSchemaMissing] = useState(false);
 
   // Modals
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -130,7 +131,14 @@ export default function MoldsPage() {
       if (targetCompanyId) moldQ = moldQ.eq('company_id', targetCompanyId);
       const { data: rawMolds, error: mErr } = await moldQ;
 
-      if (mErr) throw mErr;
+      if (mErr) {
+        if (mErr.code === 'PGRST205' || mErr.message?.includes('molds')) {
+          setSchemaMissing(true);
+        }
+        throw mErr;
+      } else {
+        setSchemaMissing(false);
+      }
 
       // 1c. Calculate usage for each mold from production_entries
       let prodEntriesQ = supabase.from('production_entries').select('id, mold_id, net_m2, date');
@@ -559,6 +567,31 @@ export default function MoldsPage() {
           </button>
         </div>
       </div>
+
+      {/* ⚠️ Migration Schema Alert */}
+      {schemaMissing && (
+        <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 sm:p-5 text-amber-950 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <span className="p-2 bg-amber-200/60 rounded-xl text-amber-800 shrink-0">
+              <AlertTriangle size={20} />
+            </span>
+            <div>
+              <h4 className="font-bold text-sm sm:text-base">Kalıp Veritabanı Tablosu Henüz Kurulmamış</h4>
+              <p className="text-xs text-amber-800 mt-0.5 leading-relaxed">
+                Kalıp takip sisteminin verileri saklayabilmesi için Supabase Dashboard &gt; SQL Editor alanında oluşturduğumuz migration scriptini çalıştırmanız gerekmektedir:
+                <code className="ml-1 bg-amber-100 px-1.5 py-0.5 rounded font-mono text-[11px] text-amber-900 font-bold">supabase/migrations/20261010000000_create_molds_schema.sql</code>
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={loadData}
+            className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold whitespace-nowrap transition-colors cursor-pointer shadow-sm"
+          >
+            Tabloyu Tekrar Kontrol Et
+          </button>
+        </div>
+      )}
 
       {/* ── KPI STATS CARDS ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
