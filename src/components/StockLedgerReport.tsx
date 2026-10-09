@@ -207,6 +207,7 @@ export default function StockLedgerReport({
         const siteName = s.sites?.name ? ` / ${s.sites.name}` : '';
         const vehicle = s.vehicle_plate ? `Plaka: ${s.vehicle_plate}` : '';
         const driver = s.driver_name ? ` (${s.driver_name})` : '';
+        const cleanNotes = (s.notes || '').replace(/\[KALEM_FİYATLAR:.*?\]/g, '').trim();
 
         rawItems.push({
           id: `ship_${si.id}`,
@@ -215,7 +216,7 @@ export default function StockLedgerReport({
           createdAt: si.created_at || `${s.shipment_date}T14:00:00`,
           documentNo: s.invoice_no ? `İrsaliye: ${s.invoice_no}` : 'Sevk İrsaliyesi',
           title: isTransit ? `Transit Sevk (${s.supplier_name})` : `${custName}${siteName}`,
-          description: [vehicle + driver, s.notes].filter(Boolean).join(' • ') || 'Fabrika Çıkışı',
+          description: [vehicle + driver, cleanNotes].filter(Boolean).join(' • ') || 'Fabrika Çıkışı',
           subDescription: isTransit ? '⚠️ Transit Doğrudan Sevk (Fabrika deposundan düşmez)' : undefined,
           inQty: 0,
           outQty: Number(si.m2) || 0,
