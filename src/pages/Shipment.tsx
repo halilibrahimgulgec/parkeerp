@@ -2273,7 +2273,7 @@ function ShipmentForm({
           {form.items.map((item, idx) => {
             const stock = item.product_id ? stockMap[item.product_id] ?? 0 : null;
             const unitLabel = item.unit === 'm2' ? 'm²' : item.unit === 'adet' ? 'Adet' : item.unit === 'metre' ? 'Metre' : item.unit;
-            const stockExceeded = stock !== null && item.m2 > 0 && item.unit === 'm2' && item.m2 > stock;
+            const stockExceeded = !form.is_external && stock !== null && item.m2 > 0 && item.unit === 'm2' && item.m2 > stock;
             const sp = resolveSmartPriceForItem(item.product_id);
             const isOverridden = item.is_custom_price && item.unit_price !== sp.price;
             const lineTotal = (Number(item.m2) || 0) * (Number(item.unit_price) || 0);
@@ -2294,7 +2294,11 @@ function ShipmentForm({
                         return (
                           <option key={p.id} value={p.id}>
                             {p.name} ({p.thickness}/{p.color})
-                            {s <= 0 ? ' — Stok yok' : ` — ${s.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`}
+                            {form.is_external
+                              ? ' — Transit Sevk'
+                              : s <= 0
+                              ? ' — Stok yok'
+                              : ` — ${s.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`}
                           </option>
                         );
                       })}
@@ -2437,18 +2441,30 @@ function ShipmentForm({
                       </button>
                     )}
 
-                    {/* Stock info */}
-                    {stock !== null && item.product_id && (
-                      <span
-                        className={`inline-flex items-center gap-1 text-[11px] font-medium ${
-                          stockExceeded ? 'text-red-600 font-bold' : 'text-slate-500'
-                        }`}
-                      >
-                        {stockExceeded ? <PackageX size={12} /> : null}
-                        {stockExceeded
-                          ? `⚠️ Stok aşıldı! (Mevcut: ${stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²)`
-                          : `• Stok: ${stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`}
+                    {/* Stock info or Transit Badge */}
+                    {form.is_external ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                        <span>🚚</span>
+                        <span>Transit Sevk: <strong>{form.supplier_name.trim() || 'Dış Tedarikçi'}</strong> (Fabrika stoğundan düşmez)</span>
+                        {stock !== null && (
+                          <span className="text-amber-800/70 font-normal ml-1 hidden sm:inline">
+                            • Fabrika: {stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²
+                          </span>
+                        )}
                       </span>
+                    ) : (
+                      stock !== null && item.product_id && (
+                        <span
+                          className={`inline-flex items-center gap-1 text-[11px] font-medium ${
+                            stockExceeded ? 'text-red-600 font-bold' : 'text-slate-500'
+                          }`}
+                        >
+                          {stockExceeded ? <PackageX size={12} /> : null}
+                          {stockExceeded
+                            ? `⚠️ Stok aşıldı! (Mevcut: ${stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²)`
+                            : `• Stok: ${stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`}
+                        </span>
+                      )
                     )}
 
                     {/* Özel Sıra / Palet İçi Yükleme Bilgisi */}

@@ -144,6 +144,7 @@ export default function DailyShipmentStockMatrixReport() {
           status,
           invoice_no,
           vehicle_plate,
+          supplier_name,
           customers(name),
           sites(name),
           shipment_items (
@@ -186,6 +187,7 @@ export default function DailyShipmentStockMatrixReport() {
             shipment_date,
             customer_id,
             site_id,
+            supplier_name,
             status
           )
         `)
@@ -708,10 +710,43 @@ export default function DailyShipmentStockMatrixReport() {
     }, 0);
   }, [filteredProducts, dailyProductionMap]);
 
-  // Güne Başlangıç Devir Stoğu = Anlık Depo Stoğu - Günlük Üretim + Günlük Sevkiyat
+  // Fabrikadan Çıkan Sevkiyatlar (Dış tedarikçiden transit sevk edilenler fabrika deposundan çıkmaz)
+  const { factoryProductTotals, grandTotalFactoryShipped, grandTotalTransitShipped } = useMemo(() => {
+    const fTotals: { [prod: string]: number } = {};
+    let fGrand = 0;
+    let tGrand = 0;
+
+    (shipmentItems || []).forEach((item) => {
+      const s = item.shipments;
+      if (!s) return;
+      const sDate = s.shipment_date;
+      if (dateMode === 'single' && sDate !== selectedDate) return;
+      if (dateMode === 'range' && (sDate < startDate || sDate > endDate)) return;
+
+      const prodId = item.product_id;
+      const qty = Number(item.m2 || 0);
+      if (!prodId || qty <= 0) return;
+
+      const isTransit = Boolean(s.supplier_name && s.supplier_name.trim());
+      if (isTransit) {
+        tGrand += qty;
+      } else {
+        fTotals[prodId] = (fTotals[prodId] || 0) + qty;
+        fGrand += qty;
+      }
+    });
+
+    return {
+      factoryProductTotals: fTotals,
+      grandTotalFactoryShipped: fGrand,
+      grandTotalTransitShipped: tGrand,
+    };
+  }, [shipmentItems, dateMode, selectedDate, startDate, endDate]);
+
+  // Güne Başlangıç Devir Stoğu = Anlık Depo Stoğu - Günlük Üretim + Günlük Fabrika Çıkışı (Transit sevkler fabrika devrini etkilemez)
   const totalOpeningStock = useMemo(() => {
-    return totalFactoryStock - totalDailyProduction + grandTotalShipped;
-  }, [totalFactoryStock, totalDailyProduction, grandTotalShipped]);
+    return totalFactoryStock - totalDailyProduction + grandTotalFactoryShipped;
+  }, [totalFactoryStock, totalDailyProduction, grandTotalFactoryShipped]);
 
   // Gün Sonu Fiili Depo Stoğu (Güne Başlangıç + Üretim - Sevk = Mevcut Depo Stoğu)
   const totalNetBalance = totalFactoryStock;
@@ -1196,7 +1231,7 @@ export default function DailyShipmentStockMatrixReport() {
             ${filteredProducts.map((p) => {
               const stk = stockMap[p.id] || 0;
               const prd = dailyProductionMap[p.id] || 0;
-              const gdn = productTotals[p.id] || 0;
+              const gdn = factoryProductTotals[p.id] || 0;
               const openStk = stk - prd + gdn;
               return `<td style="padding: 8px; text-align: right; color: #334155;">${openStk ? openStk.toLocaleString('tr-TR') : '0'}</td>`;
             }).join('')}
@@ -3333,7 +3368,7 @@ export default function DailyShipmentStockMatrixReport() {
                   {filteredProducts.map((prod) => {
                     const stk = stockMap[prod.id] || 0;
                     const prd = dailyProductionMap[prod.id] || 0;
-                    const gdn = productTotals[prod.id] || 0;
+                    const gdn = factoryProductTotals[prod.id] || 0;
                     const openStk = stk - prd + gdn;
                     return (
                       <td
@@ -3422,7 +3457,12 @@ export default function DailyShipmentStockMatrixReport() {
                     );
                   })}
                   <td colSpan={3} className="p-2 text-right text-sky-800 bg-sky-100/50 border-l border-sky-200 font-mono text-xs font-bold print:p-0.5 print:text-[7.5px] print:border-slate-500">
-                    Toplam Günlük Sevkiyat:
+                    <div>Toplam Günlük Sevkiyat:</div>
+                    {grandTotalTransitShipped > 0 && (
+                      <div className="text-[10px] text-amber-800 font-normal">
+                        (Fabrika: {grandTotalFactoryShipped.toLocaleString('tr-TR')} + Transit: {grandTotalTransitShipped.toLocaleString('tr-TR')})
+                      </div>
+                    )}
                   </td>
                   <td className="p-2 matrix-col-rem print-col-rem text-right font-mono text-sm font-black text-sky-950 bg-sky-200/90 border-l border-sky-300 print:p-0.5 print:pr-1.5 print:min-w-0 print:border-slate-500 print:text-[8px]">
                     {grandTotalShipped.toLocaleString('tr-TR')}
