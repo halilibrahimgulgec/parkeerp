@@ -3,10 +3,11 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   LayoutDashboard, Factory, Truck, DollarSign, Package,
   BarChart3, LogOut, ChevronRight, ShieldCheck, Users, Boxes,
-  UserCheck, Target, ShoppingBag, Sparkles, X, Search, Building2
+  UserCheck, Target, ShoppingBag, Sparkles, X, Search, Building2,
+  Layers
 } from 'lucide-react';
 
-type Page = 'dashboard' | 'production' | 'production_planning' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking' | 'super_admin_companies';
+type Page = 'dashboard' | 'production' | 'production_planning' | 'molds' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking' | 'super_admin_companies';
 
 interface SidebarProps {
   currentPage: Page;
@@ -84,6 +85,14 @@ export default function Sidebar({ currentPage, onNavigate, onCloseMobile }: Side
           access: isFieldManager() || isAdmin(),
           badge: 'AI',
           badgeColor: 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
+        },
+        { 
+          id: 'molds', 
+          label: 'Kalıp & Baskı Metrajı', 
+          icon: Layers, 
+          access: isFieldManager() || isAdmin(),
+          badge: 'Ömür',
+          badgeColor: 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
         },
       ],
     },

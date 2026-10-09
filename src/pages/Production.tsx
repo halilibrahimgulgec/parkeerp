@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { ProductionEntry, Product, Company } from '../types';
+import { ProductionEntry, Product, Company, Mold } from '../types';
 import Modal from '../components/Modal';
 import {
   Plus, Factory, Search, Filter, Calendar, CreditCard as Edit2,
@@ -27,6 +27,7 @@ interface ProductionFormData {
   lot_number: string;
   notes: string;
   plan_item_id?: string | null;
+  mold_id?: string | null;
 }
 
 const EMPTY_FORM: ProductionFormData = {
@@ -40,6 +41,7 @@ const EMPTY_FORM: ProductionFormData = {
   lot_number: generateDefaultLot(new Date().toISOString().split('T')[0], '1', 'Gündüz'),
   notes: '',
   plan_item_id: null,
+  mold_id: null,
 };
 
 function ProductionForm({ products, onSave, onClose, initial, targetCompanyId }: {
@@ -61,6 +63,7 @@ function ProductionForm({ products, onSave, onClose, initial, targetCompanyId }:
     lot_number: initial.lot_number,
     notes: initial.notes,
     plan_item_id: initial.plan_item_id || null,
+    mold_id: initial.mold_id || null,
   } : { ...EMPTY_FORM });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -131,6 +134,24 @@ function ProductionForm({ products, onSave, onClose, initial, targetCompanyId }:
       });
   }, [form.product_id, targetCompanyId]);
 
+  // Load molds and mold-product mappings for automatic mold association
+  const [availableMolds, setAvailableMolds] = useState<Mold[]>([]);
+
+  useEffect(() => {
+    let q = supabase
+      .from('molds')
+      .select('*, mold_products(*)')
+      .in('status', ['mounted', 'active']);
+
+    if (targetCompanyId) {
+      q = q.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+    }
+
+    q.then(({ data }) => {
+      setAvailableMolds((data as Mold[]) || []);
+    }).catch(() => setAvailableMolds([]));
+  }, [targetCompanyId]);
+
   const selectedProduct = products.find(p => p.id === form.product_id);
 
   const handleProductChange = (productId: string) => {
@@ -139,7 +160,16 @@ function ProductionForm({ products, onSave, onClose, initial, targetCompanyId }:
     if (p && form.total_pallets > 0) {
       m2 = parseFloat((form.total_pallets * p.m2_per_pallet).toFixed(2));
     }
-    setForm(f => ({ ...f, product_id: productId, total_m2: m2 }));
+    // Auto-detect linked mold
+    const matchedMold = availableMolds.find(m =>
+      m.mold_products?.some((mp: any) => mp.product_id === productId)
+    );
+    setForm(f => ({
+      ...f,
+      product_id: productId,
+      total_m2: m2,
+      mold_id: matchedMold ? matchedMold.id : (f.mold_id || null),
+    }));
   };
 
   const handlePalletsChange = (pallets: number) => {
@@ -352,6 +382,36 @@ function ProductionForm({ products, onSave, onClose, initial, targetCompanyId }:
             </div>
           </div>
         )}
+      </div>
+
+      {/* 🔩 Üretim Kalıbı Seçimi & Bilgisi */}
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label className="block text-sm font-medium text-slate-700 flex items-center gap-1.5">
+            <Layers size={15} className="text-indigo-600" />
+            Üretim Kalıbı (Baskı Metrajı Takibi İçin)
+          </label>
+          {form.mold_id && (
+            <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
+              Kalıp Otomatik Eşleşti
+            </span>
+          )}
+        </div>
+        <select
+          value={form.mold_id || ''}
+          onChange={e => setForm(f => ({ ...f, mold_id: e.target.value || null }))}
+          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-indigo-50/20"
+        >
+          <option value="">Kalıp Seçilmedi (Baskı metrajı kalıba işlenmez)</option>
+          {availableMolds.map(m => (
+            <option key={m.id} value={m.id}>
+              {m.code} — {m.name} {m.machine_no ? `(Makine: ${m.machine_no})` : ''} [{m.m2_per_stroke} m²/vuruş]
+            </option>
+          ))}
+        </select>
+        <p className="text-[10px] text-slate-400 mt-0.5">
+          Ürün seçildiğinde bu ürüne bağlı kalıp otomatik seçilir. Bu vardiyadaki net üretim kalıbın toplam baskı ömrüne yansır.
+        </p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -646,7 +706,7 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
     let prodQuery = supabase.from('products').select('*').eq('is_active', true).order('name');
     let prodListQuery = supabase
       .from('production_entries')
-      .select('*, products(*)')
+      .select('*, products(*), molds(*)')
       .order('date', { ascending: false })
       .order('created_at', { ascending: false });
 
@@ -1496,6 +1556,12 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
                       <td className="px-4 py-3">
                         <div className="font-medium text-slate-800">{entry.products?.name}</div>
                         <div className="text-xs text-slate-400">{entry.products?.thickness} / {entry.products?.color}</div>
+                        {entry.molds && (
+                          <div className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 text-[10px] font-semibold border border-indigo-200" title={`Baskı Katsayısı: ${entry.molds.m2_per_stroke} m²/vuruş`}>
+                            <Layers size={10} className="text-indigo-500" />
+                            <span>{entry.molds.code} - {entry.molds.name}</span>
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-slate-700">{entry.total_pallets}</td>
                       <td className="px-4 py-3 text-slate-700 font-medium">

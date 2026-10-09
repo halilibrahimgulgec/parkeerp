@@ -5,7 +5,7 @@ import AIAssistantModal from './AIAssistantModal';
 import MobileBottomNav from './MobileBottomNav';
 import { Menu, X } from 'lucide-react';
 
-type Page = 'dashboard' | 'production' | 'production_planning' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking' | 'super_admin_companies';
+type Page = 'dashboard' | 'production' | 'production_planning' | 'molds' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking' | 'super_admin_companies';
 
 interface LayoutProps {
   children: ReactNode;

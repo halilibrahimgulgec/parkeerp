@@ -17,8 +17,9 @@ import CustomerQuotas from './pages/CustomerQuotas';
 import Purchases from './pages/Purchases';
 import ProductionPlanning from './pages/ProductionPlanning';
 import SuperAdminCompanies from './pages/SuperAdminCompanies';
+import MoldsPage from './pages/Molds';
 
-type Page = 'dashboard' | 'production' | 'production_planning' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking' | 'super_admin_companies';
+type Page = 'dashboard' | 'production' | 'production_planning' | 'molds' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking' | 'super_admin_companies';
 
 function AppContent() {
   const { user, loading, pendingApproval } = useAuth();
@@ -62,6 +63,7 @@ function AppContent() {
     dashboard: <Dashboard onNavigate={setCurrentPage} />,
     production: <Production onNavigate={setCurrentPage} />,
     production_planning: <ProductionPlanning />,
+    molds: <MoldsPage />,
     purchases: <Purchases />,
     shipment: <ShipmentPage />,
     customer_quotas: <CustomerQuotas />,

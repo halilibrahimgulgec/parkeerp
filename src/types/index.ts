@@ -94,9 +94,11 @@ export interface ProductionEntry {
   lot_number: string;
   notes: string;
   plan_item_id?: string | null;
+  mold_id?: string | null;
   created_by: string;
   created_at: string;
   products?: Product;
+  molds?: Mold;
 }
 
 export interface ShipmentItem {
@@ -377,5 +379,53 @@ export interface ProductionPlanItem {
   products?: Product;
   production_orders?: ProductionOrder;
   customer_quotas?: CustomerQuota;
+}
+
+export interface MoldProduct {
+  id: string;
+  company_id?: string;
+  mold_id: string;
+  product_id: string;
+  products?: Product;
+}
+
+export interface Mold {
+  id: string;
+  company_id?: string;
+  code: string;
+  name: string;
+  machine_no: string;
+  m2_per_stroke: number;
+  initial_m2: number;
+  target_lifespan_m2: number;
+  maintenance_interval_m2: number;
+  status: 'active' | 'mounted' | 'maintenance' | 'retired';
+  notes?: string;
+  created_at?: string;
+  updated_at?: string;
+  mold_products?: MoldProduct[];
+}
+
+export interface MoldMaintenanceLog {
+  id: string;
+  company_id?: string;
+  mold_id: string;
+  date: string;
+  action_type: 'taslama' | 'temizlik' | 'plaka_degisimi' | 'kaynak' | 'diger';
+  service_provider: string;
+  cost: number;
+  footage_at_maintenance: number;
+  notes?: string;
+  created_at?: string;
+  molds?: Mold;
+}
+
+export interface MoldSummary extends Mold {
+  total_produced_m2: number;
+  total_strokes: number;
+  wear_percentage: number;
+  last_production_date?: string | null;
+  maintenance_count: number;
+  last_maintenance_date?: string | null;
 }
 

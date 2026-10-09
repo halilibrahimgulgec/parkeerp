@@ -5,6 +5,7 @@ type Page =
   | 'dashboard'
   | 'production'
   | 'production_planning'
+  | 'molds'
   | 'purchases'
   | 'shipment'
   | 'customer_quotas'
@@ -13,7 +14,8 @@ type Page =
   | 'reports'
   | 'admin_users'
   | 'pallet_tracking'
-  | 'labor_tracking';
+  | 'labor_tracking'
+  | 'super_admin_companies';
 
 interface MobileBottomNavProps {
   currentPage: Page;
