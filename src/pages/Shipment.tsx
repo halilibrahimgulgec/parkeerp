@@ -644,13 +644,20 @@ export function QuickPalletReturnModal({
 
   useEffect(() => {
     if (customerId) {
-      let q = supabase
+      const q = supabase
         .from('sites')
         .select('*')
         .eq('customer_id', customerId)
         .order('name');
-      if (targetCompanyId) q = q.eq('company_id', targetCompanyId);
-      q.then(({ data }) => setSites(data || []));
+      q.then(({ data }) => {
+        const list = data || [];
+        setSites(list);
+        if (targetCompanyId) {
+          list.filter((s) => !s.company_id).forEach((s) => {
+            supabase.from('sites').update({ company_id: targetCompanyId }).eq('id', s.id).then();
+          });
+        }
+      });
     } else {
       setSites([]);
     }
@@ -1174,21 +1181,27 @@ function ShipmentForm({
 
   useEffect(() => {
     if (form.customer_id) {
-      let sitesQuery = supabase
+      const sitesQuery = supabase
         .from('sites')
         .select('*')
         .eq('customer_id', form.customer_id)
         .order('name');
-      if (targetCompanyId) sitesQuery = sitesQuery.eq('company_id', targetCompanyId);
-      sitesQuery.then(({ data }) => setSites(data || []));
+      sitesQuery.then(({ data }) => {
+        const list = data || [];
+        setSites(list);
+        if (targetCompanyId) {
+          list.filter((s) => !s.company_id).forEach((s) => {
+            supabase.from('sites').update({ company_id: targetCompanyId }).eq('id', s.id).then();
+          });
+        }
+      });
 
       // Fetch customer quotas
-      let quotasQuery = supabase
+      const quotasQuery = supabase
         .from('customer_quotas')
         .select('*, products(*), sites(*)')
         .eq('customer_id', form.customer_id)
         .eq('is_active', true);
-      if (targetCompanyId) quotasQuery = quotasQuery.eq('company_id', targetCompanyId);
 
       quotasQuery.then(async ({ data: qData }) => {
         if (!qData || qData.length === 0) {
@@ -1196,12 +1209,11 @@ function ShipmentForm({
           return;
         }
 
-        let shipItemsQuery = supabase
+        const shipItemsQuery = supabase
           .from('shipment_items')
           .select('product_id, m2, unit, shipments!inner(id, shipment_date, customer_id, site_id, status)')
           .eq('shipments.customer_id', form.customer_id)
           .eq('shipments.status', 'completed');
-        if (targetCompanyId) shipItemsQuery = shipItemsQuery.eq('company_id', targetCompanyId);
 
         const { data: shipData } = await shipItemsQuery;
 
@@ -1233,14 +1245,13 @@ function ShipmentForm({
       });
 
       // Fetch recent shipments to get last price memory (Priority 3)
-      let pastShipsQuery = supabase
+      const pastShipsQuery = supabase
         .from('shipments')
         .select('id, sale_price_per_m2, notes, shipment_items(product_id, unit_price)')
         .eq('customer_id', form.customer_id)
         .eq('status', 'completed')
         .order('shipment_date', { ascending: false })
         .limit(30);
-      if (targetCompanyId) pastShipsQuery = pastShipsQuery.eq('company_id', targetCompanyId);
 
       pastShipsQuery.then(({ data: pastShips }) => {
         const map: Record<string, number> = {};
@@ -1274,7 +1285,9 @@ function ShipmentForm({
     const fetchStock = async () => {
       // 1. Stok görünümü
       let stockQuery = supabase.from('v_product_stock').select('*');
-      if (targetCompanyId) stockQuery = stockQuery.eq('company_id', targetCompanyId);
+      if (targetCompanyId) {
+        stockQuery = stockQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+      }
       const stockRes = await stockQuery;
       const map: Record<string, number> = {};
       for (const p of products) {
@@ -1458,13 +1471,11 @@ function ShipmentForm({
       if (siteErr) throw siteErr;
 
       // Güncel şantiye listesini tekrar yükle
-      let updatedSitesQ = supabase
+      const { data: updatedSites } = await supabase
         .from('sites')
         .select('*')
         .eq('customer_id', form.customer_id)
         .order('name');
-      if (targetCompanyId) updatedSitesQ = updatedSitesQ.eq('company_id', targetCompanyId);
-      const { data: updatedSites } = await updatedSitesQ;
 
       setSites(updatedSites || []);
 
