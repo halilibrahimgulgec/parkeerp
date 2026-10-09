@@ -3242,9 +3242,11 @@ export default function ShipmentPage() {
               <button
                 type="button"
                 onClick={() => setFilterDate('')}
-                className="text-xs text-slate-500 hover:text-red-500 font-semibold cursor-pointer"
+                className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 font-bold rounded-lg border border-red-200 text-xs transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
+                title="Tarih filtresini kaldır ve tüm irsaliyeleri göster"
               >
-                Temizle
+                <span>✕</span>
+                <span>Filtreyi Temizle</span>
               </button>
             )}
             {showScrollTop && (
@@ -3260,6 +3262,40 @@ export default function ShipmentPage() {
             )}
           </div>
         </div>
+
+        {/* ── ACTIVE FILTER NOTICE BANNER ── */}
+        {(filterDate || search) && (
+          <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-900 animate-in fade-in">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-bold flex items-center gap-1 text-amber-800">
+                <span>⚠️</span> Filtre Aktif:
+              </span>
+              {filterDate && (
+                <span className="bg-white/80 px-2 py-0.5 rounded border border-amber-300 font-medium">
+                  Tarih: <strong className="font-bold text-amber-950">{filterDate.split('-').reverse().join('.')}</strong>
+                </span>
+              )}
+              {search && (
+                <span className="bg-white/80 px-2 py-0.5 rounded border border-amber-300 font-medium">
+                  Arama: <strong className="font-bold text-amber-950">"{search}"</strong>
+                </span>
+              )}
+              <span className="text-amber-700 text-[11px]">
+                ({filtered.length} irsaliye listeleniyor — diğer tarihlerdeki irsaliyeler gizlendi)
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setFilterDate('');
+                setSearch('');
+              }}
+              className="px-2.5 py-1 bg-amber-200 hover:bg-amber-300 text-amber-950 font-bold rounded-lg text-xs transition-colors cursor-pointer border border-amber-300 shadow-2xs"
+            >
+              Filtreleri Sıfırla (Tüm İrsaliyeleri Göster)
+            </button>
+          </div>
+        )}
 
         {loading ? (
           <div className="flex items-center justify-center py-20">
