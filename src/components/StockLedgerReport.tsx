@@ -575,20 +575,20 @@ export default function StockLedgerReport({
             : 'bg-white border-slate-100 text-slate-800 shadow-sm'
         }`}>
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Mevcut Depo Stoğu</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Mevcut Depo Stoğu (Kalan)</span>
             <span className={`p-2 rounded-xl ${summaryStats.currentStock < 0 ? 'bg-red-200 text-red-800' : 'bg-emerald-100 text-emerald-800'}`}>
               <Package size={18} />
             </span>
           </div>
           <div className="flex items-baseline gap-2">
             <span className={`text-2xl font-black ${summaryStats.currentStock < 0 ? 'text-red-700' : 'text-slate-900'}`}>
-              {summaryStats.currentStock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })}
+              {summaryStats.currentStock > 0 ? '+' : ''}{summaryStats.currentStock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })}
             </span>
             <span className="text-xs font-bold text-slate-500">{unitLabel}</span>
           </div>
           <div className="mt-2 flex items-center justify-between text-xs">
             <span className="font-semibold text-slate-600">
-              {summaryStats.currentPallets} Palet
+              {summaryStats.currentStock >= 0 ? `✅ ${summaryStats.currentPallets} Palet Hazır` : `⚠️ ${summaryStats.currentPallets} Palet Açık`}
             </span>
             <span className="text-[11px] text-slate-400">
               1 Palet = {selectedProduct?.m2_per_pallet || 1} {unitLabel}
@@ -619,20 +619,20 @@ export default function StockLedgerReport({
         {/* Card 3: Toplam Sevkiyat */}
         <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Toplam Sevk Edilen</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Toplam Sevk Edilen (Çıkış)</span>
             <span className="p-2 rounded-xl bg-blue-50 text-blue-600">
               <Truck size={18} />
             </span>
           </div>
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-black text-blue-700">
-              -{summaryStats.totalShipped.toLocaleString('tr-TR', { maximumFractionDigits: 1 })}
+              {summaryStats.totalShipped.toLocaleString('tr-TR', { maximumFractionDigits: 1 })}
             </span>
             <span className="text-xs font-bold text-slate-500">{unitLabel}</span>
           </div>
           <div className="mt-2 text-xs font-semibold text-blue-600 flex items-center gap-1">
             <ArrowDownLeft size={14} />
-            <span>-{summaryStats.totalShippedPallets} Palet sevk edildi</span>
+            <span>{summaryStats.totalShippedPallets} Palet sevk edildi</span>
           </div>
         </div>
 
