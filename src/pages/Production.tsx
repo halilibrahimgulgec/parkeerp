@@ -1,13 +1,13 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { ProductionEntry, Product } from '../types';
+import { ProductionEntry, Product, Company } from '../types';
 import Modal from '../components/Modal';
 import {
   Plus, Factory, Search, Filter, Calendar, CreditCard as Edit2,
   AlertCircle, Trash2, Sparkles, Download, Layers, Package,
   ChevronDown, ChevronUp, RotateCcw, Printer, CheckCircle2, TrendingUp, X, Target,
-  BookOpen, ArrowRight, Check, ArrowUp
+  BookOpen, ArrowRight, Check, ArrowUp, Building2
 } from 'lucide-react';
 
 export const generateDefaultLot = (dateStr: string, machine: string, shift: string) => {
@@ -42,11 +42,12 @@ const EMPTY_FORM: ProductionFormData = {
   plan_item_id: null,
 };
 
-function ProductionForm({ products, onSave, onClose, initial }: {
+function ProductionForm({ products, onSave, onClose, initial, targetCompanyId }: {
   products: Product[];
   onSave: (savedInfo?: any) => void;
   onClose: () => void;
   initial?: ProductionEntry;
+  targetCompanyId?: string | null;
 }) {
   const { user } = useAuth();
   const [form, setForm] = useState<ProductionFormData>(initial ? {
@@ -167,7 +168,11 @@ function ProductionForm({ products, onSave, onClose, initial }: {
     if (form.waste_m2 > form.total_m2) { setError('Fire miktarı toplam miktardan fazla olamaz.'); return; }
     setSaving(true);
     setError('');
-    const payload = { ...form, created_by: user?.id };
+    const payload = {
+      ...form,
+      created_by: user?.id,
+      ...(targetCompanyId ? { company_id: targetCompanyId } : {}),
+    };
     let err;
     if (initial) {
       ({ error: err } = await supabase.from('production_entries').update(payload).eq('id', initial.id));
@@ -445,6 +450,48 @@ interface ProductionProps {
 }
 
 export default function Production({ onNavigate }: ProductionProps = {}) {
+  const { isSuperAdmin, profile } = useAuth();
+
+  // Multi-Tenant Isolation & Super Admin Company Switching (Senkronize Matris & Sevkiyat Seçimi)
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>(() => {
+    return localStorage.getItem('parke_matrix_selected_company') || '';
+  });
+
+  useEffect(() => {
+    if (isSuperAdmin()) {
+      supabase
+        .from('companies')
+        .select('*')
+        .eq('is_active', true)
+        .order('created_at', { ascending: true })
+        .then(({ data }) => {
+          if (data && data.length > 0) {
+            setCompanies(data);
+            if (!selectedCompanyId) {
+              const defaultId = profile?.company_id || data[0].id;
+              setSelectedCompanyId(defaultId);
+            }
+          }
+        });
+    }
+  }, [profile?.is_super_admin, profile?.company_id]);
+
+  const targetCompanyId = useMemo(() => {
+    if (isSuperAdmin()) {
+      return selectedCompanyId || profile?.company_id || (companies[0]?.id ?? null);
+    }
+    return profile?.company_id || null;
+  }, [isSuperAdmin, selectedCompanyId, profile?.company_id, companies]);
+
+  const activeCompanyName = useMemo(() => {
+    if (isSuperAdmin() && companies.length > 0) {
+      const found = companies.find((c) => c.id === targetCompanyId);
+      if (found) return found.name;
+    }
+    return profile?.company?.name || 'Parke ERP';
+  }, [isSuperAdmin, companies, targetCompanyId, profile?.company?.name]);
+
   const [entries, setEntries] = useState<ProductionEntry[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -499,16 +546,77 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
 
   const load = async () => {
     setLoading(true);
+    const isDefaultCompany =
+      !targetCompanyId ||
+      targetCompanyId === companies[0]?.id ||
+      targetCompanyId === profile?.company_id;
+
+    let prodQuery = supabase.from('products').select('*').eq('is_active', true).order('name');
+    let prodListQuery = supabase
+      .from('production_entries')
+      .select('*, products(*)')
+      .order('date', { ascending: false })
+      .order('created_at', { ascending: false });
+
+    if (targetCompanyId) {
+      if (isDefaultCompany) {
+        prodQuery = prodQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+        prodListQuery = prodListQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+      } else {
+        prodQuery = prodQuery.eq('company_id', targetCompanyId);
+        prodListQuery = prodListQuery.eq('company_id', targetCompanyId);
+      }
+    }
+
     const [prodRes, prodListRes] = await Promise.all([
-      supabase.from('products').select('*').eq('is_active', true).order('name'),
-      supabase.from('production_entries').select('*, products(*)').order('date', { ascending: false }).order('created_at', { ascending: false }),
+      prodQuery,
+      prodListQuery,
     ]);
-    setProducts(prodRes.data || []);
-    setEntries((prodListRes.data || []) as ProductionEntry[]);
+
+    let productList = (prodRes.data || []) as Product[];
+    let prodEntries = (prodListRes.data || []) as ProductionEntry[];
+
+    // Air-tight multi-tenant isolation:
+    if (targetCompanyId) {
+      productList = productList.filter((p: any) => {
+        if (p.company_id && p.company_id !== targetCompanyId) return false;
+        if (!p.company_id && !isDefaultCompany) return false;
+        return true;
+      });
+
+      prodEntries = prodEntries.filter((e: any) => {
+        // If entry explicitly belongs to another company, drop it
+        if (e.company_id && e.company_id !== targetCompanyId) return false;
+        // If product explicitly belongs to another company, drop it
+        if (e.products?.company_id && e.products.company_id !== targetCompanyId) return false;
+        // If neither has company_id, only keep if viewing default company
+        if (!e.company_id && !e.products?.company_id && !isDefaultCompany) return false;
+        return true;
+      });
+    }
+
+    // Auto-backfill unassigned production entries in background
+    if (isSuperAdmin() && prodEntries.length > 0) {
+      const unassigned = prodEntries.filter((e: any) => !e.company_id);
+      if (unassigned.length > 0) {
+        const defaultCompId = profile?.company_id || companies[0]?.id;
+        unassigned.slice(0, 50).forEach((e: any) => {
+          const compId = e.products?.company_id || defaultCompId;
+          if (compId) {
+            supabase.from('production_entries').update({ company_id: compId }).eq('id', e.id).then();
+          }
+        });
+      }
+    }
+
+    setProducts(productList);
+    setEntries(prodEntries);
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+  }, [targetCompanyId]);
 
   const handleDatePreset = (preset: 'today' | 'this_week' | 'this_month' | 'all') => {
     setDateFilterMode(preset);
@@ -737,14 +845,42 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
       {/* ── TOP HEADER & ACTIONS ── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-            <Factory size={24} className="text-amber-500" /> Üretim Kayıtları & Dönemsel Analiz
-          </h1>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+              <Factory size={24} className="text-amber-500" /> Üretim Kayıtları & Dönemsel Analiz
+            </h1>
+            <span className="px-2.5 py-0.5 text-xs font-bold bg-slate-100 text-slate-700 rounded-full border border-slate-200 flex items-center gap-1.5 shadow-2xs">
+              <Building2 size={13} className="text-slate-500" />
+              {activeCompanyName}
+            </span>
+          </div>
           <p className="text-slate-500 text-sm mt-1">
             Tarih aralığı ve ürün bazlı filtreleme, vardiya üretim girişleri ve dönem analizi
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Super Admin Firma Değiştirme Seçici */}
+          {isSuperAdmin() && companies.length > 0 && (
+            <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-300 rounded-xl px-2.5 py-1 shadow-2xs">
+              <Building2 size={15} className="text-amber-700 shrink-0" />
+              <span className="text-[11px] font-bold text-amber-900 shrink-0">Firma:</span>
+              <select
+                value={targetCompanyId || ''}
+                onChange={(e) => {
+                  const newId = e.target.value;
+                  setSelectedCompanyId(newId);
+                  localStorage.setItem('parke_matrix_selected_company', newId);
+                }}
+                className="text-xs font-bold text-slate-800 bg-white border border-amber-200 rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer"
+              >
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <button
             onClick={handleExportExcel}
             className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl font-bold text-xs transition-colors shadow-xs cursor-pointer"
@@ -1311,6 +1447,7 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
         >
           <ProductionForm
             products={products}
+            targetCompanyId={targetCompanyId}
             onSave={(savedInfo) => {
               setShowModal(false);
               load();
