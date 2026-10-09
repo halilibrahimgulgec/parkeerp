@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { Shipment, Customer, Site, Product } from '../types';
+import { Shipment, Customer, Site, Product, Company } from '../types';
 import Modal from '../components/Modal';
 import {
   Plus,
@@ -31,6 +31,7 @@ import {
   Calendar,
   FileText,
   ArrowUp,
+  Building2,
 } from 'lucide-react';
 import {
   scanWaybillImageForShipment,
@@ -619,12 +620,14 @@ export function QuickPalletReturnModal({
   customers,
   initialCustomerId,
   initialSiteId,
+  targetCompanyId,
   onSave,
   onClose,
 }: {
   customers: Customer[];
   initialCustomerId?: string;
   initialSiteId?: string;
+  targetCompanyId?: string | null;
   onSave: (returnedInfo: { customerName: string; quantity: number; palletType: string }) => void;
   onClose: () => void;
 }) {
@@ -641,16 +644,17 @@ export function QuickPalletReturnModal({
 
   useEffect(() => {
     if (customerId) {
-      supabase
+      let q = supabase
         .from('sites')
         .select('*')
         .eq('customer_id', customerId)
-        .order('name')
-        .then(({ data }) => setSites(data || []));
+        .order('name');
+      if (targetCompanyId) q = q.eq('company_id', targetCompanyId);
+      q.then(({ data }) => setSites(data || []));
     } else {
       setSites([]);
     }
-  }, [customerId]);
+  }, [customerId, targetCompanyId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -676,6 +680,7 @@ export function QuickPalletReturnModal({
         quantity: Number(quantity),
         notes: notes.trim() ? `Kantar iadesi: ${notes.trim()}` : 'Kantarda boş palet teslim alındı.',
         created_by: user?.id,
+        ...(targetCompanyId ? { company_id: targetCompanyId } : {}),
       });
 
       if (insErr) throw insErr;
@@ -931,6 +936,7 @@ function ShipmentForm({
   prefilledData,
   predictedInvoiceNo,
   vehicleMemoryList,
+  targetCompanyId,
   onSaveSuccess,
   onClose,
 }: {
@@ -940,6 +946,7 @@ function ShipmentForm({
   prefilledData?: Partial<ShipmentFormData>;
   predictedInvoiceNo?: string;
   vehicleMemoryList?: VehicleMemory[];
+  targetCompanyId?: string | null;
   onSaveSuccess: (savedShipment: Shipment) => void;
   onClose: () => void;
 }) {
@@ -1167,98 +1174,108 @@ function ShipmentForm({
 
   useEffect(() => {
     if (form.customer_id) {
-      supabase
+      let sitesQuery = supabase
         .from('sites')
         .select('*')
         .eq('customer_id', form.customer_id)
-        .order('name')
-        .then(({ data }) => setSites(data || []));
+        .order('name');
+      if (targetCompanyId) sitesQuery = sitesQuery.eq('company_id', targetCompanyId);
+      sitesQuery.then(({ data }) => setSites(data || []));
 
       // Fetch customer quotas
-      supabase
+      let quotasQuery = supabase
         .from('customer_quotas')
         .select('*, products(*), sites(*)')
         .eq('customer_id', form.customer_id)
-        .eq('is_active', true)
-        .then(async ({ data: qData }) => {
-          if (!qData || qData.length === 0) {
-            setCustomerQuotas([]);
-            return;
-          }
+        .eq('is_active', true);
+      if (targetCompanyId) quotasQuery = quotasQuery.eq('company_id', targetCompanyId);
 
-          const { data: shipData } = await supabase
-            .from('shipment_items')
-            .select('product_id, m2, unit, shipments!inner(id, shipment_date, customer_id, site_id, status)')
-            .eq('shipments.customer_id', form.customer_id)
-            .eq('shipments.status', 'completed');
+      quotasQuery.then(async ({ data: qData }) => {
+        if (!qData || qData.length === 0) {
+          setCustomerQuotas([]);
+          return;
+        }
 
-          const calculated = qData.map((quota) => {
-            const matching = (shipData || []).filter((item) => {
-              const s: any = Array.isArray(item.shipments) ? item.shipments[0] : item.shipments;
-              if (!s) return false;
-              if (initial && s.id === initial.id) return false;
-              if (quota.site_id && s.site_id !== quota.site_id) return false;
-              if (quota.product_id && item.product_id !== quota.product_id) return false;
-              if (quota.start_date && s.shipment_date < quota.start_date) return false;
-              if (quota.end_date && s.shipment_date > quota.end_date) return false;
-              const itemUnit = item.unit || 'm2';
-              if (!quota.product_id && itemUnit !== quota.unit) return false;
-              return true;
-            });
-            const shipped = matching.reduce((acc, cur) => acc + (Number(cur.m2) || 0), 0);
-            const remaining = Number(quota.target_quantity) - shipped;
-            const pct = Math.round((shipped / Number(quota.target_quantity)) * 100);
-            return {
-              ...quota,
-              unit_price: getQuotaUnitPrice(quota),
-              shipped,
-              remaining,
-              pct,
-            };
+        let shipItemsQuery = supabase
+          .from('shipment_items')
+          .select('product_id, m2, unit, shipments!inner(id, shipment_date, customer_id, site_id, status)')
+          .eq('shipments.customer_id', form.customer_id)
+          .eq('shipments.status', 'completed');
+        if (targetCompanyId) shipItemsQuery = shipItemsQuery.eq('company_id', targetCompanyId);
+
+        const { data: shipData } = await shipItemsQuery;
+
+        const calculated = qData.map((quota) => {
+          const matching = (shipData || []).filter((item) => {
+            const s: any = Array.isArray(item.shipments) ? item.shipments[0] : item.shipments;
+            if (!s) return false;
+            if (initial && s.id === initial.id) return false;
+            if (quota.site_id && s.site_id !== quota.site_id) return false;
+            if (quota.product_id && item.product_id !== quota.product_id) return false;
+            if (quota.start_date && s.shipment_date < quota.start_date) return false;
+            if (quota.end_date && s.shipment_date > quota.end_date) return false;
+            const itemUnit = item.unit || 'm2';
+            if (!quota.product_id && itemUnit !== quota.unit) return false;
+            return true;
           });
-          setCustomerQuotas(calculated);
+          const shipped = matching.reduce((acc, cur) => acc + (Number(cur.m2) || 0), 0);
+          const remaining = Number(quota.target_quantity) - shipped;
+          const pct = Math.round((shipped / Number(quota.target_quantity)) * 100);
+          return {
+            ...quota,
+            unit_price: getQuotaUnitPrice(quota),
+            shipped,
+            remaining,
+            pct,
+          };
         });
+        setCustomerQuotas(calculated);
+      });
 
       // Fetch recent shipments to get last price memory (Priority 3)
-      supabase
+      let pastShipsQuery = supabase
         .from('shipments')
         .select('id, sale_price_per_m2, notes, shipment_items(product_id, unit_price)')
         .eq('customer_id', form.customer_id)
         .eq('status', 'completed')
         .order('shipment_date', { ascending: false })
-        .limit(30)
-        .then(({ data: pastShips }) => {
-          const map: Record<string, number> = {};
-          if (pastShips) {
-            for (const s of pastShips) {
-              const notesPrices = parseItemPricesFromNotes(s.notes);
-              const items = (s as any).shipment_items || [];
-              for (const it of items) {
-                if (it.product_id && !map[it.product_id]) {
-                  const itemPrice =
-                    (Number(it.unit_price) > 0 ? Number(it.unit_price) : 0) ||
-                    notesPrices[it.product_id] ||
-                    (Number(s.sale_price_per_m2) > 0 ? Number(s.sale_price_per_m2) : 0);
-                  if (itemPrice > 0) {
-                    map[it.product_id] = itemPrice;
-                  }
+        .limit(30);
+      if (targetCompanyId) pastShipsQuery = pastShipsQuery.eq('company_id', targetCompanyId);
+
+      pastShipsQuery.then(({ data: pastShips }) => {
+        const map: Record<string, number> = {};
+        if (pastShips) {
+          for (const s of pastShips) {
+            const notesPrices = parseItemPricesFromNotes(s.notes);
+            const items = (s as any).shipment_items || [];
+            for (const it of items) {
+              if (it.product_id && !map[it.product_id]) {
+                const itemPrice =
+                  (Number(it.unit_price) > 0 ? Number(it.unit_price) : 0) ||
+                  notesPrices[it.product_id] ||
+                  (Number(s.sale_price_per_m2) > 0 ? Number(s.sale_price_per_m2) : 0);
+                if (itemPrice > 0) {
+                  map[it.product_id] = itemPrice;
                 }
               }
             }
           }
-          setLastShipmentPriceMap(map);
-        });
+        }
+        setLastShipmentPriceMap(map);
+      });
     } else {
       setSites([]);
       setCustomerQuotas([]);
       setLastShipmentPriceMap({});
     }
-  }, [form.customer_id, initial]);
+  }, [form.customer_id, initial, targetCompanyId]);
 
   useEffect(() => {
     const fetchStock = async () => {
       // 1. Stok görünümü
-      const stockRes = await supabase.from('v_product_stock').select('*');
+      let stockQuery = supabase.from('v_product_stock').select('*');
+      if (targetCompanyId) stockQuery = stockQuery.eq('company_id', targetCompanyId);
+      const stockRes = await stockQuery;
       const map: Record<string, number> = {};
       for (const p of products) {
         const stockRow = (stockRes.data || []).find((x: any) => x.product_id === p.id);
@@ -1433,6 +1450,7 @@ function ShipmentForm({
           customer_id: form.customer_id,
           name: newSiteName.trim(),
           is_active: true,
+          ...(targetCompanyId ? { company_id: targetCompanyId } : {}),
         })
         .select()
         .single();
@@ -1440,11 +1458,13 @@ function ShipmentForm({
       if (siteErr) throw siteErr;
 
       // Güncel şantiye listesini tekrar yükle
-      const { data: updatedSites } = await supabase
+      let updatedSitesQ = supabase
         .from('sites')
         .select('*')
         .eq('customer_id', form.customer_id)
         .order('name');
+      if (targetCompanyId) updatedSitesQ = updatedSitesQ.eq('company_id', targetCompanyId);
+      const { data: updatedSites } = await updatedSitesQ;
 
       setSites(updatedSites || []);
 
@@ -1628,6 +1648,7 @@ function ShipmentForm({
       shipment_date: form.shipment_date,
       supplier_name: form.is_external ? form.supplier_name.trim() || 'Dış Tedarikçi' : null,
       notes: updatedNotes,
+      ...(targetCompanyId ? { company_id: targetCompanyId } : {}),
     };
 
     let resultShipment: any = null;
@@ -1654,6 +1675,7 @@ function ShipmentForm({
           unit: i.unit,
           unit_price: Number(i.unit_price) || 0,
           total_price: (Number(i.unit_price) || 0) * (Number(i.m2) || 0),
+          ...(targetCompanyId ? { company_id: targetCompanyId } : {}),
         }));
 
       let { error: itemsErr } = await supabase.from('shipment_items').insert(itemsToInsertWithPrice);
@@ -1667,6 +1689,7 @@ function ShipmentForm({
             pallet_type: i.pallet_type,
             m2: i.m2,
             unit: i.unit,
+            ...(targetCompanyId ? { company_id: targetCompanyId } : {}),
           }));
         const fallbackRes = await supabase.from('shipment_items').insert(itemsPlain);
         itemsErr = fallbackRes.error;
@@ -1695,6 +1718,7 @@ function ShipmentForm({
         quantity: qty,
         notes: `${form.invoice_no} no'lu sevkiyat ile gönderildi.`,
         created_by: user?.id,
+        ...(targetCompanyId ? { company_id: targetCompanyId } : {}),
       }));
 
       if (palletTransactions.length > 0) {
@@ -1740,6 +1764,7 @@ function ShipmentForm({
           unit: i.unit,
           unit_price: Number(i.unit_price) || 0,
           total_price: (Number(i.unit_price) || 0) * (Number(i.m2) || 0),
+          ...(targetCompanyId ? { company_id: targetCompanyId } : {}),
         }));
 
       let { error: itemsErr } = await supabase.from('shipment_items').insert(itemsToInsertWithPrice);
@@ -1753,6 +1778,7 @@ function ShipmentForm({
             pallet_type: i.pallet_type,
             m2: i.m2,
             unit: i.unit,
+            ...(targetCompanyId ? { company_id: targetCompanyId } : {}),
           }));
         const fallbackRes = await supabase.from('shipment_items').insert(itemsPlain);
         itemsErr = fallbackRes.error;
@@ -1781,6 +1807,7 @@ function ShipmentForm({
         quantity: qty,
         notes: `${form.invoice_no} no'lu sevkiyat ile gönderildi.`,
         created_by: user?.id,
+        ...(targetCompanyId ? { company_id: targetCompanyId } : {}),
       }));
 
       if (palletTransactions.length > 0) {
@@ -2826,7 +2853,50 @@ function ShipmentDetail({
 
 // ── MAIN SHIPMENT PAGE COMPONENT ──
 export default function ShipmentPage() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, isSuperAdmin, profile } = useAuth();
+
+  // Multi-Tenant Isolation & Super Admin Company Switching (Senkronize Matris & Rapor Seçimi)
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>(() => {
+    return localStorage.getItem('parke_matrix_selected_company') || '';
+  });
+
+  // Fetch all companies if Super Admin to enable tenant switching
+  useEffect(() => {
+    if (isSuperAdmin()) {
+      supabase
+        .from('companies')
+        .select('*')
+        .eq('is_active', true)
+        .order('created_at', { ascending: true })
+        .then(({ data }) => {
+          if (data && data.length > 0) {
+            setCompanies(data);
+            if (!selectedCompanyId) {
+              const defaultId = profile?.company_id || data[0].id;
+              setSelectedCompanyId(defaultId);
+            }
+          }
+        });
+    }
+  }, [profile?.is_super_admin, profile?.company_id]);
+
+  // Target Company ID: strictly isolates queries by company
+  const targetCompanyId = useMemo(() => {
+    if (isSuperAdmin()) {
+      return selectedCompanyId || profile?.company_id || (companies[0]?.id ?? null);
+    }
+    return profile?.company_id || null;
+  }, [isSuperAdmin, selectedCompanyId, profile?.company_id, companies]);
+
+  const activeCompanyName = useMemo(() => {
+    if (isSuperAdmin() && companies.length > 0) {
+      const found = companies.find((c) => c.id === targetCompanyId);
+      if (found) return found.name;
+    }
+    return profile?.company?.name || 'Parke ERP';
+  }, [isSuperAdmin, companies, targetCompanyId, profile?.company?.name]);
+
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -2880,14 +2950,24 @@ export default function ShipmentPage() {
     setLoading(true);
     let shipList: Shipment[] = [];
     try {
+      let custQuery = supabase.from('customers').select('*').eq('is_active', true).order('name');
+      let prodQuery = supabase.from('products').select('*').eq('is_active', true).order('name');
+      let shipQuery = supabase
+        .from('shipments')
+        .select('*, customers(*), sites(*), shipment_items(*, products(*)), external_purchases(*)')
+        .order('shipment_date', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (targetCompanyId) {
+        custQuery = custQuery.eq('company_id', targetCompanyId);
+        prodQuery = prodQuery.eq('company_id', targetCompanyId);
+        shipQuery = shipQuery.eq('company_id', targetCompanyId);
+      }
+
       const [custRes, prodRes, shipRes] = await Promise.all([
-        supabase.from('customers').select('*').eq('is_active', true).order('name'),
-        supabase.from('products').select('*').eq('is_active', true).order('name'),
-        supabase
-          .from('shipments')
-          .select('*, customers(*), sites(*), shipment_items(*, products(*)), external_purchases(*)')
-          .order('shipment_date', { ascending: false })
-          .order('created_at', { ascending: false }),
+        custQuery,
+        prodQuery,
+        shipQuery,
       ]);
       setCustomers(custRes.data || []);
       const localPrices = (() => {
@@ -2907,14 +2987,27 @@ export default function ShipmentPage() {
       setProducts(enrichedProducts);
 
       if (shipRes.error) {
-        const fallbackRes = await supabase
+        let fallbackQuery = supabase
           .from('shipments')
           .select('*, customers(*), sites(*), shipment_items(*, products(*))')
           .order('shipment_date', { ascending: false })
           .order('created_at', { ascending: false });
+        if (targetCompanyId) {
+          fallbackQuery = fallbackQuery.eq('company_id', targetCompanyId);
+        }
+        const fallbackRes = await fallbackQuery;
         shipList = (fallbackRes.data || []) as Shipment[];
       } else {
         shipList = (shipRes.data || []) as Shipment[];
+      }
+
+      // Air-tight multi-tenant isolation: exclude any record whose customer or company belongs to another tenant
+      if (targetCompanyId) {
+        shipList = shipList.filter((s: any) => {
+          if (s.company_id && s.company_id !== targetCompanyId) return false;
+          if (s.customers?.company_id && s.customers.company_id !== targetCompanyId) return false;
+          return true;
+        });
       }
     } catch (err) {
       console.error('Sevkiyat verisi yüklenirken hata:', err);
@@ -2925,7 +3018,7 @@ export default function ShipmentPage() {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [targetCompanyId]);
 
   // Predicted Next Waybill Number
   const predictedInvoiceNo = useMemo(() => predictNextInvoiceNo(shipments), [shipments]);
@@ -3008,15 +3101,44 @@ export default function ShipmentPage() {
       {/* ── TOP HEADER & ACTIONS ── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2">
         <div>
-          <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2">
-            <Truck size={26} className="text-blue-600" /> Sevkiyat & Kantar Şefliği
-          </h1>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2">
+              <Truck size={26} className="text-blue-600" /> Sevkiyat & Kantar Şefliği
+            </h1>
+            <span className="px-2.5 py-0.5 text-xs font-bold bg-slate-100 text-slate-700 rounded-full border border-slate-200 flex items-center gap-1.5 shadow-2xs">
+              <Building2 size={13} className="text-slate-500" />
+              {activeCompanyName}
+            </span>
+          </div>
           <p className="text-slate-500 text-sm mt-0.5">
             Otomatik akıllı fiyatlandırma, plaka hafızası, kantar tartımı ve anlık sevk fişi çıktısı
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* Super Admin Firma Değiştirme Seçici */}
+          {isSuperAdmin() && companies.length > 0 && (
+            <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-300 rounded-xl px-2.5 py-1 shadow-2xs">
+              <Building2 size={15} className="text-amber-700 shrink-0" />
+              <span className="text-[11px] font-bold text-amber-900 shrink-0">Firma:</span>
+              <select
+                value={targetCompanyId || ''}
+                onChange={(e) => {
+                  const newId = e.target.value;
+                  setSelectedCompanyId(newId);
+                  localStorage.setItem('parke_matrix_selected_company', newId);
+                }}
+                className="text-xs font-bold text-slate-800 bg-white border border-amber-200 rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer"
+              >
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <button
             type="button"
             onClick={() => {
@@ -3350,6 +3472,7 @@ export default function ShipmentPage() {
             initial={editShipment}
             predictedInvoiceNo={predictedInvoiceNo}
             vehicleMemoryList={vehicleMemoryList}
+            targetCompanyId={targetCompanyId}
             onSaveSuccess={handleSaveSuccess}
             onClose={() => {
               setShowModal(false);
@@ -3393,6 +3516,7 @@ export default function ShipmentPage() {
           customers={customers}
           initialCustomerId={quickPalletInitialCustomer}
           initialSiteId={quickPalletInitialSite}
+          targetCompanyId={targetCompanyId}
           onSave={handlePalletReturnSuccess}
           onClose={() => setShowQuickPalletModal(false)}
         />
