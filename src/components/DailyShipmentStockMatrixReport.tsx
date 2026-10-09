@@ -193,17 +193,35 @@ export default function DailyShipmentStockMatrixReport() {
         .limit(50000);
 
       // Multi-tenant isolation: strictly filter all tables and views by targetCompanyId
+      const isDefaultCompany =
+        !targetCompanyId ||
+        targetCompanyId === companies[0]?.id ||
+        targetCompanyId === profile?.company_id;
+
       if (targetCompanyId) {
-        prodQuery = prodQuery.eq('company_id', targetCompanyId);
-        custQuery = custQuery.eq('company_id', targetCompanyId);
-        sitesQuery = sitesQuery.eq('company_id', targetCompanyId);
-        palletBalQuery = palletBalQuery.eq('company_id', targetCompanyId);
-        shipQuery = shipQuery.eq('company_id', targetCompanyId);
-        prodEntriesQuery = prodEntriesQuery.eq('company_id', targetCompanyId);
-        stockQuery = stockQuery.eq('company_id', targetCompanyId);
-        latestShipQuery = latestShipQuery.eq('company_id', targetCompanyId);
-        quotasQuery = quotasQuery.eq('company_id', targetCompanyId);
-        cumShipItemsQuery = cumShipItemsQuery.eq('company_id', targetCompanyId);
+        if (isDefaultCompany) {
+          prodQuery = prodQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+          custQuery = custQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+          sitesQuery = sitesQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+          palletBalQuery = palletBalQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+          shipQuery = shipQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+          prodEntriesQuery = prodEntriesQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+          stockQuery = stockQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+          latestShipQuery = latestShipQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+          quotasQuery = quotasQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+          cumShipItemsQuery = cumShipItemsQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+        } else {
+          prodQuery = prodQuery.eq('company_id', targetCompanyId);
+          custQuery = custQuery.eq('company_id', targetCompanyId);
+          sitesQuery = sitesQuery.eq('company_id', targetCompanyId);
+          palletBalQuery = palletBalQuery.eq('company_id', targetCompanyId);
+          shipQuery = shipQuery.eq('company_id', targetCompanyId);
+          prodEntriesQuery = prodEntriesQuery.eq('company_id', targetCompanyId);
+          stockQuery = stockQuery.eq('company_id', targetCompanyId);
+          latestShipQuery = latestShipQuery.eq('company_id', targetCompanyId);
+          quotasQuery = quotasQuery.eq('company_id', targetCompanyId);
+          cumShipItemsQuery = cumShipItemsQuery.eq('company_id', targetCompanyId);
+        }
       }
 
       const [prodRes, custRes, sitesRes, palletBalRes, shipRes, prodEntriesRes, stockRes, latestShipRes, quotasRes, cumShipItemsRes] = await Promise.all([

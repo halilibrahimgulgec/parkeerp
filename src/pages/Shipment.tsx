@@ -2950,6 +2950,11 @@ export default function ShipmentPage() {
     setLoading(true);
     let shipList: Shipment[] = [];
     try {
+      const isDefaultCompany =
+        !targetCompanyId ||
+        targetCompanyId === companies[0]?.id ||
+        targetCompanyId === profile?.company_id;
+
       let custQuery = supabase.from('customers').select('*').eq('is_active', true).order('name');
       let prodQuery = supabase.from('products').select('*').eq('is_active', true).order('name');
       let shipQuery = supabase
@@ -2959,9 +2964,15 @@ export default function ShipmentPage() {
         .order('created_at', { ascending: false });
 
       if (targetCompanyId) {
-        custQuery = custQuery.eq('company_id', targetCompanyId);
-        prodQuery = prodQuery.eq('company_id', targetCompanyId);
-        shipQuery = shipQuery.eq('company_id', targetCompanyId);
+        if (isDefaultCompany) {
+          custQuery = custQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+          prodQuery = prodQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+          shipQuery = shipQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+        } else {
+          custQuery = custQuery.eq('company_id', targetCompanyId);
+          prodQuery = prodQuery.eq('company_id', targetCompanyId);
+          shipQuery = shipQuery.eq('company_id', targetCompanyId);
+        }
       }
 
       const [custRes, prodRes, shipRes] = await Promise.all([
@@ -2993,7 +3004,11 @@ export default function ShipmentPage() {
           .order('shipment_date', { ascending: false })
           .order('created_at', { ascending: false });
         if (targetCompanyId) {
-          fallbackQuery = fallbackQuery.eq('company_id', targetCompanyId);
+          if (isDefaultCompany) {
+            fallbackQuery = fallbackQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+          } else {
+            fallbackQuery = fallbackQuery.eq('company_id', targetCompanyId);
+          }
         }
         const fallbackRes = await fallbackQuery;
         shipList = (fallbackRes.data || []) as Shipment[];
@@ -3006,8 +3021,23 @@ export default function ShipmentPage() {
         shipList = shipList.filter((s: any) => {
           if (s.company_id && s.company_id !== targetCompanyId) return false;
           if (s.customers?.company_id && s.customers.company_id !== targetCompanyId) return false;
+          if (!s.company_id && !s.customers?.company_id && !isDefaultCompany) return false;
           return true;
         });
+      }
+
+      // Auto-backfill unassigned shipments in background so company_id stays permanently populated
+      if (isSuperAdmin() && shipList.length > 0) {
+        const unassigned = shipList.filter((s: any) => !s.company_id);
+        if (unassigned.length > 0) {
+          const defaultCompId = profile?.company_id || companies[0]?.id;
+          unassigned.slice(0, 100).forEach((s: any) => {
+            const compId = s.customers?.company_id || defaultCompId;
+            if (compId) {
+              supabase.from('shipments').update({ company_id: compId }).eq('id', s.id).then();
+            }
+          });
+        }
       }
     } catch (err) {
       console.error('Sevkiyat verisi yüklenirken hata:', err);
