@@ -1592,15 +1592,23 @@ function ShipmentForm({
       return;
     }
 
-    if (!initial) {
+    // Depo Stok Kontrolü: Doğrudan tedarikçi transit sevkiyatı değilse hem yeni sevkiyatta hem düzenlemede kesinlikle stok kontrol edilir
+    const isTransit = Boolean(form.is_external && form.supplier_name.trim());
+    if (!isTransit) {
       for (const item of form.items) {
         if (!item.product_id) continue;
         const available = stockMap[item.product_id] ?? 0;
-        if (item.m2 > available) {
+        const requested = Number(item.m2) || 0;
+        if (requested > available) {
           const p = products.find((x) => x.id === item.product_id);
+          const u = item.unit === 'metre' ? 'Metre' : item.unit === 'adet' ? 'Adet' : 'm²';
           setError(
-            `"${p?.name ?? 'Ürün'}" için yeterli stok yok. Mevcut: ${available.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m², İstenen: ${item.m2} m²`
+            `🚫 İŞLEM ENGELLENDİ: "${p?.name ?? 'Ürün'}" için depoda yeterli stok yok!\n` +
+            `Depodaki Mevcut Hazır Stok: ${available.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} ${u}\n` +
+            `Çıkılmak İstenen Miktar: ${requested.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} ${u}\n` +
+            `Stok sıfır veya yetersizken sevkiyat kaydedilemez. Lütfen önce "Günlük Üretim Girişi"nden üretim fişi oluşturunuz.`
           );
+          setSaving(false);
           return;
         }
       }
@@ -2583,23 +2591,68 @@ function ShipmentForm({
         </div>
       )}
 
-      <div className="flex justify-end gap-3 pt-2">
-        <button
-          type="button"
-          onClick={onClose}
-          className="px-4 py-2 border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors text-sm"
-        >
-          İptal
-        </button>
-        <button
-          type="submit"
-          disabled={saving}
-          className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium text-sm transition-colors disabled:opacity-60 flex items-center gap-2 cursor-pointer shadow-sm"
-        >
-          {saving && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-          {initial ? 'Güncelle' : 'Sevkiyatı Kaydet'}
-        </button>
-      </div>
+      {/* Yetersiz Stok Uyarısı ve Buton Kilidi */}
+      {(() => {
+        const isTransit = Boolean(form.is_external && form.supplier_name.trim());
+        const insufficientItem = !isTransit
+          ? form.items.find((item) => {
+              if (!item.product_id) return false;
+              const available = stockMap[item.product_id] ?? 0;
+              return (Number(item.m2) || 0) > available;
+            })
+          : null;
+
+        if (!insufficientItem) return null;
+
+        const p = products.find((x) => x.id === insufficientItem.product_id);
+        const avail = stockMap[insufficientItem.product_id] ?? 0;
+        const u = insufficientItem.unit === 'metre' ? 'Metre' : insufficientItem.unit === 'adet' ? 'Adet' : 'm²';
+
+        return (
+          <div className="p-3.5 bg-red-50 border-2 border-red-300 rounded-xl flex items-start gap-2.5 text-xs text-red-900 font-medium">
+            <AlertTriangle size={18} className="text-red-600 shrink-0 mt-0.5" />
+            <div>
+              <strong className="text-red-950 block font-bold text-sm mb-0.5">🚫 Yetersiz Stok Nedeniyle Kayıt Kilitlendi:</strong>
+              "{p?.name ?? 'Seçili Ürün'}" için depodaki mevcut hazır stok <strong>{avail.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} {u}</strong> olup, çıkılmak istenen miktar <strong>{Number(insufficientItem.m2) || 0} {u}</strong> seviyesindedir. Depo stoğunun eksiye düşmemesi için sevkiyat işlemi engellenmiştir.
+              <span className="block mt-1 text-[11px] text-red-700">Lütfen miktarı düşürünüz veya önce <strong>"Günlük Üretim Girişi"</strong> yapınız.</span>
+            </div>
+          </div>
+        );
+      })()}
+
+      {(() => {
+        const isTransit = Boolean(form.is_external && form.supplier_name.trim());
+        const hasInsufficientStock = !isTransit && form.items.some((item) => {
+          if (!item.product_id) return false;
+          const available = stockMap[item.product_id] ?? 0;
+          return (Number(item.m2) || 0) > available;
+        });
+
+        return (
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors text-sm cursor-pointer"
+            >
+              İptal
+            </button>
+            <button
+              type="submit"
+              disabled={saving || hasInsufficientStock}
+              className={`px-6 py-2 rounded-lg font-bold text-sm transition-all flex items-center gap-2 shadow-sm ${
+                hasInsufficientStock
+                  ? 'bg-slate-200 text-slate-400 border border-slate-300 cursor-not-allowed opacity-70'
+                  : 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
+              }`}
+              title={hasInsufficientStock ? 'Depoda yeterli stok olmadığı için sevkiyat kaydedilemez' : undefined}
+            >
+              {saving && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+              {hasInsufficientStock ? '🚫 Yetersiz Stok (Kayıt Engellendi)' : initial ? 'Güncelle' : 'Sevkiyatı Kaydet'}
+            </button>
+          </div>
+        );
+      })()}
     </form>
 
     {/* ── HIZLI YENİ ŞANTİYE EKLEME MODALI ── */}

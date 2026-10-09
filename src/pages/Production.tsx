@@ -847,7 +847,29 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
   const selectedProductStats = productSummaryList.find(p => p.product.id === selectedProductId);
 
   const handleDelete = async (entry: ProductionEntry) => {
-    if (!confirm(`${entry.products?.name} için ${entry.date} tarihli üretim kaydını silmek istediğinize emin misiniz?`)) return;
+    try {
+      const { data: stockData } = await supabase
+        .from('v_product_stock')
+        .select('current_stock')
+        .eq('product_id', entry.product_id)
+        .maybeSingle();
+
+      const curStock = stockData?.current_stock ?? 0;
+      if (curStock < entry.net_m2) {
+        const diff = (entry.net_m2 - curStock).toFixed(1);
+        const warn = `⚠️ DİKKAT: Bu üretim kaydına ait taşların bir kısmı veya tamamı sevk edilmiştir!\n\n` +
+          `Depodaki Mevcut Stok: ${curStock} m²\n` +
+          `Silinmek İstenen Üretim: ${entry.net_m2} m²\n\n` +
+          `Bu kaydı silerseniz depo stoğu -${diff} m² ile EKSİYE DÜŞECEKTİR!\n\n` +
+          `Yine de bu kaydı silmek istediğinize emin misiniz?`;
+        if (!confirm(warn)) return;
+      } else {
+        if (!confirm(`${entry.products?.name} için ${entry.date} tarihli (${entry.net_m2} m²) üretim kaydını silmek istediğinize emin misiniz?`)) return;
+      }
+    } catch {
+      if (!confirm(`${entry.products?.name} için ${entry.date} tarihli üretim kaydını silmek istediğinize emin misiniz?`)) return;
+    }
+
     setDeleting(entry.id);
     try {
       const { error } = await supabase.from('production_entries').delete().eq('id', entry.id);
