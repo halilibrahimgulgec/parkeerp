@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { Product, Customer, Site, BOMItem, RawMaterial } from '../types';
+import { Product, Customer, Site, BOMItem, RawMaterial, Supplier } from '../types';
 import Modal from '../components/Modal';
-import { Package, Users, MapPin, BookOpen, Plus, CreditCard as Edit2, Trash2, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react';
+import { Package, Users, MapPin, BookOpen, Plus, CreditCard as Edit2, Trash2, AlertCircle, ChevronDown, ChevronRight, Building2 } from 'lucide-react';
 
-type Tab = 'products' | 'customers' | 'bom';
+type Tab = 'products' | 'customers' | 'suppliers' | 'bom';
 
 function InputField({ label, value, onChange, type = 'text', placeholder = '', required = false, children }: any) {
   return (
@@ -284,6 +284,76 @@ function CustomerFormComp({ initial, onSave, onClose }: { initial?: Customer; on
   );
 }
 
+function SupplierFormComp({ initial, onSave, onClose }: { initial?: Supplier; onSave: () => void; onClose: () => void }) {
+  const { profile } = useAuth();
+  const [form, setForm] = useState({
+    name: initial?.name || '',
+    phone: initial?.phone || '',
+    email: initial?.email || '',
+    contact_person: initial?.contact_person || '',
+    tax_number: initial?.tax_number || '',
+    address: initial?.address || '',
+    is_active: initial?.is_active ?? true,
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.name.trim()) return;
+    setSaving(true);
+    setError('');
+
+    try {
+      if (initial) {
+        const { error: err } = await supabase.from('suppliers').update(form).eq('id', initial.id);
+        if (err) throw err;
+      } else {
+        const payload = {
+          ...form,
+          ...(profile?.company_id ? { company_id: profile.company_id } : {}),
+        };
+        const { error: err } = await supabase.from('suppliers').insert(payload);
+        if (err) throw err;
+      }
+      onSave();
+    } catch (err: any) {
+      setError(err?.message || 'Kaydedilirken hata oluştu.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <InputField label="Tedarikçi / Fabrika Ünvanı" value={form.name} onChange={(e: any) => setForm((f: any) => ({ ...f, name: e.target.value }))} required placeholder="Doğan Parke Fabrikası" />
+        <InputField label="Yetkili Kişi" value={form.contact_person} onChange={(e: any) => setForm((f: any) => ({ ...f, contact_person: e.target.value }))} placeholder="Ahmet Bey" />
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <InputField label="Telefon" value={form.phone} onChange={(e: any) => setForm((f: any) => ({ ...f, phone: e.target.value }))} placeholder="05xx xxx xx xx" />
+        <InputField label="E-posta" value={form.email} onChange={(e: any) => setForm((f: any) => ({ ...f, email: e.target.value }))} placeholder="info@firma.com" />
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <InputField label="Vergi No / Daire" value={form.tax_number} onChange={(e: any) => setForm((f: any) => ({ ...f, tax_number: e.target.value }))} placeholder="1234567890" />
+        <InputField label="Adres" value={form.address} onChange={(e: any) => setForm((f: any) => ({ ...f, address: e.target.value }))} placeholder="Organize Sanayi Bölgesi..." />
+      </div>
+      <div className="flex items-center gap-2">
+        <input type="checkbox" id="sup_active" checked={form.is_active} onChange={e => setForm((f: any) => ({ ...f, is_active: e.target.checked }))} className="rounded" />
+        <label htmlFor="sup_active" className="text-sm text-slate-700">Aktif Tedarikçi</label>
+      </div>
+      {error && <div className="flex items-center gap-2 p-3 bg-red-50 text-red-700 rounded-lg text-sm"><AlertCircle size={16} />{error}</div>}
+      <div className="flex justify-end gap-3 pt-2">
+        <button type="button" onClick={onClose} className="px-4 py-2 border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 text-sm">İptal</button>
+        <button type="submit" disabled={saving} className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm disabled:opacity-60 flex items-center gap-2">
+          {saving && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+          {initial ? 'Güncelle' : 'Kaydet'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 function BOMSection({ products, rawMaterials }: { products: Product[]; rawMaterials: RawMaterial[] }) {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [bomItems, setBomItems] = useState<BOMItem[]>([]);
@@ -423,6 +493,7 @@ export default function Definitions() {
   const [tab, setTab] = useState<Tab>('products');
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -430,10 +501,11 @@ export default function Definitions() {
 
   const load = async () => {
     setLoading(true);
-    const [prodRes, custRes, rawRes] = await Promise.all([
+    const [prodRes, custRes, rawRes, supRes] = await Promise.all([
       supabase.from('products').select('*').order('name'),
       supabase.from('customers').select('*').order('name'),
       supabase.from('raw_materials').select('*').order('name'),
+      supabase.from('suppliers').select('*').order('name'),
     ]);
 
     const localPrices = (() => {
@@ -450,6 +522,7 @@ export default function Definitions() {
     setProducts(mergedProducts);
     setCustomers(custRes.data || []);
     setRawMaterials(rawRes.data || []);
+    setSuppliers(supRes.data || []);
     setLoading(false);
   };
 
@@ -458,6 +531,7 @@ export default function Definitions() {
   const TABS = [
     { id: 'products' as Tab, label: 'Ürün Kartları', icon: Package, count: products.length },
     { id: 'customers' as Tab, label: 'Müşteriler', icon: Users, count: customers.length },
+    { id: 'suppliers' as Tab, label: 'Tedarikçiler (Dış Firmalar)', icon: Building2, count: suppliers.length },
     { id: 'bom' as Tab, label: 'Reçete (BOM)', icon: BookOpen, count: rawMaterials.length },
   ];
 
@@ -466,12 +540,12 @@ export default function Definitions() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Tanımlamalar</h1>
-          <p className="text-slate-500 text-sm mt-1">Ürün, müşteri ve reçete yönetimi</p>
+          <p className="text-slate-500 text-sm mt-1">Ürün, müşteri, tedarikçi ve reçete yönetimi</p>
         </div>
         {tab !== 'bom' && (
           <button onClick={() => { setEditItem(null); setShowModal(true); }}
             className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl font-medium text-sm transition-colors shadow-sm">
-            <Plus size={18} /> {tab === 'products' ? 'Yeni Ürün' : 'Yeni Müşteri'}
+            <Plus size={18} /> {tab === 'products' ? 'Yeni Ürün' : tab === 'customers' ? 'Yeni Müşteri' : 'Yeni Tedarikçi'}
           </button>
         )}
       </div>
@@ -550,7 +624,7 @@ export default function Definitions() {
             </tbody>
           </table>
         </div>
-      ) : (
+      ) : tab === 'customers' ? (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
           <table className="w-full text-sm">
             <thead>
@@ -585,15 +659,59 @@ export default function Definitions() {
             </tbody>
           </table>
         </div>
+      ) : (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-slate-500 bg-slate-50 border-b border-slate-100">
+                {['Tedarikçi / Fabrika Ünvanı', 'Yetkili Kişi', 'Telefon', 'Vergi No', 'Durum', ''].map((h, i) => (
+                  <th key={i} className="px-4 py-3 font-medium text-xs uppercase tracking-wider">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {suppliers.length === 0 ? (
+                <tr><td colSpan={6} className="text-center py-12 text-slate-400">Henüz tedarikçi tanımı yok.</td></tr>
+              ) : suppliers.map(s => (
+                <tr key={s.id} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="px-4 py-3 font-medium text-slate-800">{s.name}</td>
+                  <td className="px-4 py-3 text-slate-600">{s.contact_person || '-'}</td>
+                  <td className="px-4 py-3 text-slate-600">{s.phone || '-'}</td>
+                  <td className="px-4 py-3 font-mono text-slate-500 text-xs">{s.tax_number || '-'}</td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${s.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                      {s.is_active ? 'Aktif' : 'Pasif'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <button onClick={() => { setEditItem(s); setShowModal(true); }}
+                      className="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-colors">
+                      <Edit2 size={14} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {showModal && (
-        <Modal title={tab === 'products' ? (editItem ? 'Ürün Düzenle' : 'Yeni Ürün') : (editItem ? 'Müşteri Düzenle' : 'Yeni Müşteri')}
-          onClose={() => setShowModal(false)} size="lg">
+        <Modal
+          title={
+            tab === 'products' ? (editItem ? 'Ürün Düzenle' : 'Yeni Ürün') :
+            tab === 'customers' ? (editItem ? 'Müşteri Düzenle' : 'Yeni Müşteri') :
+            (editItem ? 'Tedarikçi Düzenle' : 'Yeni Tedarikçi')
+          }
+          onClose={() => setShowModal(false)}
+          size="lg"
+        >
           {tab === 'products' ? (
             <ProductFormComp initial={editItem} onSave={() => { setShowModal(false); load(); }} onClose={() => setShowModal(false)} />
-          ) : (
+          ) : tab === 'customers' ? (
             <CustomerFormComp initial={editItem} onSave={(_c) => { setShowModal(false); load(); }} onClose={() => setShowModal(false)} />
+          ) : (
+            <SupplierFormComp initial={editItem} onSave={() => { setShowModal(false); load(); }} onClose={() => setShowModal(false)} />
           )}
         </Modal>
       )}

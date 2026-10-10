@@ -4,10 +4,10 @@ import {
   LayoutDashboard, Factory, Truck, DollarSign, Package,
   BarChart3, LogOut, ChevronRight, ShieldCheck, Users, Boxes,
   UserCheck, Target, ShoppingBag, Sparkles, X, Search, Building2,
-  Layers
+  Layers, CreditCard
 } from 'lucide-react';
 
-type Page = 'dashboard' | 'production' | 'production_planning' | 'molds' | 'purchases' | 'shipment' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking' | 'super_admin_companies';
+type Page = 'dashboard' | 'production' | 'production_planning' | 'molds' | 'purchases' | 'shipment' | 'customer_balances' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking' | 'super_admin_companies';
 
 interface SidebarProps {
   currentPage: Page;
@@ -106,6 +106,14 @@ export default function Sidebar({ currentPage, onNavigate, onCloseMobile }: Side
           access: isWeighbridge(),
           badge: 'Kantar',
           badgeColor: 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+        },
+        { 
+          id: 'customer_balances', 
+          label: 'Müşteri Cari & Bakiye', 
+          icon: CreditCard, 
+          access: isWeighbridge() || isFieldManager() || isAdmin(),
+          badge: 'Cari',
+          badgeColor: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
         },
         { id: 'customer_quotas', label: 'Müşteri Kotaları & Sevk', icon: Target, access: isWeighbridge() },
         { id: 'purchases', label: 'Dış Alım & Transit', icon: ShoppingBag, access: isFieldManager() || isWeighbridge() || isAdmin() },

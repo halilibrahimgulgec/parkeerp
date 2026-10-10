@@ -429,3 +429,53 @@ export interface MoldSummary extends Mold {
   last_maintenance_date?: string | null;
 }
 
+export interface Supplier {
+  id: string;
+  company_id?: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  contact_person?: string;
+  address?: string;
+  tax_number?: string;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CustomerPayment {
+  id: string;
+  company_id?: string;
+  customer_id: string;
+  date: string;
+  payment_type: 'havale' | 'nakit' | 'cek' | 'kredi_karti' | 'diger';
+  amount: number;
+  document_no?: string;
+  bank_name?: string;
+  due_date?: string | null;
+  notes?: string;
+  created_by?: string;
+  created_at?: string;
+  customers?: Customer;
+}
+
+export interface CustomerBalanceSummary extends Customer {
+  total_debit: number;
+  total_credit: number;
+  balance: number;
+  last_shipment_date?: string | null;
+  last_payment_date?: string | null;
+}
+
+export interface CariStatementItem {
+  id: string;
+  date: string;
+  type: 'shipment' | 'payment';
+  document_no: string;
+  description: string;
+  debit: number;
+  credit: number;
+  running_balance: number;
+  raw_data?: any;
+}
+

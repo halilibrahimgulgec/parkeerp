@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { Product, Customer, Site, ExternalPurchase } from '../types';
+import { Product, Customer, Site, ExternalPurchase, Supplier } from '../types';
 import Modal from '../components/Modal';
 import {
   ShoppingBag, Plus, Truck, Search, Filter,
@@ -65,7 +65,14 @@ export default function Purchases() {
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Quick Supplier Modal State
+  const [showQuickSupplierModal, setShowQuickSupplierModal] = useState(false);
+  const [newSupplierName, setNewSupplierName] = useState('');
+  const [newSupplierPhone, setNewSupplierPhone] = useState('');
+  const [addingSupplier, setAddingSupplier] = useState(false);
 
   // Modal & Form State
   const [showModal, setShowModal] = useState(false);
@@ -84,7 +91,7 @@ export default function Purchases() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [purchRes, prodRes, custRes, siteRes] = await Promise.all([
+      const [purchRes, prodRes, custRes, siteRes, supRes] = await Promise.all([
         supabase
           .from('external_purchases')
           .select('*, products(*), shipments(*, customers(*), sites(*))')
@@ -93,16 +100,43 @@ export default function Purchases() {
         supabase.from('products').select('*').eq('is_active', true).order('name'),
         supabase.from('customers').select('*').eq('is_active', true).order('name'),
         supabase.from('sites').select('*').eq('is_active', true).order('name'),
+        supabase.from('suppliers').select('*').eq('is_active', true).order('name'),
       ]);
 
       if (purchRes.data) setPurchases(purchRes.data as any);
       if (prodRes.data) setProducts(prodRes.data);
       if (custRes.data) setCustomers(custRes.data);
       if (siteRes.data) setSites(siteRes.data);
+      if (supRes.data) setSuppliers(supRes.data);
     } catch (err) {
       console.error('Veri yükleme hatası:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleAddQuickSupplier = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSupplierName.trim()) return;
+    setAddingSupplier(true);
+    try {
+      const { data, error: supErr } = await supabase.from('suppliers').insert({
+        name: newSupplierName.trim(),
+        phone: newSupplierPhone.trim(),
+        is_active: true,
+      }).select().single();
+      if (supErr) throw supErr;
+      if (data) {
+        setSuppliers((prev) => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
+        setForm((f) => ({ ...f, supplier_name: data.name }));
+      }
+      setNewSupplierName('');
+      setNewSupplierPhone('');
+      setShowQuickSupplierModal(false);
+    } catch (err: any) {
+      alert(`Tedarikçi eklenirken hata: ${err?.message || 'Bilinmeyen hata'}`);
+    } finally {
+      setAddingSupplier(false);
     }
   };
 
@@ -773,15 +807,34 @@ export default function Purchases() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Tedarikçi (Fabrika) Adı *</label>
-                  <input
-                    type="text"
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-semibold text-slate-700">Tedarikçi Carisi *</label>
+                    <button
+                      type="button"
+                      onClick={() => setShowQuickSupplierModal(true)}
+                      className="text-[11px] text-amber-700 hover:text-amber-900 font-bold flex items-center gap-0.5 cursor-pointer"
+                    >
+                      <Plus size={12} /> + Yeni Tedarikçi
+                    </button>
+                  </div>
+                  <select
                     required
-                    placeholder="Örn: Doğan Parke Fabrikası"
                     value={form.supplier_name}
                     onChange={e => setForm({ ...form, supplier_name: e.target.value })}
-                    className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-amber-400"
-                  />
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                  >
+                    <option value="">Tedarikçi Seçin...</option>
+                    {suppliers.map(s => (
+                      <option key={s.id} value={s.name}>
+                        🏭 {s.name} {s.phone ? `(${s.phone})` : ''}
+                      </option>
+                    ))}
+                    {form.supplier_name && !suppliers.some(s => s.name === form.supplier_name) && (
+                      <option value={form.supplier_name}>
+                        🏭 {form.supplier_name}
+                      </option>
+                    )}
+                  </select>
                 </div>
               </div>
 
@@ -1060,6 +1113,70 @@ export default function Purchases() {
               >
                 {saving && <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                 {editingItem ? 'Güncelle' : form.is_direct_shipment ? 'Transit Sevk & Alımı Kaydet' : 'Dış Alımı Kaydet'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* ── HIZLI YENİ TEDARİKÇİ EKLEME MODALI ── */}
+      {showQuickSupplierModal && (
+        <Modal
+          title="Yeni Tedarikçi (Dış Fabrika) Ekle"
+          onClose={() => {
+            setShowQuickSupplierModal(false);
+            setNewSupplierName('');
+            setNewSupplierPhone('');
+          }}
+          size="sm"
+        >
+          <form onSubmit={handleAddQuickSupplier} className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Tedarikçi / Fabrika Ünvanı <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={newSupplierName}
+                onChange={(e) => setNewSupplierName(e.target.value)}
+                placeholder="Örn: Doğan Parke ve Beton Elemanları"
+                className="w-full border border-slate-200 rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 font-medium"
+                required
+                autoFocus
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Telefon (Opsiyonel)
+              </label>
+              <input
+                type="text"
+                value={newSupplierPhone}
+                onChange={(e) => setNewSupplierPhone(e.target.value)}
+                placeholder="Örn: 0532 xxx xx xx"
+                className="w-full border border-slate-200 rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 font-medium"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowQuickSupplierModal(false);
+                  setNewSupplierName('');
+                  setNewSupplierPhone('');
+                }}
+                className="px-3.5 py-2 text-slate-600 hover:bg-slate-100 rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                Vazgeç
+              </button>
+              <button
+                type="submit"
+                disabled={addingSupplier || !newSupplierName.trim()}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5 shadow-xs"
+              >
+                {addingSupplier ? 'Kaydediliyor...' : 'Kaydet ve Seç'}
               </button>
             </div>
           </form>

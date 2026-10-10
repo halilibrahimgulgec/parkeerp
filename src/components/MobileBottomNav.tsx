@@ -8,6 +8,7 @@ type Page =
   | 'molds'
   | 'purchases'
   | 'shipment'
+  | 'customer_balances'
   | 'customer_quotas'
   | 'costs'
   | 'definitions'

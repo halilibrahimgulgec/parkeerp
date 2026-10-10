@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { Shipment, Customer, Site, Product, Company } from '../types';
+import { Shipment, Customer, Site, Product, Company, Supplier } from '../types';
 import Modal from '../components/Modal';
 import {
   Plus,
@@ -1058,6 +1058,96 @@ function ShipmentForm({
   const [error, setError] = useState('');
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
 
+  // Tedarikçi Carileri & Hızlı Ekleme
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [showQuickSupplierModal, setShowQuickSupplierModal] = useState(false);
+  const [newSupplierName, setNewSupplierName] = useState('');
+  const [newSupplierPhone, setNewSupplierPhone] = useState('');
+  const [addingSupplier, setAddingSupplier] = useState(false);
+
+  // Müşteri Güncel Cari Bakiyesi
+  const [customerBalance, setCustomerBalance] = useState<number | null>(null);
+
+  useEffect(() => {
+    let supQ = supabase.from('suppliers').select('*').eq('is_active', true).order('name');
+    if (targetCompanyId) supQ = supQ.eq('company_id', targetCompanyId);
+    supQ.then(({ data }) => setSuppliers(data || [])).catch(() => setSuppliers([]));
+  }, [targetCompanyId]);
+
+  useEffect(() => {
+    if (!form.customer_id) {
+      setCustomerBalance(null);
+      return;
+    }
+    // Fetch customer balance
+    (async () => {
+      try {
+        let sQ = supabase
+          .from('shipments')
+          .select('id, sale_price_per_m2, total_m2, shipment_items(m2, unit_price, total_price)')
+          .eq('customer_id', form.customer_id)
+          .eq('status', 'completed');
+        if (targetCompanyId) sQ = sQ.eq('company_id', targetCompanyId);
+        const { data: sData } = await sQ;
+
+        let totalDebit = 0;
+        (sData || []).forEach((s: any) => {
+          let sTot = 0;
+          (s.shipment_items || []).forEach((it: any) => {
+            sTot += Number(it.total_price) || (Number(it.m2) || 0) * (Number(it.unit_price) || 0);
+          });
+          if (sTot === 0 && Number(s.sale_price_per_m2) > 0) {
+            sTot = (Number(s.total_m2) || 0) * Number(s.sale_price_per_m2);
+          }
+          totalDebit += sTot;
+        });
+
+        let pQ = supabase
+          .from('customer_payments')
+          .select('amount')
+          .eq('customer_id', form.customer_id);
+        if (targetCompanyId) pQ = pQ.eq('company_id', targetCompanyId);
+        const { data: pData } = await pQ;
+
+        let totalCredit = 0;
+        (pData || []).forEach((p: any) => {
+          totalCredit += Number(p.amount) || 0;
+        });
+
+        setCustomerBalance(Math.round((totalDebit - totalCredit) * 100) / 100);
+      } catch (err) {
+        setCustomerBalance(null);
+      }
+    })();
+  }, [form.customer_id, targetCompanyId]);
+
+  const handleAddQuickSupplier = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSupplierName.trim()) return;
+    setAddingSupplier(true);
+    try {
+      const payload = {
+        name: newSupplierName.trim(),
+        phone: newSupplierPhone.trim(),
+        is_active: true,
+        ...(targetCompanyId ? { company_id: targetCompanyId } : {}),
+      };
+      const { data, error: supErr } = await supabase.from('suppliers').insert(payload).select().single();
+      if (supErr) throw supErr;
+      if (data) {
+        setSuppliers((prev) => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
+        setForm((f) => ({ ...f, supplier_name: data.name }));
+      }
+      setNewSupplierName('');
+      setNewSupplierPhone('');
+      setShowQuickSupplierModal(false);
+    } catch (err: any) {
+      alert(`Tedarikçi eklenirken hata: ${err?.message || 'Bilinmeyen hata'}`);
+    } finally {
+      setAddingSupplier(false);
+    }
+  };
+
   // OCR Scanning states
   const [isScanning, setIsScanning] = useState(false);
   const [scanStepMessage, setScanStepMessage] = useState('');
@@ -1982,6 +2072,24 @@ function ShipmentForm({
               </option>
             ))}
           </select>
+          {form.customer_id && customerBalance !== null && (
+            <div className="mt-1.5 flex items-center gap-1.5 text-xs font-semibold">
+              <span className="text-slate-500">Cari Bakiye:</span>
+              {customerBalance > 0.01 ? (
+                <span className="px-2 py-0.5 rounded-md text-[11px] font-black bg-red-100 text-red-800 border border-red-200 font-mono">
+                  {customerBalance.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺ (Borçlu)
+                </span>
+              ) : customerBalance < -0.01 ? (
+                <span className="px-2 py-0.5 rounded-md text-[11px] font-black bg-blue-100 text-blue-800 border border-blue-200 font-mono">
+                  {Math.abs(customerBalance).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺ (Avans)
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded-md text-[11px] font-black bg-emerald-100 text-emerald-800 border border-emerald-200 font-mono">
+                  0,00 ₺ (Borcu Yok)
+                </span>
+              )}
+            </div>
+          )}
         </div>
         <div>
           <div className="flex items-center justify-between mb-1">
@@ -2069,15 +2177,36 @@ function ShipmentForm({
 
         {form.is_external && (
           <div className="mt-3 pt-3 border-t border-amber-200/80">
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Tedarikçi (Dış Fabrika) Adı *</label>
-            <input
-              type="text"
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-semibold text-slate-700">Tedarikçi (Dış Fabrika) Carisi *</label>
+              <button
+                type="button"
+                onClick={() => setShowQuickSupplierModal(true)}
+                className="text-xs text-amber-800 hover:text-amber-950 font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                title="Yeni bir dış tedarikçi / fabrika tanımla"
+              >
+                <Plus size={13} />
+                <span>+ Yeni Tedarikçi Ekle</span>
+              </button>
+            </div>
+            <select
               required={form.is_external}
-              placeholder="Örn: Doğan Parke Fabrikası"
               value={form.supplier_name}
               onChange={(e) => setForm((f) => ({ ...f, supplier_name: e.target.value }))}
               className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
-            />
+            >
+              <option value="">Tedarikçi / Dış Fabrika Seçin...</option>
+              {suppliers.map((sup) => (
+                <option key={sup.id} value={sup.name}>
+                  🏭 {sup.name} {sup.phone ? `(${sup.phone})` : ''}
+                </option>
+              ))}
+              {form.supplier_name && !suppliers.some((s) => s.name === form.supplier_name) && (
+                <option value={form.supplier_name}>
+                  🏭 {form.supplier_name}
+                </option>
+              )}
+            </select>
           </div>
         )}
       </div>
@@ -2709,6 +2838,80 @@ function ShipmentForm({
                 <>
                   <Check size={14} />
                   <span>Şantiyeyi Kaydet</span>
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </Modal>
+    )}
+
+    {/* ── HIZLI YENİ TEDARİKÇİ EKLEME MODALI ── */}
+    {showQuickSupplierModal && (
+      <Modal
+        title="Yeni Tedarikçi (Dış Fabrika) Ekle"
+        onClose={() => {
+          setShowQuickSupplierModal(false);
+          setNewSupplierName('');
+          setNewSupplierPhone('');
+        }}
+        size="sm"
+      >
+        <form onSubmit={handleAddQuickSupplier} className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Tedarikçi / Fabrika Ünvanı <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={newSupplierName}
+              onChange={(e) => setNewSupplierName(e.target.value)}
+              placeholder="Örn: Doğan Parke ve Beton Elemanları"
+              className="w-full border border-slate-200 rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 font-medium"
+              required
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Telefon (Opsiyonel)
+            </label>
+            <input
+              type="text"
+              value={newSupplierPhone}
+              onChange={(e) => setNewSupplierPhone(e.target.value)}
+              placeholder="Örn: 0532 xxx xx xx"
+              className="w-full border border-slate-200 rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 font-medium"
+            />
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => {
+                setShowQuickSupplierModal(false);
+                setNewSupplierName('');
+                setNewSupplierPhone('');
+              }}
+              className="px-3.5 py-2 text-slate-600 hover:bg-slate-100 rounded-xl text-xs font-semibold cursor-pointer"
+            >
+              Vazgeç
+            </button>
+            <button
+              type="submit"
+              disabled={addingSupplier || !newSupplierName.trim()}
+              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5 shadow-xs"
+            >
+              {addingSupplier ? (
+                <>
+                  <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>Kaydediliyor...</span>
+                </>
+              ) : (
+                <>
+                  <Check size={14} />
+                  <span>Tedarikçiyi Kaydet ve Seç</span>
                 </>
               )}
             </button>
