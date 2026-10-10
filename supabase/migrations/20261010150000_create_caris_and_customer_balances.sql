@@ -1,11 +1,26 @@
--- ================================================================
+﻿-- ================================================================
 -- TEDARİKÇİ CARİLERİ VE MÜŞTERİ CARİ HESAP & BAKİYE ŞEMASI
 -- ================================================================
+
+-- 0. Gerekli kolonların tablolarda varlığını garantiye alma (Eski/eksik migrasyonlara karşı koruma)
+ALTER TABLE public.shipments ADD COLUMN IF NOT EXISTS sale_price_per_m2 numeric DEFAULT 0;
+ALTER TABLE public.shipments ADD COLUMN IF NOT EXISTS total_m2 numeric DEFAULT 0;
+ALTER TABLE public.shipments ADD COLUMN IF NOT EXISTS supplier_name text DEFAULT '';
+
+ALTER TABLE public.shipment_items ADD COLUMN IF NOT EXISTS unit_price numeric DEFAULT 0;
+ALTER TABLE public.shipment_items ADD COLUMN IF NOT EXISTS total_price numeric DEFAULT 0;
+
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS phone text DEFAULT '';
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS email text DEFAULT '';
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS tax_number text DEFAULT '';
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS address text DEFAULT '';
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS is_active boolean DEFAULT true;
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS company_id uuid;
 
 -- 1. suppliers Tablosu (Tedarikçi ve Dış Fabrika Carileri)
 CREATE TABLE IF NOT EXISTS public.suppliers (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id uuid REFERENCES public.companies(id) ON DELETE CASCADE,
+  company_id uuid,
   name text NOT NULL,
   phone text DEFAULT '',
   email text DEFAULT '',
@@ -20,7 +35,7 @@ CREATE TABLE IF NOT EXISTS public.suppliers (
 -- 2. customer_payments Tablosu (Müşteri Tahsilatları & Kasa/Banka Girişleri)
 CREATE TABLE IF NOT EXISTS public.customer_payments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id uuid REFERENCES public.companies(id) ON DELETE CASCADE,
+  company_id uuid,
   customer_id uuid NOT NULL REFERENCES public.customers(id) ON DELETE CASCADE,
   date date NOT NULL DEFAULT CURRENT_DATE,
   payment_type text NOT NULL DEFAULT 'havale' CHECK (payment_type IN ('havale', 'nakit', 'cek', 'kredi_karti', 'diger')),
@@ -45,53 +60,66 @@ CREATE INDEX IF NOT EXISTS idx_customer_payments_date ON public.customer_payment
 ALTER TABLE public.suppliers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.customer_payments ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Authenticated users can view suppliers" ON public.suppliers;
-CREATE POLICY "Authenticated users can view suppliers"
+DROP POLICY IF EXISTS Authenticated users can view suppliers ON public.suppliers;
+CREATE POLICY Authenticated users can view suppliers
   ON public.suppliers FOR SELECT TO authenticated USING (true);
 
-DROP POLICY IF EXISTS "Authenticated users can manage suppliers" ON public.suppliers;
-CREATE POLICY "Authenticated users can manage suppliers"
+DROP POLICY IF EXISTS Authenticated users can manage suppliers ON public.suppliers;
+CREATE POLICY Authenticated users can manage suppliers
   ON public.suppliers FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
-DROP POLICY IF EXISTS "Authenticated users can view customer_payments" ON public.customer_payments;
-CREATE POLICY "Authenticated users can view customer_payments"
+DROP POLICY IF EXISTS Authenticated users can view customer_payments ON public.customer_payments;
+CREATE POLICY Authenticated users can view customer_payments
   ON public.customer_payments FOR SELECT TO authenticated USING (true);
 
-DROP POLICY IF EXISTS "Authenticated users can manage customer_payments" ON public.customer_payments;
-CREATE POLICY "Authenticated users can manage customer_payments"
+DROP POLICY IF EXISTS Authenticated users can manage customer_payments ON public.customer_payments;
+CREATE POLICY Authenticated users can manage customer_payments
   ON public.customer_payments FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 -- 5. Otomatik Seeding: Önceden girilmiş olan tedarikçi isimlerini suppliers tablosuna aktarma
-DO $$
+DO 
 BEGIN
   -- shipments tablosundaki tekil tedarikçi isimlerini aktar
-  INSERT INTO public.suppliers (name, is_active)
-  SELECT DISTINCT TRIM(s.supplier_name), true
-  FROM public.shipments s
-  WHERE s.supplier_name IS NOT NULL 
-    AND TRIM(s.supplier_name) <> ''
-    AND NOT EXISTS (
-      SELECT 1 FROM public.suppliers sup 
-      WHERE LOWER(TRIM(sup.name)) = LOWER(TRIM(s.supplier_name))
-    )
-  ON CONFLICT DO NOTHING;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'shipments' AND column_name = 'supplier_name'
+  ) THEN
+    EXECUTE '
+      INSERT INTO public.suppliers (name, is_active)
+      SELECT DISTINCT TRIM(s.supplier_name), true
+      FROM public.shipments s
+      WHERE s.supplier_name IS NOT NULL 
+        AND TRIM(s.supplier_name) <> ''''
+        AND NOT EXISTS (
+          SELECT 1 FROM public.suppliers sup 
+          WHERE LOWER(TRIM(sup.name)) = LOWER(TRIM(s.supplier_name))
+        )
+      ON CONFLICT DO NOTHING;
+    ';
+  END IF;
 
   -- external_purchases tablosundaki tekil tedarikçi isimlerini aktar
-  INSERT INTO public.suppliers (name, is_active)
-  SELECT DISTINCT TRIM(ep.supplier_name), true
-  FROM public.external_purchases ep
-  WHERE ep.supplier_name IS NOT NULL 
-    AND TRIM(ep.supplier_name) <> ''
-    AND NOT EXISTS (
-      SELECT 1 FROM public.suppliers sup 
-      WHERE LOWER(TRIM(sup.name)) = LOWER(TRIM(ep.supplier_name))
-    )
-  ON CONFLICT DO NOTHING;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'external_purchases' AND column_name = 'supplier_name'
+  ) THEN
+    EXECUTE '
+      INSERT INTO public.suppliers (name, is_active)
+      SELECT DISTINCT TRIM(ep.supplier_name), true
+      FROM public.external_purchases ep
+      WHERE ep.supplier_name IS NOT NULL 
+        AND TRIM(ep.supplier_name) <> ''''
+        AND NOT EXISTS (
+          SELECT 1 FROM public.suppliers sup 
+          WHERE LOWER(TRIM(sup.name)) = LOWER(TRIM(ep.supplier_name))
+        )
+      ON CONFLICT DO NOTHING;
+    ';
+  END IF;
 EXCEPTION
   WHEN OTHERS THEN
-    -- Eğer tablolar yoksa veya hata oluşursa devam et
     NULL;
-END $$;
+END ;
 
 -- 6. v_customer_balances Görünümü (Müşteri Kümülatif Borç, Alacak ve Kalan Bakiye)
 CREATE OR REPLACE VIEW public.v_customer_balances
@@ -102,10 +130,18 @@ WITH shipment_totals AS (
     s.customer_id,
     COALESCE(SUM(
       COALESCE(
-        (SELECT SUM(COALESCE(si.total_price, si.m2 * si.unit_price)) 
-         FROM public.shipment_items si 
-         WHERE si.shipment_id = s.id AND (si.total_price > 0 OR (si.m2 * si.unit_price) > 0)),
-        s.total_m2 * COALESCE(s.sale_price_per_m2, 0)
+        NULLIF((
+          SELECT SUM(
+            CASE 
+              WHEN COALESCE(si.total_price, 0) > 0 THEN si.total_price 
+              WHEN COALESCE(si.unit_price, 0) > 0 THEN si.m2 * si.unit_price 
+              ELSE 0 
+            END
+          )
+          FROM public.shipment_items si 
+          WHERE si.shipment_id = s.id
+        ), 0),
+        COALESCE(s.total_m2, 0) * COALESCE(s.sale_price_per_m2, 0)
       )
     ), 0) AS total_shipped_amount,
     MAX(s.shipment_date) AS last_shipment_date
