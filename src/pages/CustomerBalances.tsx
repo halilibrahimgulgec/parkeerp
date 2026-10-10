@@ -24,7 +24,11 @@ import {
   Clock,
   Eye,
   Phone,
-  Wallet
+  Wallet,
+  Pencil,
+  Trash2,
+  Receipt,
+  Users
 } from 'lucide-react';
 
 const PAYMENT_TYPE_LABELS: Record<string, string> = {
@@ -86,12 +90,17 @@ export default function CustomerBalancesPage() {
   const [loading, setLoading] = useState(true);
   const [schemaMissing, setSchemaMissing] = useState(false);
 
+  // Main Tab (Customers / Payments)
+  const [activeMainTab, setActiveMainTab] = useState<'customers' | 'payments'>('customers');
+
   // Filters
   const [search, setSearch] = useState('');
   const [balanceFilter, setBalanceFilter] = useState<'all' | 'debtor' | 'settled' | 'creditor'>('all');
+  const [paymentTypeFilter, setPaymentTypeFilter] = useState<string>('all');
 
-  // Modals
+  // Modals & Editing State
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
+  const [editingPayment, setEditingPayment] = useState<CustomerPayment | null>(null);
   const [selectedCustomerIdForPayment, setSelectedCustomerIdForPayment] = useState<string>('');
 
   const [isStatementOpen, setIsStatementOpen] = useState(false);
@@ -283,23 +292,69 @@ export default function CustomerBalancesPage() {
     return list;
   }, [balances, search, balanceFilter]);
 
-  // Open Payment Modal
-  const handleOpenPayment = (customerId?: string) => {
-    setSelectedCustomerIdForPayment(customerId || (customers[0]?.id || ''));
-    setPaymentForm({
-      customer_id: customerId || (customers[0]?.id || ''),
-      date: new Date().toISOString().split('T')[0],
-      payment_type: 'havale',
-      amount: '',
-      document_no: '',
-      bank_name: '',
-      due_date: '',
-      notes: '',
-    });
+  // Filtered Payments List
+  const filteredPayments = useMemo(() => {
+    let list = [...payments];
+
+    if (search.trim()) {
+      const q = search.toLowerCase().trim();
+      list = list.filter((p) => {
+        const custName = customers.find((c) => c.id === p.customer_id)?.name?.toLowerCase() || '';
+        return (
+          custName.includes(q) ||
+          p.document_no?.toLowerCase().includes(q) ||
+          p.bank_name?.toLowerCase().includes(q) ||
+          p.notes?.toLowerCase().includes(q) ||
+          String(p.amount).includes(q)
+        );
+      });
+    }
+
+    if (paymentTypeFilter !== 'all') {
+      list = list.filter((p) => p.payment_type === paymentTypeFilter);
+    }
+
+    return list;
+  }, [payments, search, paymentTypeFilter, customers]);
+
+  const filteredPaymentsTotal = useMemo(() => {
+    return filteredPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  }, [filteredPayments]);
+
+  // Open Payment Modal (New or Edit)
+  const handleOpenPayment = (customerId?: string, paymentToEdit?: CustomerPayment) => {
+    if (paymentToEdit) {
+      setEditingPayment(paymentToEdit);
+      setSelectedCustomerIdForPayment(paymentToEdit.customer_id);
+      setPaymentForm({
+        customer_id: paymentToEdit.customer_id,
+        date: paymentToEdit.date,
+        payment_type: paymentToEdit.payment_type,
+        amount: String(paymentToEdit.amount),
+        document_no: paymentToEdit.document_no || '',
+        bank_name: paymentToEdit.bank_name || '',
+        due_date: paymentToEdit.due_date ? paymentToEdit.due_date.slice(0, 10) : '',
+        notes: paymentToEdit.notes || '',
+      });
+    } else {
+      setEditingPayment(null);
+      setSelectedCustomerIdForPayment(customerId || (customers[0]?.id || ''));
+      setPaymentForm({
+        customer_id: customerId || (customers[0]?.id || ''),
+        date: new Date().toISOString().split('T')[0],
+        payment_type: 'havale',
+        amount: '',
+        document_no: '',
+        bank_name: '',
+        due_date: '',
+        notes: '',
+      });
+    }
     setPaymentError('');
     setIsPaymentOpen(true);
   };
 
+  // Save / Update Payment
   const handleSavePayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!paymentForm.customer_id) {
@@ -326,18 +381,72 @@ export default function CustomerBalancesPage() {
         bank_name: paymentForm.bank_name.trim(),
         due_date: paymentForm.payment_type === 'cek' && paymentForm.due_date ? paymentForm.due_date : null,
         notes: paymentForm.notes.trim(),
-        created_by: user?.id,
+        updated_at: new Date().toISOString(),
       };
 
-      const { error } = await supabase.from('customer_payments').insert(payload);
-      if (error) throw error;
+      if (editingPayment) {
+        const { error } = await supabase
+          .from('customer_payments')
+          .update(payload)
+          .eq('id', editingPayment.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('customer_payments')
+          .insert({
+            ...payload,
+            created_by: user?.id,
+          });
+        if (error) throw error;
+      }
 
       setIsPaymentOpen(false);
+      setEditingPayment(null);
       await loadData();
+
+      // If statement modal was open, reload it
+      if (isStatementOpen && selectedCustomerForStatement) {
+        const updatedCust = balances.find((b) => b.id === selectedCustomerForStatement.id) || selectedCustomerForStatement;
+        handleOpenStatement(updatedCust);
+      }
     } catch (err: any) {
       setPaymentError(`Kayıt hatası: ${err.message}`);
     } finally {
       setSavingPayment(false);
+    }
+  };
+
+  // Delete Payment with confirmation
+  const handleDeletePayment = async (paymentId: string, amount: number, customerName?: string) => {
+    const confirmMsg =
+      `Bu tahsilat kaydını silmek istediğinizden emin misiniz?\n\n` +
+      (customerName ? `Müşteri: ${customerName}\n` : '') +
+      `Tutar: ${amount.toLocaleString('tr-TR')} ₺\n\n` +
+      `Silindiğinde müşterinin cari bakiyesi otomatik olarak düzeltilecektir.`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      const { error } = await supabase
+        .from('customer_payments')
+        .delete()
+        .eq('id', paymentId);
+      if (error) throw error;
+
+      if (isPaymentOpen && editingPayment?.id === paymentId) {
+        setIsPaymentOpen(false);
+        setEditingPayment(null);
+      }
+
+      await loadData();
+
+      // If statement modal was open, reload it
+      if (isStatementOpen && selectedCustomerForStatement) {
+        const updatedCust = balances.find((b) => b.id === selectedCustomerForStatement.id) || selectedCustomerForStatement;
+        handleOpenStatement(updatedCust);
+      }
+    } catch (err: any) {
+      alert(`Tahsilat silinirken hata oluştu: ${err.message}`);
     }
   };
 
@@ -642,161 +751,344 @@ export default function CustomerBalancesPage() {
         </div>
       </div>
 
-      {/* ── FILTER & SEARCH BAR ── */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-        <div className="flex-1 relative">
-          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Müşteri adı, telefon veya vergi numarası ile ara..."
-            className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-slate-50/50"
-          />
-        </div>
-
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0">
-          <span className="text-xs font-bold text-slate-400 flex items-center gap-1 pl-1 shrink-0">
-            <Filter size={13} /> Durum:
-          </span>
-          {[
-            { id: 'all', label: 'Tümü' },
-            { id: 'debtor', label: 'Borçlular' },
-            { id: 'settled', label: 'Hesabı Kapalı' },
-            { id: 'creditor', label: 'Alacaklı / Avans' },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setBalanceFilter(tab.id as any)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                balanceFilter === tab.id
-                  ? 'bg-slate-900 text-white shadow-xs'
-                  : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+      {/* ── MAIN TABS: MÜŞTERİ BAKİYELERİ / TAHSİLAT HAREKETLERİ ── */}
+      <div className="flex items-center gap-2 border-b border-slate-200">
+        <button
+          type="button"
+          onClick={() => setActiveMainTab('customers')}
+          className={`pb-3 px-3 text-xs sm:text-sm font-bold flex items-center gap-2 border-b-2 transition-all cursor-pointer ${
+            activeMainTab === 'customers'
+              ? 'border-indigo-600 text-indigo-700'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Users size={16} />
+          <span>Müşteri Cari Bakiyeleri ({filteredBalances.length})</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveMainTab('payments')}
+          className={`pb-3 px-3 text-xs sm:text-sm font-bold flex items-center gap-2 border-b-2 transition-all cursor-pointer ${
+            activeMainTab === 'payments'
+              ? 'border-emerald-600 text-emerald-700'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Receipt size={16} />
+          <span>Tahsilat Hareketleri & Geçmişi ({filteredPayments.length})</span>
+        </button>
       </div>
 
-      {/* ── CUSTOMER BALANCES TABLE ── */}
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-        {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-          </div>
-        ) : filteredBalances.length === 0 ? (
-          <div className="p-12 text-center text-slate-400">
-            <Wallet size={36} className="mx-auto mb-2 opacity-40 text-slate-400" />
-            <p className="text-sm font-semibold text-slate-600">Aradığınız kriterlere uygun müşteri kaydı bulunamadı.</p>
-            <p className="text-xs text-slate-400 mt-1">Filtreleri sıfırlayarak tekrar deneyebilirsiniz.</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 font-bold uppercase tracking-wider text-[11px]">
-                  <th className="py-3 px-4">Müşteri Ünvanı</th>
-                  <th className="py-3 px-4">İletişim</th>
-                  <th className="py-3 px-4 text-right">Toplam Sevk (Borç)</th>
-                  <th className="py-3 px-4 text-right text-emerald-700">Toplam Tahsilat</th>
-                  <th className="py-3 px-4 text-right">Kalan Bakiye</th>
-                  <th className="py-3 px-4">Son İşlemler</th>
-                  <th className="py-3 px-4 text-right">Hızlı İşlem</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-medium">
-                {filteredBalances.map((cust) => {
-                  const isDebtor = cust.balance > 0.01;
-                  const isCreditor = cust.balance < -0.01;
+      {activeMainTab === 'customers' ? (
+        <>
+          {/* ── FILTER & SEARCH BAR (CUSTOMERS) ── */}
+          <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+            <div className="flex-1 relative">
+              <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Müşteri adı, telefon veya vergi numarası ile ara..."
+                className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-slate-50/50"
+              />
+            </div>
 
-                  return (
-                    <tr key={cust.id} className="hover:bg-slate-50/70 transition-colors">
-                      <td className="py-3.5 px-4">
-                        <div className="font-bold text-slate-900 text-sm">{cust.name}</div>
-                        {cust.tax_number && (
-                          <div className="text-[10px] text-slate-400 font-mono mt-0.5">VN: {cust.tax_number}</div>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-4 text-slate-600">
-                        {cust.phone ? (
-                          <span className="flex items-center gap-1 font-mono">
-                            <Phone size={12} className="text-slate-400" />
-                            {cust.phone}
-                          </span>
-                        ) : (
-                          <span className="text-slate-400">-</span>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-800">
-                        {cust.total_debit.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
-                      </td>
-                      <td className="py-3.5 px-4 text-right font-mono font-bold text-emerald-700">
-                        {cust.total_credit.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
-                      </td>
-                      <td className="py-3.5 px-4 text-right">
-                        {isDebtor ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black bg-red-100 text-red-800 border border-red-200 font-mono">
-                            <ArrowDownRight size={13} className="text-red-600" />
-                            {cust.balance.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺ Borçlu
-                          </span>
-                        ) : isCreditor ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black bg-blue-100 text-blue-800 border border-blue-200 font-mono">
-                            <ArrowUpRight size={13} className="text-blue-600" />
-                            {Math.abs(cust.balance).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺ Avans
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-200 font-mono">
-                            <CheckCircle2 size={13} className="text-emerald-600" />
-                            0,00 ₺ (Kapalı)
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-4 text-[11px] text-slate-500 space-y-0.5">
-                        {cust.last_shipment_date && (
-                          <div>Sevk: {new Date(cust.last_shipment_date).toLocaleDateString('tr-TR')}</div>
-                        )}
-                        {cust.last_payment_date && (
-                          <div className="text-emerald-600">
-                            Tahsilat: {new Date(cust.last_payment_date).toLocaleDateString('tr-TR')}
-                          </div>
-                        )}
-                        {!cust.last_shipment_date && !cust.last_payment_date && (
-                          <span className="text-slate-400">Hareket yok</span>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenPayment(cust.id)}
-                            className="px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-[11px] border border-emerald-200 transition-colors flex items-center gap-1 cursor-pointer"
-                            title="Bu müşteriye yeni tahsilat kaydet"
-                          >
-                            <Plus size={12} />
-                            <span>Tahsilat Al</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleOpenStatement(cust)}
-                            className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] transition-colors flex items-center gap-1 cursor-pointer"
-                            title="Müşteri Cari Ekstresi"
-                          >
-                            <FileText size={12} />
-                            <span>Ekstre</span>
-                          </button>
-                        </div>
-                      </td>
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0">
+              <span className="text-xs font-bold text-slate-400 flex items-center gap-1 pl-1 shrink-0">
+                <Filter size={13} /> Durum:
+              </span>
+              {[
+                { id: 'all', label: 'Tümü' },
+                { id: 'debtor', label: 'Borçlular' },
+                { id: 'settled', label: 'Hesabı Kapalı' },
+                { id: 'creditor', label: 'Alacaklı / Avans' },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setBalanceFilter(tab.id as any)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    balanceFilter === tab.id
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* ── CUSTOMER BALANCES TABLE ── */}
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+            {loading ? (
+              <div className="flex items-center justify-center py-20">
+                <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : filteredBalances.length === 0 ? (
+              <div className="p-12 text-center text-slate-400">
+                <Wallet size={36} className="mx-auto mb-2 opacity-40 text-slate-400" />
+                <p className="text-sm font-semibold text-slate-600">Aradığınız kriterlere uygun müşteri kaydı bulunamadı.</p>
+                <p className="text-xs text-slate-400 mt-1">Filtreleri sıfırlayarak tekrar deneyebilirsiniz.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 font-bold uppercase tracking-wider text-[11px]">
+                      <th className="py-3 px-4">Müşteri Ünvanı</th>
+                      <th className="py-3 px-4">İletişim</th>
+                      <th className="py-3 px-4 text-right">Toplam Sevk (Borç)</th>
+                      <th className="py-3 px-4 text-right text-emerald-700">Toplam Tahsilat</th>
+                      <th className="py-3 px-4 text-right">Kalan Bakiye</th>
+                      <th className="py-3 px-4">Son İşlemler</th>
+                      <th className="py-3 px-4 text-right">Hızlı İşlem</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-medium">
+                    {filteredBalances.map((cust) => {
+                      const isDebtor = cust.balance > 0.01;
+                      const isCreditor = cust.balance < -0.01;
+
+                      return (
+                        <tr key={cust.id} className="hover:bg-slate-50/70 transition-colors">
+                          <td className="py-3.5 px-4">
+                            <div className="font-bold text-slate-900 text-sm">{cust.name}</div>
+                            {cust.tax_number && (
+                              <div className="text-[10px] text-slate-400 font-mono mt-0.5">VN: {cust.tax_number}</div>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-4 text-slate-600">
+                            {cust.phone ? (
+                              <span className="flex items-center gap-1 font-mono">
+                                <Phone size={12} className="text-slate-400" />
+                                {cust.phone}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400">-</span>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-800">
+                            {cust.total_debit.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono font-bold text-emerald-700">
+                            {cust.total_credit.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+                          </td>
+                          <td className="py-3.5 px-4 text-right">
+                            {isDebtor ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black bg-red-100 text-red-800 border border-red-200 font-mono">
+                                <ArrowDownRight size={13} className="text-red-600" />
+                                {cust.balance.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺ Borçlu
+                              </span>
+                            ) : isCreditor ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black bg-blue-100 text-blue-800 border border-blue-200 font-mono">
+                                <ArrowUpRight size={13} className="text-blue-600" />
+                                {Math.abs(cust.balance).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺ Avans
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-200 font-mono">
+                                <CheckCircle2 size={13} className="text-emerald-600" />
+                                0,00 ₺ (Kapalı)
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-4 text-[11px] text-slate-500 space-y-0.5">
+                            {cust.last_shipment_date && (
+                              <div>Sevk: {new Date(cust.last_shipment_date).toLocaleDateString('tr-TR')}</div>
+                            )}
+                            {cust.last_payment_date && (
+                              <div className="text-emerald-600">
+                                Tahsilat: {new Date(cust.last_payment_date).toLocaleDateString('tr-TR')}
+                              </div>
+                            )}
+                            {!cust.last_shipment_date && !cust.last_payment_date && (
+                              <span className="text-slate-400">Hareket yok</span>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenPayment(cust.id)}
+                                className="px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-[11px] border border-emerald-200 transition-colors flex items-center gap-1 cursor-pointer"
+                                title="Bu müşteriye yeni tahsilat kaydet"
+                              >
+                                <Plus size={12} />
+                                <span>Tahsilat Al</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenStatement(cust)}
+                                className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] transition-colors flex items-center gap-1 cursor-pointer"
+                                title="Müşteri Cari Ekstresi"
+                              >
+                                <FileText size={12} />
+                                <span>Ekstre</span>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </>
+      ) : (
+        <>
+          {/* ── FILTER & SEARCH BAR (PAYMENTS) ── */}
+          <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+            <div className="flex-1 relative">
+              <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Tahsilat ara (Müşteri, banka, dekont no, not, tutar)..."
+                className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-slate-50/50"
+              />
+            </div>
+
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0">
+              <span className="text-xs font-bold text-slate-400 flex items-center gap-1 pl-1 shrink-0">
+                <Filter size={13} /> Tür:
+              </span>
+              {[
+                { id: 'all', label: 'Tümü' },
+                { id: 'havale', label: 'Havale / EFT' },
+                { id: 'nakit', label: 'Nakit' },
+                { id: 'cek', label: 'Çek' },
+                { id: 'kredi_karti', label: 'Kredi Kartı' },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setPaymentTypeFilter(tab.id)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    paymentTypeFilter === tab.id
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="px-3.5 py-1.5 bg-emerald-50 rounded-xl border border-emerald-200 text-emerald-900 text-xs font-bold shrink-0">
+              Toplam: {filteredPaymentsTotal.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+            </div>
+          </div>
+
+          {/* ── PAYMENTS HISTORY & MANAGEMENT TABLE ── */}
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+            {loading ? (
+              <div className="flex items-center justify-center py-20">
+                <div className="w-8 h-8 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : filteredPayments.length === 0 ? (
+              <div className="p-12 text-center text-slate-400">
+                <Receipt size={36} className="mx-auto mb-2 opacity-40 text-slate-400" />
+                <p className="text-sm font-semibold text-slate-600">Kayıtlı tahsilat hareketi bulunamadı.</p>
+                <p className="text-xs text-slate-400 mt-1">Yeni tahsilat ekleyerek başlayabilirsiniz.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 font-bold uppercase tracking-wider text-[11px]">
+                      <th className="py-3 px-4">Tarih</th>
+                      <th className="py-3 px-4">Müşteri</th>
+                      <th className="py-3 px-4">Ödeme Türü</th>
+                      <th className="py-3 px-4 text-right">Tutar (₺)</th>
+                      <th className="py-3 px-4">Dekont / Belge No</th>
+                      <th className="py-3 px-4">Banka / Vade</th>
+                      <th className="py-3 px-4">Açıklama / Not</th>
+                      <th className="py-3 px-4 text-right">İşlemler (Düzelt / Sil)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-medium">
+                    {filteredPayments.map((p) => {
+                      const customer = customers.find((c) => c.id === p.customer_id);
+                      const typeLabel = PAYMENT_TYPE_LABELS[p.payment_type] || p.payment_type;
+                      const typeColor = PAYMENT_TYPE_COLORS[p.payment_type] || 'bg-slate-100 text-slate-800';
+
+                      return (
+                        <tr key={p.id} className="hover:bg-slate-50/70 transition-colors">
+                          <td className="py-3.5 px-4 whitespace-nowrap text-slate-700 font-mono font-medium">
+                            {new Date(p.date).toLocaleDateString('tr-TR')}
+                          </td>
+                          <td className="py-3.5 px-4 font-bold text-slate-900">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const custBalance = balances.find((b) => b.id === p.customer_id);
+                                if (custBalance) handleOpenStatement(custBalance);
+                              }}
+                              className="text-left hover:text-indigo-600 hover:underline cursor-pointer"
+                              title="Müşteri ekstresini görüntüle"
+                            >
+                              {customer?.name || 'Müşteri'}
+                            </button>
+                          </td>
+                          <td className="py-3.5 px-4 whitespace-nowrap">
+                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${typeColor}`}>
+                              {typeLabel}
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono font-bold text-emerald-700 text-sm">
+                            {Number(p.amount).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+                          </td>
+                          <td className="py-3.5 px-4 font-mono text-slate-700">
+                            {p.document_no || <span className="text-slate-400">-</span>}
+                          </td>
+                          <td className="py-3.5 px-4 text-slate-600">
+                            {p.bank_name && <div className="font-semibold text-slate-800">{p.bank_name}</div>}
+                            {p.due_date && (
+                              <div className="text-[11px] text-amber-700 font-mono">
+                                Vade: {new Date(p.due_date).toLocaleDateString('tr-TR')}
+                              </div>
+                            )}
+                            {!p.bank_name && !p.due_date && <span className="text-slate-400">-</span>}
+                          </td>
+                          <td className="py-3.5 px-4 text-slate-600 max-w-xs truncate" title={p.notes || ''}>
+                            {p.notes || <span className="text-slate-400">-</span>}
+                          </td>
+                          <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenPayment(p.customer_id, p)}
+                                className="px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[11px] border border-indigo-200 transition-colors flex items-center gap-1 cursor-pointer"
+                                title="Bu tahsilatı düzenle / düzelt"
+                              >
+                                <Pencil size={12} />
+                                <span>Düzenle</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeletePayment(p.id, p.amount, customer?.name)}
+                                className="px-2.5 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 font-bold text-[11px] border border-red-200 transition-colors flex items-center gap-1 cursor-pointer"
+                                title="Bu tahsilat kaydını sil"
+                              >
+                                <Trash2 size={12} />
+                                <span>Sil</span>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       {/* ── MODAL: TAHSİLAT EKLE ── */}
       {isPaymentOpen && (
@@ -808,13 +1100,22 @@ export default function CustomerBalancesPage() {
                   <CreditCard size={18} />
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-900 text-sm">Yeni Müşteri Tahsilatı Kaydet</h3>
-                  <p className="text-[11px] text-slate-500">Müşterinin cari bakiyesinden anında düşer</p>
+                  <h3 className="font-bold text-slate-900 text-sm">
+                    {editingPayment ? 'Tahsilat Kaydını Düzenle / Düzelt' : 'Yeni Müşteri Tahsilatı Kaydet'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    {editingPayment
+                      ? 'Tahsilat tutarını veya bilgilerini güncelleyin / silin'
+                      : 'Müşterinin cari bakiyesinden anında düşer'}
+                  </p>
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => setIsPaymentOpen(false)}
+                onClick={() => {
+                  setIsPaymentOpen(false);
+                  setEditingPayment(null);
+                }}
                 className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-emerald-100 rounded-lg transition-colors cursor-pointer"
               >
                 <X size={18} />
@@ -935,28 +1236,52 @@ export default function CustomerBalancesPage() {
                 )}
               </div>
 
-              <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setIsPaymentOpen(false)}
-                  className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 text-xs font-bold transition-colors cursor-pointer"
-                >
-                  Vazgeç
-                </button>
-                <button
-                  type="submit"
-                  disabled={savingPayment}
-                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-md shadow-emerald-600/20 cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
-                >
-                  {savingPayment ? (
-                    <>
-                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      <span>Kaydediliyor...</span>
-                    </>
-                  ) : (
-                    <span>Tahsilatı Kaydet</span>
-                  )}
-                </button>
+              <div className="pt-2 flex items-center justify-between gap-2 border-t border-slate-100">
+                {editingPayment ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleDeletePayment(
+                        editingPayment.id,
+                        editingPayment.amount,
+                        customers.find((c) => c.id === editingPayment.customer_id)?.name
+                      )
+                    }
+                    className="px-3.5 py-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 border border-red-200"
+                  >
+                    <Trash2 size={13} />
+                    <span>Tahsilatı Sil</span>
+                  </button>
+                ) : (
+                  <div />
+                )}
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsPaymentOpen(false);
+                      setEditingPayment(null);
+                    }}
+                    className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    Vazgeç
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingPayment}
+                    className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-md shadow-emerald-600/20 cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {savingPayment ? (
+                      <>
+                        <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span>Kaydediliyor...</span>
+                      </>
+                    ) : (
+                      <span>{editingPayment ? 'Güncellemeyi Kaydet' : 'Tahsilatı Kaydet'}</span>
+                    )}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -1067,6 +1392,7 @@ export default function CustomerBalancesPage() {
                         <th className="py-2.5 px-3 text-right">Borç (₺)</th>
                         <th className="py-2.5 px-3 text-right text-emerald-700">Alacak (₺)</th>
                         <th className="py-2.5 px-3 text-right">Bakiye (₺)</th>
+                        <th className="py-2.5 px-3 text-center no-print">İşlem</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 font-medium">
@@ -1096,6 +1422,34 @@ export default function CustomerBalancesPage() {
                           </td>
                           <td className="py-2.5 px-3 text-right font-mono font-black text-slate-900">
                             {item.running_balance.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+                          </td>
+                          <td className="py-2.5 px-3 text-center whitespace-nowrap no-print">
+                            {item.type === 'payment' && item.raw_data && (
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenPayment(selectedCustomerForStatement.id, item.raw_data)}
+                                  className="p-1 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                                  title="Bu tahsilatı düzenle / düzelt"
+                                >
+                                  <Pencil size={13} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleDeletePayment(
+                                      item.raw_data.id,
+                                      item.credit,
+                                      selectedCustomerForStatement.name
+                                    )
+                                  }
+                                  className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                                  title="Bu tahsilatı sil"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            )}
                           </td>
                         </tr>
                       ))}
