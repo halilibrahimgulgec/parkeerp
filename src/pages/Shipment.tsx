@@ -3413,26 +3413,28 @@ export default function ShipmentPage() {
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6">
       {/* ── TOP HEADER & ACTIONS ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2">
-        <div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2">
-              <Truck size={26} className="text-blue-600" /> Sevkiyat & Kantar Şefliği
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
+            <h1 className="text-xl sm:text-2xl font-black text-slate-900 flex items-center gap-2 whitespace-nowrap">
+              <Truck size={26} className="text-blue-600 shrink-0" /> Sevkiyat & Kantar Şefliği
             </h1>
-            <span className="px-2.5 py-0.5 text-xs font-bold bg-slate-100 text-slate-700 rounded-full border border-slate-200 flex items-center gap-1.5 shadow-2xs">
-              <Building2 size={13} className="text-slate-500" />
-              {activeCompanyName}
-            </span>
+            {!isSuperAdmin() && (
+              <span className="px-2.5 py-0.5 text-xs font-bold bg-slate-100 text-slate-700 rounded-full border border-slate-200 flex items-center gap-1.5 shadow-2xs whitespace-nowrap">
+                <Building2 size={13} className="text-slate-500" />
+                {activeCompanyName}
+              </span>
+            )}
           </div>
-          <p className="text-slate-500 text-sm mt-0.5">
+          <p className="text-slate-500 text-xs sm:text-sm mt-0.5 max-w-2xl">
             Otomatik akıllı fiyatlandırma, plaka hafızası, kantar tartımı ve anlık sevk fişi çıktısı
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex items-center gap-2 sm:gap-2.5 shrink-0 flex-wrap sm:flex-nowrap">
           {/* Super Admin Firma Değiştirme Seçici */}
           {isSuperAdmin() && companies.length > 0 && (
-            <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-300 rounded-xl px-2.5 py-1 shadow-2xs">
+            <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-300 rounded-xl px-2.5 py-1.5 shadow-2xs shrink-0">
               <Building2 size={15} className="text-amber-700 shrink-0" />
               <span className="text-[11px] font-bold text-amber-900 shrink-0">Firma:</span>
               <select
@@ -3442,7 +3444,7 @@ export default function ShipmentPage() {
                   setSelectedCompanyId(newId);
                   localStorage.setItem('parke_matrix_selected_company', newId);
                 }}
-                className="text-xs font-bold text-slate-800 bg-white border border-amber-200 rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer"
+                className="text-xs font-bold text-slate-800 bg-white border border-amber-200 rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer max-w-[170px] truncate"
               >
                 {companies.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -3460,10 +3462,10 @@ export default function ShipmentPage() {
               setQuickPalletInitialSite(undefined);
               setShowQuickPalletModal(true);
             }}
-            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all shadow-sm cursor-pointer"
+            className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl font-bold text-xs sm:text-sm transition-all shadow-sm cursor-pointer whitespace-nowrap shrink-0"
           >
-            <Boxes size={18} />
-            <span>🔄 Boş Palet İadesi Al</span>
+            <Boxes size={17} />
+            <span>Boş Palet İadesi Al</span>
           </button>
 
           <button
@@ -3472,7 +3474,7 @@ export default function ShipmentPage() {
               setEditShipment(undefined);
               setShowModal(true);
             }}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all shadow-md shadow-blue-500/20 cursor-pointer"
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-bold text-xs sm:text-sm transition-all shadow-md shadow-blue-500/20 cursor-pointer whitespace-nowrap shrink-0"
           >
             <Plus size={18} />
             <span>Yeni Sevkiyat Girişi</span>
