@@ -61,28 +61,47 @@ function AppContent() {
   if (isPasswordReset) return <ResetPasswordPage onDone={handleResetDone} />;
   if (!user || pendingApproval) return <LoginPage />;
 
-  const PAGE_MAP: Record<Page, JSX.Element> = {
-    dashboard: <Dashboard onNavigate={setCurrentPage} />,
-    production: <Production onNavigate={setCurrentPage} />,
-    production_planning: <ProductionPlanning />,
-    molds: <MoldsPage />,
-    purchases: <Purchases />,
-    shipment: <ShipmentPage />,
-    customer_balances: <CustomerBalancesPage />,
-    customer_quotas: <CustomerQuotas />,
-    costs: <Costs />,
-    definitions: <Definitions />,
-    reports: <Reports />,
-    admin_users: <AdminUsers />,
-    pallet_tracking: <PalletTracking />,
-    labor_tracking: <LaborTracking />,
-    super_admin_companies: <SuperAdminCompanies />,
+  const renderCurrentPage = () => {
+    switch (currentPage) {
+      case 'dashboard':
+        return <Dashboard onNavigate={setCurrentPage} />;
+      case 'production':
+        return <Production onNavigate={setCurrentPage} />;
+      case 'production_planning':
+        return <ProductionPlanning />;
+      case 'molds':
+        return <MoldsPage />;
+      case 'purchases':
+        return <Purchases />;
+      case 'shipment':
+        return <ShipmentPage />;
+      case 'customer_balances':
+        return <CustomerBalancesPage />;
+      case 'customer_quotas':
+        return <CustomerQuotas />;
+      case 'costs':
+        return <Costs />;
+      case 'definitions':
+        return <Definitions />;
+      case 'reports':
+        return <Reports />;
+      case 'admin_users':
+        return <AdminUsers />;
+      case 'pallet_tracking':
+        return <PalletTracking />;
+      case 'labor_tracking':
+        return <LaborTracking />;
+      case 'super_admin_companies':
+        return <SuperAdminCompanies />;
+      default:
+        return <Dashboard onNavigate={setCurrentPage} />;
+    }
   };
 
   return (
     <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
       <ErrorBoundary key={currentPage} onReset={() => setCurrentPage('dashboard')}>
-        {PAGE_MAP[currentPage]}
+        {renderCurrentPage()}
       </ErrorBoundary>
     </Layout>
   );
