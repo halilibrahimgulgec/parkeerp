@@ -585,17 +585,17 @@ export default function CustomerBalancesPage() {
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6">
       {/* ── TOP HEADER & ACTIONS ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2.5">
-            <span className="p-2.5 rounded-2xl bg-indigo-500/10 text-indigo-600">
+            <span className="p-2 sm:p-2.5 rounded-2xl bg-indigo-500/10 text-indigo-600 shrink-0">
               <CreditCard size={26} />
             </span>
-            <div>
+            <div className="min-w-0">
               <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
                 Müşteri Cari Hesap & Bakiye Takibi
               </h1>
-              <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
+              <p className="text-xs sm:text-sm text-slate-500 mt-0.5 truncate">
                 Sevkiyat irsaliye tutarları (borç), banka/kasa tahsilatları (alacak) ve net bakiye ekstresi
               </p>
             </div>
@@ -603,17 +603,17 @@ export default function CustomerBalancesPage() {
         </div>
 
         {/* Action Buttons */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0 flex-wrap sm:flex-nowrap">
           {isSuperAdmin() && companies.length > 0 && (
-            <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
-              <Building2 size={15} className="text-indigo-600" />
+            <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-2xs shrink-0">
+              <Building2 size={14} className="text-indigo-600 shrink-0" />
               <select
                 value={selectedCompanyId}
                 onChange={(e) => {
                   setSelectedCompanyId(e.target.value);
                   localStorage.setItem('parke_cust_balances_selected_company', e.target.value);
                 }}
-                className="text-xs font-bold text-slate-700 bg-transparent focus:outline-none cursor-pointer"
+                className="text-xs font-bold text-slate-700 bg-transparent focus:outline-none cursor-pointer max-w-[160px] truncate"
               >
                 {companies.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -628,7 +628,8 @@ export default function CustomerBalancesPage() {
             type="button"
             onClick={loadData}
             disabled={loading}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0"
+            title="Listeyi Yenile"
           >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             <span>Yenile</span>
@@ -638,7 +639,8 @@ export default function CustomerBalancesPage() {
             type="button"
             onClick={handleExportCSV}
             disabled={filteredBalances.length === 0}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold transition-all cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
+            title="Excel / CSV Olarak İndir"
           >
             <FileSpreadsheet size={14} className="text-emerald-600" />
             <span>Excel / CSV</span>
@@ -647,10 +649,11 @@ export default function CustomerBalancesPage() {
           <button
             type="button"
             onClick={() => handleOpenPayment()}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer shadow-md shadow-emerald-600/20"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer shadow-md shadow-emerald-600/20 whitespace-nowrap shrink-0"
+            title="Yeni Müşteri Tahsilatı Kaydet"
           >
             <Plus size={16} />
-            <span>+ Tahsilat / Ödeme Ekle</span>
+            <span>Tahsilat / Ödeme Ekle</span>
           </button>
         </div>
       </div>
