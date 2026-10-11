@@ -245,6 +245,8 @@ export default function CustomerBalancesPage() {
       if (b.balance > 0.01) {
         totalMarketReceivables += b.balance;
         totalDebtorCount++;
+      } else if (b.balance < -0.01) {
+        totalCreditorCount++;
       } else {
         totalSettledCount++;
       }
@@ -260,6 +262,7 @@ export default function CustomerBalancesPage() {
       totalMarketReceivables: Math.round(totalMarketReceivables),
       totalDebtorCount,
       totalSettledCount,
+      totalCreditorCount,
       thisMonthPayments: Math.round(thisMonthPayments),
     };
   }, [balances, payments]);
@@ -681,7 +684,15 @@ export default function CustomerBalancesPage() {
       {/* ── KPI STATS CARDS ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Card 1: Toplam Piyasa Alacağı */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
+        <div
+          onClick={() => setBalanceFilter('debtor')}
+          className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer ${
+            balanceFilter === 'debtor'
+              ? 'border-red-500 ring-2 ring-red-100 shadow-md'
+              : 'border-slate-100 shadow-sm hover:border-slate-200'
+          }`}
+          title="Borçlu müşterileri listelemek için tıklayın"
+        >
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Toplam Piyasa Alacağı</span>
             <span className="p-2 rounded-xl bg-red-50 text-red-600">
@@ -717,7 +728,15 @@ export default function CustomerBalancesPage() {
         </div>
 
         {/* Card 3: Borcu Olmayan / Kapalı Müşteriler */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
+        <div
+          onClick={() => setBalanceFilter('settled')}
+          className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer ${
+            balanceFilter === 'settled'
+              ? 'border-blue-500 ring-2 ring-blue-100 shadow-md'
+              : 'border-slate-100 shadow-sm hover:border-slate-200'
+          }`}
+          title="Bakiyesi 0 TL olan kapalı müşterileri listelemek için tıklayın"
+        >
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Hesabı Kapalı Müşteri</span>
             <span className="p-2 rounded-xl bg-blue-50 text-blue-600">
@@ -728,13 +747,33 @@ export default function CustomerBalancesPage() {
             <span className="text-2xl font-black text-slate-900">{stats.totalSettledCount}</span>
             <span className="text-xs font-bold text-slate-500">Firma</span>
           </div>
-          <div className="mt-2 text-xs font-semibold text-blue-600 flex items-center gap-1.5">
-            <span>✅ Bakiyesi 0 TL veya Avans</span>
+          <div className="mt-2 text-xs font-semibold text-blue-600 flex items-center justify-between">
+            <span>✅ Bakiyesi 0,00 ₺ (Kapalı)</span>
+            {stats.totalCreditorCount > 0 && (
+              <span
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setBalanceFilter('creditor');
+                }}
+                className="text-[11px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-full border border-indigo-200 transition-colors cursor-pointer"
+                title="Ayrıca 1 müşterinin fazla ödemesi / avansı bulunmaktadır (Görmek için tıklayın)"
+              >
+                + {stats.totalCreditorCount} Avanslı
+              </span>
+            )}
           </div>
         </div>
 
         {/* Card 4: Toplam Müşteri Portföyü */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
+        <div
+          onClick={() => setBalanceFilter('all')}
+          className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer ${
+            balanceFilter === 'all'
+              ? 'border-indigo-500 ring-2 ring-indigo-100 shadow-md'
+              : 'border-slate-100 shadow-sm hover:border-slate-200'
+          }`}
+          title="Tüm müşterileri listelemek için tıklayın"
+        >
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Toplam Müşteri Portföyü</span>
             <span className="p-2 rounded-xl bg-indigo-50 text-indigo-600">
@@ -799,10 +838,10 @@ export default function CustomerBalancesPage() {
                 <Filter size={13} /> Durum:
               </span>
               {[
-                { id: 'all', label: 'Tümü' },
-                { id: 'debtor', label: 'Borçlular' },
-                { id: 'settled', label: 'Hesabı Kapalı' },
-                { id: 'creditor', label: 'Alacaklı / Avans' },
+                { id: 'all', label: `Tümü (${balances.length})` },
+                { id: 'debtor', label: `Borçlular (${stats.totalDebtorCount})` },
+                { id: 'settled', label: `Hesabı Kapalı (${stats.totalSettledCount})` },
+                { id: 'creditor', label: `Alacaklı / Avans (${stats.totalCreditorCount})` },
               ].map((tab) => (
                 <button
                   key={tab.id}
