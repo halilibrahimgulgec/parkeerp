@@ -3,12 +3,14 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Shipment, Customer, Site, Product, Company, Supplier } from '../types';
 import Modal from '../components/Modal';
+import ErrorBoundary from '../components/ErrorBoundary';
 import {
   Plus,
   Truck,
   Search,
   Filter,
   AlertCircle,
+  AlertTriangle,
   Trash2,
   Eye,
   Pencil,
@@ -1022,20 +1024,20 @@ function ShipmentForm({
       }
 
       return {
-        invoice_no: initial.invoice_no,
-        customer_id: initial.customer_id,
+        invoice_no: initial.invoice_no || '',
+        customer_id: initial.customer_id || '',
         site_id: initial.site_id || '',
-        vehicle_plate: initial.vehicle_plate,
+        vehicle_plate: initial.vehicle_plate || '',
         driver_name: initial.driver_name || '',
         driver_phone: initial.driver_phone || '',
-        gross_weight: initial.gross_weight,
-        tare_weight: initial.tare_weight,
-        sale_price_per_m2: initial.sale_price_per_m2,
-        logistics_cost: initial.logistics_cost,
-        shipment_date: initial.shipment_date,
+        gross_weight: Number(initial.gross_weight || 0),
+        tare_weight: Number(initial.tare_weight || 0),
+        sale_price_per_m2: Number(initial.sale_price_per_m2 || 0),
+        logistics_cost: Number(initial.logistics_cost || 0),
+        shipment_date: initial.shipment_date || getLocalDateString(),
         notes: initial.notes || '',
-        is_external: sup.isExternal,
-        supplier_name: sup.supplierName,
+        is_external: Boolean(sup?.isExternal || (initial as any)?.is_external),
+        supplier_name: (sup?.supplierName || (initial as any)?.supplier_name || '').trim(),
         items: initialFormItems,
       };
     }
@@ -1071,7 +1073,7 @@ function ShipmentForm({
   useEffect(() => {
     let supQ = supabase.from('suppliers').select('*').eq('is_active', true).order('name');
     if (targetCompanyId) supQ = supQ.eq('company_id', targetCompanyId);
-    supQ.then(({ data }) => setSuppliers(data || [])).catch(() => setSuppliers([]));
+    supQ.then(({ data }) => setSuppliers(data || []), () => setSuppliers([]));
   }, [targetCompanyId]);
 
   useEffect(() => {
@@ -1236,9 +1238,9 @@ function ShipmentForm({
             }
             const pObj = products.find((p) => p.id === prodId);
             return {
-              product_id: prodId,
+              product_id: prodId || '',
               pallets: it.pallets,
-              pallet_type: it.pallet_type || 'uretim',
+              pallet_type: (it.pallet_type || 'uretim') as any,
               m2: it.m2,
               unit: it.unit || 'm2',
               unit_price: Number(pObj?.unit_price || (pObj as any)?.price || 0),
@@ -1661,7 +1663,7 @@ function ShipmentForm({
   );
   const weightedAveragePrice =
     totalM2 > 0 ? Math.round((totalRevenue / totalM2) * 100) / 100 : form.items[0]?.unit_price || 0;
-  const netWeight = Math.max(form.gross_weight - form.tare_weight, 0);
+  const netWeight = Math.max((Number(form.gross_weight) || 0) - (Number(form.tare_weight) || 0), 0);
   const netRevenue = totalRevenue - (Number(form.logistics_cost) || 0);
 
   // Matched Vehicle Memory for Plate
@@ -1683,7 +1685,7 @@ function ShipmentForm({
     }
 
     // Depo Stok Kontrolü: Doğrudan tedarikçi transit sevkiyatı değilse hem yeni sevkiyatta hem düzenlemede kesinlikle stok kontrol edilir
-    const isTransit = Boolean(form.is_external && form.supplier_name.trim());
+    const isTransit = Boolean(form.is_external && (form.supplier_name || '').trim());
     if (!isTransit) {
       for (const item of form.items) {
         if (!item.product_id) continue;
@@ -1734,8 +1736,9 @@ function ShipmentForm({
       .map((i) => `${i.product_id}:${i.unit_price}`)
       .join(';');
     let updatedNotes = form.notes;
-    if (form.is_external && form.supplier_name.trim() && !updatedNotes.includes('Tedarikçi:')) {
-      updatedNotes = `Doğrudan Transit Sevk (Tedarikçi: ${form.supplier_name.trim()}) ${updatedNotes ? '— ' + updatedNotes : ''}`;
+    const cleanSupplierName = (form.supplier_name || '').trim();
+    if (form.is_external && cleanSupplierName && !updatedNotes.includes('Tedarikçi:')) {
+      updatedNotes = `Doğrudan Transit Sevk (Tedarikçi: ${cleanSupplierName}) ${updatedNotes ? '— ' + updatedNotes : ''}`;
     }
     if (itemPriceTags) {
       updatedNotes = updatedNotes.replace(/\[KALEM_F[Iİ]YATLAR:[^\]]*\]/gi, '').trim();
@@ -1755,7 +1758,7 @@ function ShipmentForm({
       logistics_cost: form.logistics_cost,
       total_m2: totalM2,
       shipment_date: form.shipment_date,
-      supplier_name: form.is_external ? form.supplier_name.trim() || 'Dış Tedarikçi' : null,
+      supplier_name: form.is_external ? cleanSupplierName || 'Dış Tedarikçi' : null,
       notes: updatedNotes,
       ...(targetCompanyId ? { company_id: targetCompanyId } : {}),
     };
@@ -2582,7 +2585,7 @@ function ShipmentForm({
                     {form.is_external ? (
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
                         <span>🚚</span>
-                        <span>Transit Sevk: <strong>{form.supplier_name.trim() || 'Dış Tedarikçi'}</strong> (Fabrika stoğundan düşmez)</span>
+                        <span>Transit Sevk: <strong>{(form.supplier_name || '').trim() || 'Dış Tedarikçi'}</strong> (Fabrika stoğundan düşmez)</span>
                         {stock !== null && (
                           <span className="text-amber-800/70 font-normal ml-1 hidden sm:inline">
                             • Fabrika: {stock.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²
@@ -2722,7 +2725,7 @@ function ShipmentForm({
 
       {/* Yetersiz Stok Uyarısı ve Buton Kilidi */}
       {(() => {
-        const isTransit = Boolean(form.is_external && form.supplier_name.trim());
+        const isTransit = Boolean(form.is_external && (form.supplier_name || '').trim());
         const insufficientItem = !isTransit
           ? form.items.find((item) => {
               if (!item.product_id) return false;
@@ -2750,7 +2753,7 @@ function ShipmentForm({
       })()}
 
       {(() => {
-        const isTransit = Boolean(form.is_external && form.supplier_name.trim());
+        const isTransit = Boolean(form.is_external && (form.supplier_name || '').trim());
         const hasInsufficientStock = !isTransit && form.items.some((item) => {
           if (!item.product_id) return false;
           const available = stockMap[item.product_id] ?? 0;
@@ -3817,20 +3820,22 @@ export default function ShipmentPage() {
           }}
           size="xl"
         >
-          <ShipmentForm
-            key={editShipment ? editShipment.id : 'new-shipment'}
-            customers={customers}
-            products={products}
-            initial={editShipment}
-            predictedInvoiceNo={predictedInvoiceNo}
-            vehicleMemoryList={vehicleMemoryList}
-            targetCompanyId={targetCompanyId}
-            onSaveSuccess={handleSaveSuccess}
-            onClose={() => {
-              setShowModal(false);
-              setEditShipment(undefined);
-            }}
-          />
+          <ErrorBoundary fallbackTitle="Sevkiyat Formu Yüklenemedi">
+            <ShipmentForm
+              key={editShipment ? editShipment.id : 'new-shipment'}
+              customers={customers}
+              products={products}
+              initial={editShipment}
+              predictedInvoiceNo={predictedInvoiceNo}
+              vehicleMemoryList={vehicleMemoryList}
+              targetCompanyId={targetCompanyId}
+              onSaveSuccess={handleSaveSuccess}
+              onClose={() => {
+                setShowModal(false);
+                setEditShipment(undefined);
+              }}
+            />
+          </ErrorBoundary>
         </Modal>
       )}
 

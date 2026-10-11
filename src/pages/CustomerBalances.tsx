@@ -236,6 +236,7 @@ export default function CustomerBalancesPage() {
     let totalMarketReceivables = 0; // Borçlu müşterilerin toplam bakiyesi
     let totalSettledCount = 0;
     let totalDebtorCount = 0;
+    let totalCreditorCount = 0;
     let thisMonthPayments = 0;
     let thisMonthShipmentsRevenue = 0;
 

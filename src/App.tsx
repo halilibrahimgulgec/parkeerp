@@ -19,6 +19,7 @@ import ProductionPlanning from './pages/ProductionPlanning';
 import SuperAdminCompanies from './pages/SuperAdminCompanies';
 import MoldsPage from './pages/Molds';
 import CustomerBalancesPage from './pages/CustomerBalances';
+import ErrorBoundary from './components/ErrorBoundary';
 
 type Page = 'dashboard' | 'production' | 'production_planning' | 'molds' | 'purchases' | 'shipment' | 'customer_balances' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking' | 'super_admin_companies';
 
@@ -80,7 +81,9 @@ function AppContent() {
 
   return (
     <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
-      {PAGE_MAP[currentPage]}
+      <ErrorBoundary key={currentPage} onReset={() => setCurrentPage('dashboard')}>
+        {PAGE_MAP[currentPage]}
+      </ErrorBoundary>
     </Layout>
   );
 }
