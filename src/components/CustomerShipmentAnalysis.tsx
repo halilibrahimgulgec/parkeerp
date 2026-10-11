@@ -91,7 +91,12 @@ export default function CustomerShipmentAnalysis({
 
   // Sync prop changes
   useEffect(() => {
-    if (propCustomers) setCustomers(propCustomers);
+    if (propCustomers) {
+      setCustomers(propCustomers.filter((c: any) => {
+        const name = (c.name || '').toLowerCase().trim();
+        return c.is_active !== false && !name.includes('deneme') && !name.includes('test');
+      }));
+    }
   }, [propCustomers]);
   useEffect(() => {
     if (propSites) setSites(propSites);
@@ -135,7 +140,12 @@ export default function CustomerShipmentAnalysis({
         `).eq('shipments.status', 'completed').limit(50000)
       ]);
 
-      if (custRes.data) setCustomers(custRes.data);
+      if (custRes.data) {
+        setCustomers(custRes.data.filter((c: any) => {
+          const name = (c.name || '').toLowerCase().trim();
+          return c.is_active !== false && !name.includes('deneme') && !name.includes('test');
+        }));
+      }
       if (sitesRes.data) setSites(sitesRes.data);
       if (prodRes.data) setProducts(prodRes.data);
       if (shipItemsRes.data) setShipmentItems(shipItemsRes.data);

@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
-import { CustomerQuota, Customer, Site, Product } from '../types';
+import { CustomerQuota, Customer, Site, Product, Company } from '../types';
+import { useAuth } from '../contexts/AuthContext';
 import Modal from '../components/Modal';
 import CustomerShipmentAnalysis from '../components/CustomerShipmentAnalysis';
 import {
@@ -76,7 +77,62 @@ const EMPTY_FORM: QuotaFormData = {
   is_active: true,
 };
 
+export const isTestOrInactiveQuota = (q: any): boolean => {
+  if (!q) return true;
+  if (q.customers) {
+    if (q.customers.is_active === false) return true;
+    const name = (q.customers.name || '').toLowerCase().trim();
+    if (name.includes('deneme') || name.includes('test')) return true;
+  }
+  const custName = (q.customers?.name || q.customer_name || '').toLowerCase().trim();
+  if (!custName || custName.includes('deneme') || custName.includes('test')) return true;
+  return false;
+};
+
+export const isTestOrInactiveCustomer = (c: any): boolean => {
+  if (!c) return true;
+  if (c.is_active === false) return true;
+  const name = (c.name || '').toLowerCase().trim();
+  if (name.includes('deneme') || name.includes('test')) return true;
+  return false;
+};
+
 export default function CustomerQuotas() {
+  const { user, profile, isSuperAdmin } = useAuth();
+
+  // Multi-tenant isolation
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>(() => {
+    return localStorage.getItem('parke_quotas_selected_company') || localStorage.getItem('parke_cust_balances_selected_company') || '';
+  });
+
+  const targetCompanyId = useMemo(() => {
+    if (isSuperAdmin()) {
+      return selectedCompanyId || profile?.company_id || '';
+    }
+    return profile?.company_id || '';
+  }, [isSuperAdmin, selectedCompanyId, profile?.company_id]);
+
+  useEffect(() => {
+    if (isSuperAdmin()) {
+      supabase
+        .from('companies')
+        .select('*')
+        .eq('is_active', true)
+        .order('name', { ascending: true })
+        .then(({ data }) => {
+          if (data && data.length > 0) {
+            setCompanies(data);
+            if (!selectedCompanyId) {
+              const defaultId = profile?.company_id || data[0].id;
+              setSelectedCompanyId(defaultId);
+              localStorage.setItem('parke_quotas_selected_company', defaultId);
+            }
+          }
+        });
+    }
+  }, [isSuperAdmin, profile?.company_id, selectedCompanyId]);
+
   // Top-level tab: 'quotas' (Taahhütler & Kotalar) or 'analysis' (Tarih Aralıklı Sevk Analizi)
   const [activeTab, setActiveTab] = useState<'quotas' | 'analysis'>('quotas');
 
@@ -129,43 +185,67 @@ export default function CustomerQuotas() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [quotasRes, custRes, sitesRes, prodRes, shipItemsRes] = await Promise.all([
-        supabase.from('customer_quotas').select('*, customers(*), sites(*), products(*)').order('created_at', { ascending: false }),
-        supabase.from('customers').select('*').eq('is_active', true).order('name'),
-        supabase.from('sites').select('*').eq('is_active', true).order('name'),
-        supabase.from('products').select('*').eq('is_active', true).order('name'),
-        supabase.from('shipment_items').select(`
+      let quotaQ = supabase.from('customer_quotas').select('*, customers(*), sites(*), products(*)').order('created_at', { ascending: false });
+      let custQ = supabase.from('customers').select('*').eq('is_active', true).order('name');
+      let siteQ = supabase.from('sites').select('*').eq('is_active', true).order('name');
+      let prodQ = supabase.from('products').select('*').eq('is_active', true).order('name');
+      let shipItemsQ = supabase.from('shipment_items').select(`
+        id,
+        product_id,
+        m2,
+        unit,
+        pallets,
+        pallet_type,
+        shipments!inner (
           id,
-          product_id,
-          m2,
-          unit,
-          pallets,
-          pallet_type,
-          shipments!inner (
-            id,
-            invoice_no,
-            shipment_date,
-            customer_id,
-            site_id,
-            vehicle_plate,
-            driver_name,
-            driver_phone,
-            gross_weight,
-            tare_weight,
-            notes,
-            status
-          )
-        `).eq('shipments.status', 'completed').limit(50000)
+          invoice_no,
+          shipment_date,
+          customer_id,
+          site_id,
+          vehicle_plate,
+          driver_name,
+          driver_phone,
+          gross_weight,
+          tare_weight,
+          notes,
+          status,
+          company_id
+        )
+      `).eq('shipments.status', 'completed').limit(50000);
+
+      if (targetCompanyId) {
+        quotaQ = quotaQ.eq('company_id', targetCompanyId);
+        custQ = custQ.eq('company_id', targetCompanyId);
+        siteQ = siteQ.eq('company_id', targetCompanyId);
+        prodQ = prodQ.eq('company_id', targetCompanyId);
+        shipItemsQ = shipItemsQ.eq('shipments.company_id', targetCompanyId);
+      }
+
+      const [quotasRes, custRes, sitesRes, prodRes, shipItemsRes] = await Promise.all([
+        quotaQ, custQ, siteQ, prodQ, shipItemsQ
       ]);
 
       if (quotasRes.data) {
-        const enrichedQuotas = quotasRes.data.map((q: any) => ({
-          ...q,
-          unit_price: getQuotaUnitPrice(q),
-        }));
+        // Otomatik Temizleme: Eğer deneme/test müşterisine ait kota kaydı varsa arka planda Supabase'den de sil
+        const testQuotas = quotasRes.data.filter((q: any) => isTestOrInactiveQuota(q));
+        if (testQuotas.length > 0) {
+          testQuotas.forEach((tq: any) => {
+            supabase.from('customer_quotas').delete().eq('id', tq.id).then();
+          });
+        }
+
+        const enrichedQuotas = quotasRes.data
+          .filter((q: any) => !isTestOrInactiveQuota(q))
+          .map((q: any) => ({
+            ...q,
+            unit_price: getQuotaUnitPrice(q),
+          }));
         setQuotas(enrichedQuotas);
       }
-      if (custRes.data) setCustomers(custRes.data);
+
+      if (custRes.data) {
+        setCustomers(custRes.data.filter((c: any) => !isTestOrInactiveCustomer(c)));
+      }
       if (sitesRes.data) setSites(sitesRes.data);
       if (prodRes.data) setProducts(prodRes.data);
       if (shipItemsRes.data) setShipmentItems(shipItemsRes.data);
@@ -178,7 +258,7 @@ export default function CustomerQuotas() {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [targetCompanyId]);
 
   // Update sites in quota form when customer is selected
   useEffect(() => {
@@ -199,12 +279,16 @@ export default function CustomerQuotas() {
 
   // Compute metrics for Quotas tab via standardized quotaCalculator engine
   const calculatedQuotas = useMemo(() => {
-    return calculateAllQuotas(quotas, shipmentItems, products);
+    const validQuotas = quotas.filter((q) => !isTestOrInactiveQuota(q));
+    return calculateAllQuotas(validQuotas, shipmentItems, products);
   }, [quotas, shipmentItems, products]);
 
   // Filtered Quotas list
   const filteredQuotas = useMemo(() => {
     return calculatedQuotas.filter(q => {
+      // Test / Inactive customer check
+      if (isTestOrInactiveQuota(q)) return false;
+
       // Active / Closed filter
       if (activeFilter === 'active' && q.is_active === false) return false;
       if (activeFilter === 'closed' && q.is_active !== false) return false;
@@ -331,6 +415,7 @@ export default function CustomerQuotas() {
         notes: finalNotes,
         is_active: form.is_active,
         updated_at: new Date().toISOString(),
+        ...(targetCompanyId ? { company_id: targetCompanyId } : {}),
       };
 
       let savedId = editingQuota?.id;
@@ -554,6 +639,26 @@ export default function CustomerQuotas() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {isSuperAdmin() && companies.length > 0 && (
+            <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-2xs shrink-0">
+              <Building2 size={14} className="text-amber-600 shrink-0" />
+              <select
+                value={selectedCompanyId}
+                onChange={(e) => {
+                  setSelectedCompanyId(e.target.value);
+                  localStorage.setItem('parke_quotas_selected_company', e.target.value);
+                }}
+                className="text-xs font-bold text-slate-700 bg-transparent focus:outline-none cursor-pointer max-w-[160px] truncate"
+              >
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <button
             onClick={loadData}
             disabled={loading}
