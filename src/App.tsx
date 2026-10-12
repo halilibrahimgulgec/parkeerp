@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { supabase } from './lib/supabase';
 import Layout from './components/Layout';
@@ -21,11 +22,75 @@ import MoldsPage from './pages/Molds';
 import CustomerBalancesPage from './pages/CustomerBalances';
 import ErrorBoundary from './components/ErrorBoundary';
 
-type Page = 'dashboard' | 'production' | 'production_planning' | 'molds' | 'purchases' | 'shipment' | 'customer_balances' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking' | 'super_admin_companies';
+export type Page =
+  | 'dashboard'
+  | 'production'
+  | 'production_planning'
+  | 'molds'
+  | 'purchases'
+  | 'shipment'
+  | 'customer_balances'
+  | 'customer_quotas'
+  | 'costs'
+  | 'definitions'
+  | 'reports'
+  | 'admin_users'
+  | 'pallet_tracking'
+  | 'labor_tracking'
+  | 'super_admin_companies';
+
+const PAGE_TO_ROUTE: Record<Page, string> = {
+  dashboard: '/dashboard',
+  production: '/production',
+  production_planning: '/production-planning',
+  molds: '/molds',
+  purchases: '/purchases',
+  shipment: '/shipment',
+  customer_balances: '/customer-balances',
+  customer_quotas: '/customer-quotas',
+  costs: '/costs',
+  definitions: '/definitions',
+  reports: '/reports',
+  admin_users: '/admin-users',
+  pallet_tracking: '/pallet-tracking',
+  labor_tracking: '/labor-tracking',
+  super_admin_companies: '/super-admin-companies',
+};
+
+const ROUTE_TO_PAGE: Record<string, Page> = {
+  '/': 'dashboard',
+  '/dashboard': 'dashboard',
+  '/production': 'production',
+  '/production-planning': 'production_planning',
+  '/molds': 'molds',
+  '/purchases': 'purchases',
+  '/shipment': 'shipment',
+  '/customer-balances': 'customer_balances',
+  '/customer-quotas': 'customer_quotas',
+  '/costs': 'costs',
+  '/definitions': 'definitions',
+  '/reports': 'reports',
+  '/admin-users': 'admin_users',
+  '/pallet-tracking': 'pallet_tracking',
+  '/labor-tracking': 'labor_tracking',
+  '/super-admin-companies': 'super_admin_companies',
+};
 
 function AppContent() {
   const { user, loading, pendingApproval } = useAuth();
-  const [currentPage, setCurrentPage] = useState<Page>('dashboard');
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  // URL rotasından aktif Page'i türet (Sidebar, Layout ve BottomNav senkronizasyonu için)
+  const currentPage: Page = useMemo(() => {
+    return ROUTE_TO_PAGE[location.pathname] || 'dashboard';
+  }, [location.pathname]);
+
+  const handleNavigate = (page: Page) => {
+    const route = PAGE_TO_ROUTE[page] || '/dashboard';
+    navigate(route);
+  };
+
   const [isPasswordReset, setIsPasswordReset] = useState(() => {
     const hash = window.location.hash;
     const hashParams = new URLSearchParams(hash.slice(1));
@@ -61,47 +126,28 @@ function AppContent() {
   if (isPasswordReset) return <ResetPasswordPage onDone={handleResetDone} />;
   if (!user || pendingApproval) return <LoginPage />;
 
-  const renderCurrentPage = () => {
-    switch (currentPage) {
-      case 'dashboard':
-        return <Dashboard onNavigate={setCurrentPage} />;
-      case 'production':
-        return <Production onNavigate={setCurrentPage} />;
-      case 'production_planning':
-        return <ProductionPlanning />;
-      case 'molds':
-        return <MoldsPage />;
-      case 'purchases':
-        return <Purchases />;
-      case 'shipment':
-        return <ShipmentPage />;
-      case 'customer_balances':
-        return <CustomerBalancesPage />;
-      case 'customer_quotas':
-        return <CustomerQuotas />;
-      case 'costs':
-        return <Costs />;
-      case 'definitions':
-        return <Definitions />;
-      case 'reports':
-        return <Reports />;
-      case 'admin_users':
-        return <AdminUsers />;
-      case 'pallet_tracking':
-        return <PalletTracking />;
-      case 'labor_tracking':
-        return <LaborTracking />;
-      case 'super_admin_companies':
-        return <SuperAdminCompanies />;
-      default:
-        return <Dashboard onNavigate={setCurrentPage} />;
-    }
-  };
-
   return (
-    <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
-      <ErrorBoundary key={currentPage} onReset={() => setCurrentPage('dashboard')}>
-        {renderCurrentPage()}
+    <Layout currentPage={currentPage} onNavigate={handleNavigate}>
+      <ErrorBoundary key={location.pathname} onReset={() => navigate('/dashboard')}>
+        <Routes>
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<Dashboard onNavigate={handleNavigate} />} />
+          <Route path="/production" element={<Production onNavigate={handleNavigate} />} />
+          <Route path="/production-planning" element={<ProductionPlanning />} />
+          <Route path="/molds" element={<MoldsPage />} />
+          <Route path="/purchases" element={<Purchases />} />
+          <Route path="/shipment" element={<ShipmentPage />} />
+          <Route path="/customer-balances" element={<CustomerBalancesPage />} />
+          <Route path="/customer-quotas" element={<CustomerQuotas />} />
+          <Route path="/costs" element={<Costs />} />
+          <Route path="/definitions" element={<Definitions />} />
+          <Route path="/reports" element={<Reports />} />
+          <Route path="/admin-users" element={<AdminUsers />} />
+          <Route path="/pallet-tracking" element={<PalletTracking />} />
+          <Route path="/labor-tracking" element={<LaborTracking />} />
+          <Route path="/super-admin-companies" element={<SuperAdminCompanies />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Routes>
       </ErrorBoundary>
     </Layout>
   );
@@ -110,7 +156,9 @@ function AppContent() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <HashRouter>
+        <AppContent />
+      </HashRouter>
     </AuthProvider>
   );
 }
