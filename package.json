@@ -8,7 +8,10 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.app.json"
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "cap:sync": "cap sync android",
+    "cap:open": "cap open android",
+    "cap:build": "npm run build && npx cap sync android"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.1",
