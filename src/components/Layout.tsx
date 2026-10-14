@@ -3,6 +3,7 @@ import Sidebar from './Sidebar';
 import NotificationBell from './NotificationBell';
 import AIAssistantModal from './AIAssistantModal';
 import MobileBottomNav from './MobileBottomNav';
+import ParkeSahaLogo from './ParkeSahaLogo';
 import { Menu, X } from 'lucide-react';
 
 type Page = 'dashboard' | 'production' | 'production_planning' | 'molds' | 'purchases' | 'shipment' | 'customer_balances' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking' | 'super_admin_companies';
@@ -26,7 +27,7 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
       {/* Mobile Top Navbar (Hidden on Dashboard because MobileDashboard has its own curved profile header) */}
       {currentPage !== 'dashboard' && (
         <header className="flex md:hidden items-center justify-between px-4 py-3 bg-slate-900 text-white sticky top-0 z-30 shadow-md">
-          <span className="font-bold text-lg">Parke ERP</span>
+          <ParkeSahaLogo size="xs" showTagline={false} showDomain={false} />
           <div className="flex items-center gap-2">
             <div className="text-slate-800 bg-white/90 rounded-xl p-0.5">
               <NotificationBell onNavigate={handleNavigate} />
@@ -60,9 +61,19 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
 
       {/* Main Content Pane */}
       <main className="flex-1 overflow-auto flex flex-col min-h-screen print:overflow-visible print:block print:min-h-0 print:h-auto print:m-0 print:p-0 print:w-full">
-        {/* Desktop Top Bar with Notification Bell */}
-        <div className="no-print hidden md:flex items-center justify-end px-8 py-3 bg-white/70 backdrop-blur border-b border-slate-100 sticky top-0 z-20">
-          <NotificationBell onNavigate={handleNavigate} />
+        {/* Desktop Top Bar with Brand Slogan & Notification Bell */}
+        <div className="no-print hidden md:flex items-center justify-between px-8 py-2.5 bg-white/80 backdrop-blur border-b border-slate-200/70 sticky top-0 z-20">
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-bold text-slate-700 tracking-wide">
+              Kalıptan Palete, Paletten Tahsilata.
+            </span>
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200/80 font-mono shadow-sm">
+              parkesaha.com
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
+            <NotificationBell onNavigate={handleNavigate} />
+          </div>
         </div>
         <div className="flex-1 print:block print:w-full print:m-0 print:p-0">
           {children}

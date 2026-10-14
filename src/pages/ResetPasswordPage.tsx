@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import ParkeSahaLogo from '../components/ParkeSahaLogo';
 import { Factory, KeyRound, Eye, EyeOff, CheckCircle } from 'lucide-react';
 
 interface Props {
@@ -45,12 +46,8 @@ export default function ResetPasswordPage({ onDone }: Props) {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-amber-500 rounded-2xl mb-4 shadow-lg">
-            <Factory size={32} className="text-white" />
-          </div>
-          <h1 className="text-3xl font-bold text-white">Parke ERP</h1>
-          <p className="text-slate-400 mt-1">Fabrika Yönetim Sistemi</p>
+        <div className="flex flex-col items-center justify-center mb-8">
+          <ParkeSahaLogo size="xl" showTagline={true} showDomain={true} />
         </div>
 
         <div className="bg-white rounded-2xl shadow-2xl p-8">

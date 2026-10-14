@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import ParkeSahaLogo from './ParkeSahaLogo';
 import {
   LayoutDashboard, Factory, Truck, DollarSign, Package,
   BarChart3, LogOut, ChevronRight, ShieldCheck, Users, Boxes,
@@ -143,15 +144,7 @@ export default function Sidebar({ currentPage, onNavigate, onCloseMobile }: Side
       {/* Header */}
       <div className="p-4 sm:p-5 border-b border-slate-800 flex flex-col gap-3 shrink-0">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-amber-500 rounded-xl flex items-center justify-center shadow-md shadow-amber-500/20">
-              <Factory size={20} className="text-white" />
-            </div>
-            <div>
-              <h1 className="font-bold text-base sm:text-lg leading-tight text-white tracking-tight">Parke ERP</h1>
-              <p className="text-slate-400 text-[11px]">Fabrika Yönetim Sistemi</p>
-            </div>
-          </div>
+          <ParkeSahaLogo size="sm" showTagline={true} showDomain={true} />
           {onCloseMobile && (
             <button
               onClick={onCloseMobile}

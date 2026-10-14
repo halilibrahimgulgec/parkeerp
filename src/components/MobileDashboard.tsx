@@ -155,6 +155,16 @@ export default function MobileDashboard({ onNavigate, isDark, onToggleTheme }: M
         <div className="absolute -right-10 -bottom-14 w-48 h-48 bg-gradient-to-br from-amber-500/25 to-orange-600/30 rounded-full blur-2xl pointer-events-none" />
         <div className="absolute -left-12 -top-12 w-40 h-40 bg-blue-500/20 rounded-full blur-xl pointer-events-none" />
 
+        {/* ParkeSaha Marka & Slogan Rozeti */}
+        <div className="relative z-10 flex items-center justify-between pb-2.5 border-b border-white/10 mb-4">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-[13px] font-black tracking-wide text-white">Parke<span className="text-amber-400">Saha</span></span>
+            <span className="text-[9px] font-mono bg-amber-400/20 text-amber-300 px-1.5 py-0.5 rounded border border-amber-400/30">parkesaha.com</span>
+          </div>
+          <span className="text-[10px] font-medium text-slate-300 tracking-tight">Kalıptan Palete, Paletten Tahsilata.</span>
+        </div>
+
         {/* Üst Çubuk (Profil + Tema & Bildirim) */}
         <div className="relative z-10 flex items-center justify-between gap-3">
           {/* Kullanıcı Profili */}

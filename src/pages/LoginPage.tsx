@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import ParkeSahaLogo from '../components/ParkeSahaLogo';
 import { Factory, LogIn, UserPlus, Eye, EyeOff, Mail, ArrowLeft, CheckCircle, Clock } from 'lucide-react';
 
 type Mode = 'login' | 'register' | 'forgot';
@@ -37,11 +38,8 @@ export default function LoginPage() {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
         <div className="w-full max-w-md">
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-rose-500 rounded-2xl mb-4 shadow-lg">
-              <Factory size={32} className="text-white" />
-            </div>
-            <h1 className="text-3xl font-bold text-white">Parke ERP</h1>
+          <div className="flex justify-center mb-8">
+            <ParkeSahaLogo size="lg" showTagline={true} showDomain={true} />
           </div>
           <div className="bg-white rounded-2xl shadow-2xl p-8 text-center">
             <div className="w-16 h-16 bg-rose-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -68,11 +66,8 @@ export default function LoginPage() {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
         <div className="w-full max-w-md">
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-amber-500 rounded-2xl mb-4 shadow-lg">
-              <Factory size={32} className="text-white" />
-            </div>
-            <h1 className="text-3xl font-bold text-white">Parke ERP</h1>
+          <div className="flex justify-center mb-8">
+            <ParkeSahaLogo size="lg" showTagline={true} showDomain={true} />
           </div>
           <div className="bg-white rounded-2xl shadow-2xl p-8 text-center">
             <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -127,12 +122,8 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-amber-500 rounded-2xl mb-4 shadow-lg">
-            <Factory size={32} className="text-white" />
-          </div>
-          <h1 className="text-3xl font-bold text-white">Parke ERP</h1>
-          <p className="text-slate-400 mt-1">Fabrika Yönetim Sistemi</p>
+        <div className="flex flex-col items-center justify-center mb-8">
+          <ParkeSahaLogo size="xl" showTagline={true} showDomain={true} />
         </div>
 
         <div className="bg-white rounded-2xl shadow-2xl p-8">

@@ -1,6 +1,6 @@
 {
-  "short_name": "Parke ERP",
-  "name": "Parke ERP - Fabrika Yönetim Sistemi",
+  "short_name": "ParkeSaha",
+  "name": "ParkeSaha - Kalıptan Palete, Paletten Tahsilata",
   "icons": [
     {
       "src": "/image.png",
