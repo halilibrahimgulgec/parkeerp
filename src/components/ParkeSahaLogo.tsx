@@ -16,11 +16,11 @@ export default function ParkeSahaLogo({
   iconOnly = false,
 }: ParkeSahaLogoProps) {
   const sizeMap = {
-    xs: { icon: 24, title: 'text-sm', tag: 'text-[9px]', domain: 'text-[8px]' },
-    sm: { icon: 32, title: 'text-base', tag: 'text-[10px]', domain: 'text-[9px]' },
-    md: { icon: 40, title: 'text-lg', tag: 'text-xs', domain: 'text-[10px]' },
-    lg: { icon: 52, title: 'text-2xl', tag: 'text-xs sm:text-sm', domain: 'text-xs' },
-    xl: { icon: 68, title: 'text-3xl sm:text-4xl', tag: 'text-sm sm:text-base', domain: 'text-xs sm:text-sm' },
+    xs: { icon: 24, title: 'text-sm', tag: 'text-[11px] font-semibold text-amber-300', domain: 'text-[9px]' },
+    sm: { icon: 34, title: 'text-base', tag: 'text-xs font-semibold text-amber-300/95 tracking-tight', domain: 'text-[10px]' },
+    md: { icon: 42, title: 'text-lg', tag: 'text-xs font-semibold text-amber-300', domain: 'text-[11px]' },
+    lg: { icon: 54, title: 'text-2xl', tag: 'text-sm font-semibold text-amber-300', domain: 'text-xs' },
+    xl: { icon: 68, title: 'text-3xl sm:text-4xl', tag: 'text-base font-semibold text-amber-300', domain: 'text-sm' },
   };
 
   const currentSize = sizeMap[size];

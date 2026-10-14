@@ -62,12 +62,13 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
       {/* Main Content Pane */}
       <main className="flex-1 overflow-auto flex flex-col min-h-screen print:overflow-visible print:block print:min-h-0 print:h-auto print:m-0 print:p-0 print:w-full">
         {/* Desktop Top Bar with Brand Slogan & Notification Bell */}
-        <div className="no-print hidden md:flex items-center justify-between px-8 py-2.5 bg-white/80 backdrop-blur border-b border-slate-200/70 sticky top-0 z-20">
-          <div className="flex items-center gap-3">
-            <span className="text-xs font-bold text-slate-700 tracking-wide">
+        <div className="no-print hidden md:flex items-center justify-between px-8 py-3 bg-white/95 backdrop-blur border-b border-slate-200 sticky top-0 z-20 shadow-xs">
+          <div className="flex items-center gap-3 bg-amber-500/10 border border-amber-500/25 px-3.5 py-1.5 rounded-xl shadow-xs">
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse shrink-0" />
+            <span className="text-sm font-extrabold text-slate-800 tracking-tight">
               Kalıptan Palete, Paletten Tahsilata.
             </span>
-            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200/80 font-mono shadow-sm">
+            <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-black bg-amber-400 text-slate-950 font-mono shadow-xs">
               parkesaha.com
             </span>
           </div>
