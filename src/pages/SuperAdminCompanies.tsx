@@ -463,7 +463,7 @@ export default function SuperAdminCompanies() {
                             <div className="font-extrabold text-slate-900">{c.name}</div>
                             <div className="text-xs text-indigo-600 font-mono font-medium flex items-center gap-1">
                               <Globe size={11} />
-                              <span>{c.slug}.parkeerp.com</span>
+                              <span>{c.slug}.parkesaha.com</span>
                             </div>
                           </div>
                         </div>
