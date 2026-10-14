@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="psGoldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24" />
+      <stop offset="50%" stop-color="#f59e0b" />
+      <stop offset="100%" stop-color="#d97706" />
+    </linearGradient>
+    <linearGradient id="psDarkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+    <linearGradient id="psAccentGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+  </defs>
+
+  <!-- Arka Plan Taban Kartı -->
+  <rect width="100" height="100" rx="22" fill="url(#psDarkGrad)" />
+  <rect x="2" y="2" width="96" height="96" rx="20" stroke="url(#psGoldGrad)" stroke-width="2.5" stroke-opacity="0.6" />
+
+  <!-- Kilit Parke Taşı Geometrisi -->
+  <path
+    d="M50 16L78 30V48L50 62L22 48V30L50 16Z"
+    fill="#334155"
+    stroke="url(#psGoldGrad)"
+    stroke-width="3.5"
+    stroke-linejoin="round"
+  />
+
+  <!-- Palet İstif Çizgileri -->
+  <path d="M32 40L50 49L68 40" stroke="#fbbf24" stroke-width="4.5" stroke-linecap="round" />
+  <path d="M32 47L50 56L68 47" stroke="#f59e0b" stroke-width="4.5" stroke-linecap="round" />
+
+  <!-- Yükselen Tahsilat Oku -->
+  <path
+    d="M48 68L68 46M68 46H52M68 46V62"
+    stroke="url(#psGoldGrad)"
+    stroke-width="6"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Yeşil Güven Noktası -->
+  <circle cx="78" cy="22" r="5.5" fill="url(#psAccentGrad)" />
+</svg>
