@@ -53,13 +53,13 @@ jobs:
 
       - name: Prepare APK for Release
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk android/app/build/outputs/apk/debug/ParkeERP.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk android/app/build/outputs/apk/debug/ParkeSaha.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ParkeERP-APK
-          path: android/app/build/outputs/apk/debug/ParkeERP.apk
+          name: ParkeSaha-APK
+          path: android/app/build/outputs/apk/debug/ParkeSaha.apk
           retention-days: 30
 
       - name: Create / Update GitHub Release
@@ -67,17 +67,17 @@ jobs:
         if: github.ref == 'refs/heads/main'
         with:
           tag_name: mobile-apk
-          name: "Parke ERP Mobil APK"
+          name: "ParkeSaha Mobil APK"
           body: |
-            ## Parke ERP Android Mobil Uygulama (APK)
-            Otomatik olarak derlenmis en guncel Android APK dosyasi.
+            ## ParkeSaha Android Mobil Uygulama (APK)
+            Kalıptan Palete, Paletten Tahsilata - En güncel Android APK dosyası.
             
-            ### Kurulum Talimati:
-            1. Asagidaki ParkeERP.apk dosyasini telefonunuza indirin.
-            2. Indirilen dosyaya tiklayin ve Yukle secenegini secin.
-            3. Eger telefonunuz uyari verirse: Bilinmeyen Kaynaklara Izin Ver secenegini onaylayin.
+            ### Kurulum Talimatı:
+            1. Aşağıdaki ParkeSaha.apk dosyasını telefonunuza indirin.
+            2. İndirilen dosyaya tıklayın ve Yükle seçeneğini seçin.
+            3. Eğer telefonunuz uyarı verirse: Bilinmeyen Kaynaklara İzin Ver seçeneğini onaylayın.
           files: |
-            android/app/build/outputs/apk/debug/ParkeERP.apk
+            android/app/build/outputs/apk/debug/ParkeSaha.apk
           draft: false
           prerelease: false
         env:
