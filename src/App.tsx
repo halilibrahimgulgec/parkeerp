@@ -2,8 +2,10 @@ import { useState, useEffect, useMemo } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { supabase } from './lib/supabase';
+import { Capacitor } from '@capacitor/core';
 import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
+import LandingPage from './pages/LandingPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import Dashboard from './pages/Dashboard';
 import Production from './pages/Production';
@@ -124,13 +126,25 @@ function AppContent() {
   }
 
   if (isPasswordReset) return <ResetPasswordPage onDone={handleResetDone} />;
-  if (!user || pendingApproval) return <LoginPage />;
+
+  if (!user || pendingApproval) {
+    const isNative = typeof window !== 'undefined' && Capacitor.isNativePlatform();
+    const isLoginRoute = location.pathname === '/login' || location.pathname === '/giris';
+
+    if (isNative || pendingApproval || isLoginRoute) {
+      return <LoginPage onGoToLanding={isNative ? undefined : () => navigate('/')} />;
+    }
+
+    return <LandingPage onGoToLogin={() => navigate('/login')} />;
+  }
 
   return (
     <Layout currentPage={currentPage} onNavigate={handleNavigate}>
       <ErrorBoundary key={location.pathname} onReset={() => navigate('/dashboard')}>
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/login" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/giris" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard onNavigate={handleNavigate} />} />
           <Route path="/production" element={<Production onNavigate={handleNavigate} />} />
           <Route path="/production-planning" element={<ProductionPlanning />} />

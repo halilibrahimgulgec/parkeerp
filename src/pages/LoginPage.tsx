@@ -3,9 +3,11 @@ import { useAuth } from '../contexts/AuthContext';
 import ParkeSahaLogo from '../components/ParkeSahaLogo';
 import { Factory, LogIn, UserPlus, Eye, EyeOff, Mail, ArrowLeft, CheckCircle, Clock } from 'lucide-react';
 
-type Mode = 'login' | 'register' | 'forgot';
+interface LoginPageProps {
+  onGoToLanding?: () => void;
+}
 
-export default function LoginPage() {
+export default function LoginPage({ onGoToLanding }: LoginPageProps = {}) {
   const { signIn, signUp, sendPasswordResetEmail, pendingApproval, companySuspended } = useAuth();
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState('');
@@ -122,6 +124,17 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
+        {onGoToLanding && (
+          <div className="mb-4">
+            <button
+              onClick={onGoToLanding}
+              className="inline-flex items-center gap-1.5 text-xs text-amber-400 hover:text-amber-300 font-semibold bg-slate-800/80 hover:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700/60 transition-colors"
+            >
+              <ArrowLeft size={14} />
+              <span>← Tanıtım Sayfasına Dön</span>
+            </button>
+          </div>
+        )}
         <div className="flex flex-col items-center justify-center mb-8">
           <ParkeSahaLogo size="xl" showTagline={true} showDomain={true} />
         </div>
