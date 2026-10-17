@@ -4,7 +4,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { UserProfile, Company, UserRole } from '../types';
 import {
   Users, CheckCircle, XCircle, Clock, Shield, RefreshCw,
-  Plus, Building2, Mail, Lock, User, Eye, EyeOff
+  Plus, Building2, Mail, Lock, User, Eye, EyeOff, KeyRound,
+  Copy, Check, Send, X, Sparkles
 } from 'lucide-react';
 
 const ROLE_COLORS: Record<string, string> = {
@@ -20,7 +21,7 @@ const ROLE_LABELS: Record<string, string> = {
 };
 
 export default function AdminUsers() {
-  const { profile, isSuperAdmin } = useAuth();
+  const { profile, isSuperAdmin, sendPasswordResetEmail } = useAuth();
   const [users, setUsers] = useState<any[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [selectedCompanyFilter, setSelectedCompanyFilter] = useState<string>('all');
@@ -38,6 +39,65 @@ export default function AdminUsers() {
   const [addLoading, setAddLoading] = useState(false);
   const [addError, setAddError] = useState('');
   const [addSuccess, setAddSuccess] = useState('');
+  const [showAddPassword, setShowAddPassword] = useState(false);
+
+  // Reset Password Modal State
+  const [resetModalUser, setResetModalUser] = useState<any | null>(null);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetSuccess, setResetSuccess] = useState('');
+  const [resetError, setResetError] = useState('');
+
+  // Credentials copy state
+  const [createdCredentials, setCreatedCredentials] = useState<{
+    fullName: string;
+    email: string;
+    pass: string;
+    companyName: string;
+  } | null>(null);
+  const [copiedInfo, setCopiedInfo] = useState(false);
+
+  const generateRandomPassword = () => {
+    const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let pass = 'Parke2026!';
+    for (let i = 0; i < 3; i++) {
+      pass += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return pass;
+  };
+
+  const copyCredentials = (fullName: string, email: string, pass: string, compName?: string) => {
+    const text = `🏗️ ParkeSaha ERP - Yeni Kullanıcı Bilgileriniz\n🏢 Firma: ${compName || profile?.company?.name || 'Parke ERP'}\n👤 Ad Soyad: ${fullName}\n📧 E-posta: ${email}\n🔑 Geçici Şifre: ${pass}\n🌐 Giriş Adresi: https://parkesaha.com/#/login\n\n💡 İlk girişinizden sonra sol menüdeki 'Şifre' butonundan şifrenizi dilediğiniz gibi güncelleyebilirsiniz.`;
+    navigator.clipboard.writeText(text);
+    setCopiedInfo(true);
+    setTimeout(() => setCopiedInfo(false), 2500);
+  };
+
+  const handleSendResetEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetEmail.trim()) {
+      setResetError('Lütfen kullanıcının e-posta adresini girin.');
+      return;
+    }
+    setResetLoading(true);
+    setResetError('');
+    setResetSuccess('');
+    try {
+      const { error } = await sendPasswordResetEmail(resetEmail.trim());
+      if (error) {
+        setResetError(error.message || 'E-posta gönderilirken hata oluştu.');
+      } else {
+        setResetSuccess(`${resetEmail} adresine şifre sıfırlama bağlantısı başarıyla gönderildi!`);
+        setTimeout(() => {
+          setResetModalUser(null);
+        }, 2200);
+      }
+    } catch (err: any) {
+      setResetError(err.message || 'Hata oluştu.');
+    } finally {
+      setResetLoading(false);
+    }
+  };
 
   const fetchUsersAndCompanies = useCallback(async () => {
     setLoading(true);
@@ -417,20 +477,37 @@ export default function AdminUsers() {
                         <span>Onayla</span>
                       </button>
                     ) : (
-                      u.id !== profile?.id && (
+                      <div className="flex items-center gap-2">
                         <button
-                          onClick={() => revoke(u.id)}
-                          disabled={actionLoading === u.id + '_revoke'}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold rounded-lg transition-colors disabled:opacity-60 cursor-pointer"
+                          type="button"
+                          onClick={() => {
+                            setResetModalUser(u);
+                            setResetEmail('');
+                            setResetSuccess('');
+                            setResetError('');
+                          }}
+                          title="Kullanıcıya Şifre Sıfırlama Bağlantısı Gönder"
+                          className="flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-bold rounded-lg transition-colors cursor-pointer border border-amber-200"
                         >
-                          {actionLoading === u.id + '_revoke' ? (
-                            <div className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
-                          ) : (
-                            <XCircle size={14} />
-                          )}
-                          <span>Erişimi Kaldır</span>
+                          <KeyRound size={13} className="text-amber-600" />
+                          <span>Şifre Sıfırla</span>
                         </button>
-                      )
+
+                        {u.id !== profile?.id && (
+                          <button
+                            onClick={() => revoke(u.id)}
+                            disabled={actionLoading === u.id + '_revoke'}
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold rounded-lg transition-colors disabled:opacity-60 cursor-pointer"
+                          >
+                            {actionLoading === u.id + '_revoke' ? (
+                              <div className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                            ) : (
+                              <XCircle size={14} />
+                            )}
+                            <span>Erişimi Kaldır</span>
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -462,124 +539,274 @@ export default function AdminUsers() {
                 {addError}
               </div>
             )}
-            {addSuccess && (
+            {addSuccess && !createdCredentials && (
               <div className="p-3 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold flex items-center gap-1.5">
                 <CheckCircle size={16} />
                 <span>{addSuccess}</span>
               </div>
             )}
 
-            <form onSubmit={handleCreateUser} className="space-y-3">
-              {profile?.is_super_admin && companies.length > 0 && (
+            {createdCredentials ? (
+              <div className="space-y-4">
+                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl">
+                  <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm mb-2">
+                    <CheckCircle size={18} className="text-emerald-600" />
+                    <span>Kullanıcı Başarıyla Oluşturuldu!</span>
+                  </div>
+                  <div className="bg-white/80 p-3 rounded-xl border border-emerald-200 text-xs text-slate-700 space-y-1 font-mono">
+                    <p><strong>Ad Soyad:</strong> {createdCredentials.fullName}</p>
+                    <p><strong>E-posta:</strong> {createdCredentials.email}</p>
+                    <p><strong>Geçici Şifre:</strong> {createdCredentials.pass}</p>
+                    <p><strong>Giriş Adresi:</strong> https://parkesaha.com/#/login</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => copyCredentials(createdCredentials.fullName, createdCredentials.email, createdCredentials.pass, createdCredentials.companyName)}
+                    className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-emerald-500/20 flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    {copiedInfo ? (
+                      <>
+                        <Check size={14} />
+                        <span>Kopyalandı! (WhatsApp'a Yapıştırın)</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy size={14} />
+                        <span>Giriş Bilgilerini Kopyala (WhatsApp / SMS)</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAddModalOpen(false);
+                      setCreatedCredentials(null);
+                    }}
+                    className="px-4 py-2.5 border border-slate-200 text-slate-700 hover:bg-slate-50 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+                  >
+                    Kapat
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleCreateUser} className="space-y-3">
+                {profile?.is_super_admin && companies.length > 0 && (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Atanacağı Firma *
+                    </label>
+                    <select
+                      required
+                      value={addCompanyId}
+                      onChange={(e) => setAddCompanyId(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    >
+                      <option value="">Firma Seçin...</option>
+                      {companies.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Atanacağı Firma *
+                    Kullanıcı Adı & Soyadı *
+                  </label>
+                  <div className="relative">
+                    <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ahmet Yılmaz"
+                      value={addFullName}
+                      onChange={(e) => setAddFullName(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Giriş E-postası *
+                  </label>
+                  <div className="relative">
+                    <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="email"
+                      required
+                      placeholder="kantar@sirketiniz.com"
+                      value={addEmail}
+                      onChange={(e) => setAddEmail(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700">
+                      İlk Giriş Şifresi *
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const p = generateRandomPassword();
+                        setAddPassword(p);
+                        setShowAddPassword(true);
+                      }}
+                      className="text-[11px] font-bold text-amber-600 hover:text-amber-700 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Sparkles size={12} />
+                      <span>Rastgele Şifre Üret</span>
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type={showAddPassword ? 'text' : 'password'}
+                      required
+                      minLength={6}
+                      placeholder="En az 6 karakter"
+                      value={addPassword}
+                      onChange={(e) => setAddPassword(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg pl-9 pr-10 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowAddPassword(!showAddPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      {showAddPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Kullanıcı Görevi / Rolü *
                   </label>
                   <select
-                    required
-                    value={addCompanyId}
-                    onChange={(e) => setAddCompanyId(e.target.value)}
+                    value={addRole}
+                    onChange={(e: any) => setAddRole(e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
                   >
-                    <option value="">Firma Seçin...</option>
-                    {companies.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
+                    <option value="weighbridge">Kantar Görevlisi (Tartım & Sevkiyat & İrsaliye)</option>
+                    <option value="field_manager">Saha Sorumlusu (Üretim Girişi & Stok Takibi)</option>
+                    <option value="admin">Firma Yöneticisi (Tüm Yetkiler & Raporlar)</option>
                   </select>
                 </div>
-              )}
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Kullanıcı Adı & Soyadı *
-                </label>
-                <div className="relative">
-                  <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ahmet Yılmaz"
-                    value={addFullName}
-                    onChange={(e) => setAddFullName(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-                  />
+                <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddModalOpen(false)}
+                    className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold rounded-xl text-sm transition-colors cursor-pointer"
+                  >
+                    İptal
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={addLoading}
+                    className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-sm transition-colors cursor-pointer disabled:opacity-60 flex items-center gap-1.5"
+                  >
+                    {addLoading ? (
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <CheckCircle size={16} />
+                    )}
+                    <span>Kullanıcıyı Kaydet</span>
+                  </button>
                 </div>
-              </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Giriş E-postası *
-                </label>
-                <div className="relative">
-                  <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="email"
-                    required
-                    placeholder="kantar@sirketiniz.com"
-                    value={addEmail}
-                    onChange={(e) => setAddEmail(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-                  />
+      {/* Password Reset Email Modal */}
+      {resetModalUser && (
+        <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-in fade-in">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <KeyRound size={20} className="text-amber-500" />
+                <span>Şifre Sıfırlama Bağlantısı Gönder</span>
+              </h2>
+              <button
+                onClick={() => setResetModalUser(null)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              <strong>{resetModalUser.full_name}</strong> kullanıcısına şifresini güvenle yenileyebileceği bir e-posta bağlantısı gönderilecektir.
+            </p>
+
+            {resetError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl font-medium">
+                {resetError}
+              </div>
+            )}
+
+            {resetSuccess ? (
+              <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-xl font-medium flex items-center gap-2">
+                <CheckCircle size={18} className="text-emerald-600 shrink-0" />
+                <span>{resetSuccess}</span>
+              </div>
+            ) : (
+              <form onSubmit={handleSendResetEmail} className="space-y-3.5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Kullanıcının E-posta Adresi *
+                  </label>
+                  <div className="relative">
+                    <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="email"
+                      required
+                      placeholder="kantar@sirketiniz.com"
+                      value={resetEmail}
+                      onChange={(e) => setResetEmail(e.target.value)}
+                      className="w-full border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      autoFocus
+                    />
+                  </div>
                 </div>
-              </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  İlk Giriş Şifresi *
-                </label>
-                <div className="relative">
-                  <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="password"
-                    required
-                    minLength={6}
-                    placeholder="En az 6 karakter"
-                    value={addPassword}
-                    onChange={(e) => setAddPassword(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-                  />
+                <div className="pt-2 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setResetModalUser(null)}
+                    disabled={resetLoading}
+                    className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold text-xs transition-colors cursor-pointer"
+                  >
+                    Vazgeç
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={resetLoading}
+                    className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-md shadow-amber-500/20 transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    {resetLoading ? (
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <>
+                        <Send size={13} />
+                        <span>Sıfırlama Linki Yolla</span>
+                      </>
+                    )}
+                  </button>
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Kullanıcı Görevi / Rolü *
-                </label>
-                <select
-                  value={addRole}
-                  onChange={(e: any) => setAddRole(e.target.value)}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-                >
-                  <option value="weighbridge">Kantar Görevlisi (Tartım & Sevkiyat & İrsaliye)</option>
-                  <option value="field_manager">Saha Sorumlusu (Üretim Girişi & Stok Takibi)</option>
-                  <option value="admin">Firma Yöneticisi (Tüm Yetkiler & Raporlar)</option>
-                </select>
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setIsAddModalOpen(false)}
-                  className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold rounded-xl text-sm transition-colors cursor-pointer"
-                >
-                  İptal
-                </button>
-                <button
-                  type="submit"
-                  disabled={addLoading}
-                  className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-sm transition-colors cursor-pointer disabled:opacity-60 flex items-center gap-1.5"
-                >
-                  {addLoading ? (
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <CheckCircle size={16} />
-                  )}
-                  <span>Kullanıcıyı Kaydet</span>
-                </button>
-              </div>
-            </form>
+              </form>
+            )}
           </div>
         </div>
       )}

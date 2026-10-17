@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import ParkeSahaLogo from './ParkeSahaLogo';
+import ChangePasswordModal from './ChangePasswordModal';
 import {
   LayoutDashboard, Factory, Truck, DollarSign, Package,
   BarChart3, LogOut, ChevronRight, ShieldCheck, Users, Boxes,
   UserCheck, Target, ShoppingBag, Sparkles, X, Search, Building2,
-  Layers, CreditCard
+  Layers, CreditCard, KeyRound
 } from 'lucide-react';
 
 type Page = 'dashboard' | 'production' | 'production_planning' | 'molds' | 'purchases' | 'shipment' | 'customer_balances' | 'customer_quotas' | 'costs' | 'definitions' | 'reports' | 'admin_users' | 'pallet_tracking' | 'labor_tracking' | 'super_admin_companies';
@@ -45,6 +46,7 @@ interface NavGroup {
 export default function Sidebar({ currentPage, onNavigate, onCloseMobile }: SidebarProps) {
   const { profile, signOut, isAdmin, isFieldManager, isWeighbridge, isSuperAdmin } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
 
   // 4 Temel Mantıksal Operasyonel Grup + Süper Admin Grubu
   const navGroups: NavGroup[] = [
@@ -258,16 +260,26 @@ export default function Sidebar({ currentPage, onNavigate, onCloseMobile }: Side
         })}
       </nav>
 
-      {/* Pinned Bottom User Card & Sign Out */}
+      {/* Pinned Bottom User Card & Actions */}
       <div className="p-3 border-t border-slate-800 shrink-0 bg-slate-950/70 backdrop-blur-xs">
-        <div className="bg-slate-800/90 rounded-xl p-2.5 mb-2">
-          <div className="flex items-center gap-2 mb-1.5">
-            <div className="w-7 h-7 bg-slate-700 rounded-full flex items-center justify-center">
-              <ShieldCheck size={15} className="text-amber-400" />
+        <div className="bg-slate-800/90 rounded-xl p-2.5 mb-2 border border-slate-700/40">
+          <div className="flex items-center justify-between gap-2 mb-1.5">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-7 h-7 bg-slate-700 rounded-full flex items-center justify-center shrink-0">
+                <ShieldCheck size={15} className="text-amber-400" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-white text-xs font-semibold truncate">{profile?.full_name || 'Kullanıcı'}</p>
+              </div>
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-white text-xs font-semibold truncate">{profile?.full_name || 'Kullanıcı'}</p>
-            </div>
+            <button
+              type="button"
+              onClick={() => setIsPasswordModalOpen(true)}
+              title="Şifre Değiştir"
+              className="p-1 text-slate-400 hover:text-amber-300 hover:bg-slate-700/80 rounded-lg transition-colors cursor-pointer shrink-0"
+            >
+              <KeyRound size={13} />
+            </button>
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
             {isSuperAdmin() && (
@@ -282,13 +294,30 @@ export default function Sidebar({ currentPage, onNavigate, onCloseMobile }: Side
             )}
           </div>
         </div>
-        <button
-          onClick={signOut}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 text-slate-400 hover:text-red-400 hover:bg-slate-800/80 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
-        >
-          <LogOut size={15} />
-          Çıkış Yap
-        </button>
+
+        <div className="grid grid-cols-2 gap-1.5">
+          <button
+            type="button"
+            onClick={() => setIsPasswordModalOpen(true)}
+            className="flex items-center justify-center gap-1.5 px-2.5 py-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl text-xs font-semibold transition-colors cursor-pointer border border-slate-800"
+          >
+            <KeyRound size={14} className="text-amber-400" />
+            <span>Şifre</span>
+          </button>
+          <button
+            type="button"
+            onClick={signOut}
+            className="flex items-center justify-center gap-1.5 px-2.5 py-2 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-xl text-xs font-semibold transition-colors cursor-pointer border border-slate-800"
+          >
+            <LogOut size={14} />
+            <span>Çıkış</span>
+          </button>
+        </div>
+
+        <ChangePasswordModal
+          isOpen={isPasswordModalOpen}
+          onClose={() => setIsPasswordModalOpen(false)}
+        />
       </div>
     </aside>
   );
