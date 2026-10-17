@@ -796,7 +796,7 @@ export default function Reports() {
             </span>
           </div>
           <p className="text-slate-500 text-sm mt-0.5">
-            2 Büyük Master Rapor: Yönetici İcmali ve Müşteri-Şantiye Sevk Matrisi
+            3 Büyük Master Rapor: Yönetici İcmali, Sevk Matrisi ve Ürün Stok Kartı Ekstresi
           </p>
         </div>
 
@@ -824,53 +824,74 @@ export default function Reports() {
         )}
       </div>
 
-      {/* ── TOP MASTER REPORT TABS ── */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3 no-print">
+      {/* ── TOP MASTER REPORT TABS (3 SEKMELİ EŞİT DÜZEN - ALTA KAYMAYI ÖNLER) ── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 bg-slate-100/90 p-1.5 rounded-2xl border border-slate-200/90 no-print">
         <button
           type="button"
           onClick={() => setActiveReportTab('factory')}
-          className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl font-bold text-sm transition-all cursor-pointer ${
+          title="1. Fabrika Yönetici İcmali & Finansal Röntgen"
+          className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer ${
             activeReportTab === 'factory'
-              ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              ? 'bg-blue-600 text-white shadow-md shadow-blue-500/25 ring-1 ring-blue-700/20'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-white/80'
           }`}
         >
-          <BarChart3 size={18} />
-          <span>1. Fabrika Yönetici İcmali & Finansal Röntgen</span>
+          <BarChart3 size={17} className="shrink-0" />
+          <span className="truncate">1. Fabrika Yönetici İcmali</span>
+          <span
+            className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 hidden lg:inline ${
+              activeReportTab === 'factory'
+                ? 'bg-white/20 text-white'
+                : 'bg-blue-50 text-blue-700 border border-blue-200'
+            }`}
+          >
+            Röntgen
+          </span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveReportTab('matrix')}
-          className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl font-bold text-sm transition-all cursor-pointer ${
+          title="2. Müşteri, Şantiye & Ürün Sevk Matrisi (Excel + Yazdır)"
+          className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer ${
             activeReportTab === 'matrix'
-              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-500/20'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-500/25 ring-1 ring-emerald-700/20'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-white/80'
           }`}
         >
-          <Table size={18} />
-          <span>2. Müşteri, Şantiye & Ürün Sevk Matrisi</span>
-          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-300">
+          <Table size={17} className="shrink-0" />
+          <span className="truncate">2. Müşteri & Sevk Matrisi</span>
+          <span
+            className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 hidden lg:inline ${
+              activeReportTab === 'matrix'
+                ? 'bg-white/20 text-white'
+                : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+            }`}
+          >
             Excel + Yazdır
-          </span>
-          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-700 hidden sm:inline">
-            Şantiye Kırılımlı
           </span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveReportTab('ledger')}
-          className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl font-bold text-sm transition-all cursor-pointer ${
+          title="3. Ürün Stok Hareket Ekstresi (Stok Kartı & Bakiye)"
+          className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer ${
             activeReportTab === 'ledger'
-              ? 'bg-amber-600 text-white shadow-md shadow-amber-500/20'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              ? 'bg-amber-600 text-white shadow-md shadow-amber-500/25 ring-1 ring-amber-700/20'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-white/80'
           }`}
         >
-          <Boxes size={18} />
-          <span>3. Ürün Stok Hareket Ekstresi (Stok Kartı)</span>
-          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
-            Tarihçe & Bakiye
+          <Boxes size={17} className="shrink-0" />
+          <span className="truncate">3. Ürün Stok Ekstresi</span>
+          <span
+            className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 hidden lg:inline ${
+              activeReportTab === 'ledger'
+                ? 'bg-white/20 text-white'
+                : 'bg-amber-50 text-amber-700 border border-amber-200'
+            }`}
+          >
+            Stok Kartı
           </span>
         </button>
       </div>
