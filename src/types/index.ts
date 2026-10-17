@@ -314,6 +314,7 @@ export interface MachineDefinition {
   product_capacities?: Record<string, number>;
   notes?: string;
   is_active: boolean;
+  company_id?: string;
   created_at?: string;
   updated_at?: string;
 }

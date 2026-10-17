@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { Mold, MoldSummary, MoldMaintenanceLog, Product, Company } from '../types';
+import { Mold, MoldSummary, MoldMaintenanceLog, Product, Company, MachineDefinition } from '../types';
 import {
   Layers,
   Plus,
@@ -66,6 +66,7 @@ export default function MoldsPage() {
   // Data states
   const [molds, setMolds] = useState<MoldSummary[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [machines, setMachines] = useState<MachineDefinition[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'mounted' | 'active' | 'maintenance' | 'retired'>('all');
@@ -149,6 +150,19 @@ export default function MoldsPage() {
       let maintQ = supabase.from('mold_maintenance_logs').select('mold_id, date');
       if (targetCompanyId) maintQ = maintQ.eq('company_id', targetCompanyId);
       const { data: mLogs } = await maintQ;
+
+      // 1e. Machines
+      let machQ = supabase.from('machine_definitions').select('*').order('machine_no');
+      if (targetCompanyId) machQ = machQ.eq('company_id', targetCompanyId);
+      const { data: machData } = await machQ;
+      let machList = (machData || []) as MachineDefinition[];
+      if (machList.length === 0) {
+        machList = [
+          { machine_no: '1', name: '1 Nolu Parke Makinesi (Hat 1)', daily_capacity_m2: 1200, shift_count: 1, is_active: true },
+          { machine_no: '2', name: '2 Nolu Parke & Bordür Makinesi (Hat 2)', daily_capacity_m2: 1000, shift_count: 1, is_active: true },
+        ];
+      }
+      setMachines(machList);
 
       const entriesByMold: Record<string, { total_m2: number; last_date: string | null }> = {};
       (pEntries || []).forEach((pe: any) => {
@@ -725,9 +739,12 @@ export default function MoldsPage() {
             className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
           >
             <option value="all">Tüm Makineler / Hatlar</option>
-            <option value="1">1 Nolu Parke Makinesi (Hat 1)</option>
-            <option value="2">2 Nolu Parke Makinesi (Hat 2)</option>
-            <option value="hepsi">Her İki Makinede Uyumlu</option>
+            {machines.map(m => (
+              <option key={m.machine_no} value={m.machine_no}>
+                {m.name} ({m.machine_no})
+              </option>
+            ))}
+            <option value="hepsi">Tüm Makinelerle Uyumlu</option>
           </select>
 
           <div className="relative">
@@ -1040,9 +1057,12 @@ export default function MoldsPage() {
                     onChange={(e) => setFormData({ ...formData, machine_no: e.target.value })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
                   >
-                    <option value="1">1 Nolu Makine (Hat 1)</option>
-                    <option value="2">2 Nolu Makine (Hat 2)</option>
-                    <option value="hepsi">Her İkisi (Uyumlu)</option>
+                    {machines.filter(m => m.is_active !== false).map(m => (
+                      <option key={m.machine_no} value={m.machine_no}>
+                        {m.name} ({m.machine_no})
+                      </option>
+                    ))}
+                    <option value="hepsi">Tüm Makinelerle Uyumlu</option>
                   </select>
                 </div>
 

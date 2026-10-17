@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import {
   Product, Customer, Site, CustomerQuota,
-  MachineDefinition, ProductionOrder, ProductionPlan, ProductionPlanItem
+  MachineDefinition, ProductionOrder, ProductionPlan, ProductionPlanItem, Company
 } from '../types';
 import Modal from '../components/Modal';
 import {
@@ -17,7 +17,8 @@ import {
   Sparkles, Calendar, Factory, Plus, Filter,
   CheckCircle2, AlertTriangle, ArrowLeftRight,
   Layers, Printer, RefreshCw,
-  Sliders, Trash2, TrendingUp, Clock, Flame
+  Sliders, Trash2, TrendingUp, Clock, Flame,
+  Edit3, Building2, Power, PowerOff
 } from 'lucide-react';
 
 const getLocalDateStr = (d = new Date()) => {
@@ -30,7 +31,55 @@ const getLocalDateStr = (d = new Date()) => {
 type PlanningTab = 'agent' | 'schedule' | 'orders' | 'machines';
 
 export default function ProductionPlanning() {
-  const { user } = useAuth();
+  const { user, profile, isSuperAdmin } = useAuth();
+
+  // Multi-tenant isolation & company selector
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>(() => {
+    return localStorage.getItem('parke_planning_selected_company') || '';
+  });
+
+  const targetCompanyId = useMemo(() => {
+    if (isSuperAdmin()) {
+      return selectedCompanyId || profile?.company_id || (companies[0]?.id ?? '');
+    }
+    return profile?.company_id || '';
+  }, [isSuperAdmin, selectedCompanyId, profile?.company_id, companies]);
+
+  useEffect(() => {
+    if (isSuperAdmin()) {
+      supabase
+        .from('companies')
+        .select('*')
+        .eq('is_active', true)
+        .order('created_at', { ascending: true })
+        .then(({ data }) => {
+          if (data && data.length > 0) {
+            setCompanies(data);
+            if (!selectedCompanyId) {
+              const defaultId = profile?.company_id || data[0].id;
+              setSelectedCompanyId(defaultId);
+              localStorage.setItem('parke_planning_selected_company', defaultId);
+            }
+          }
+        });
+    }
+  }, [isSuperAdmin, profile?.company_id]);
+
+  // Machine Management Modal State
+  const [showMachineModal, setShowMachineModal] = useState(false);
+  const [editingMachine, setEditingMachine] = useState<MachineDefinition | null>(null);
+  const [machineForm, setMachineForm] = useState({
+    machine_no: '',
+    name: '',
+    daily_capacity_m2: 1200,
+    shift_count: 1,
+    specialized_types: [] as string[],
+    notes: '',
+    is_active: true,
+  });
+  const [savingMachine, setSavingMachine] = useState(false);
+  const [customTypeInput, setCustomTypeInput] = useState('');
 
   // Navigation tab
   const [activeTab, setActiveTab] = useState<PlanningTab>('agent');
@@ -136,6 +185,193 @@ export default function ProductionPlanning() {
     }
   };
 
+  const handleOpenAddMachine = () => {
+    const nextNo = String(machines.length + 1);
+    setEditingMachine(null);
+    setMachineForm({
+      machine_no: nextNo,
+      name: `${nextNo} Nolu Baskı Makinesi`,
+      daily_capacity_m2: 1000,
+      shift_count: 1,
+      specialized_types: ['Parke', 'Kilitli'],
+      notes: '',
+      is_active: true,
+    });
+    setCustomTypeInput('');
+    setShowMachineModal(true);
+  };
+
+  const handleOpenEditMachine = (m: MachineDefinition) => {
+    setEditingMachine(m);
+    setMachineForm({
+      machine_no: m.machine_no,
+      name: m.name,
+      daily_capacity_m2: Number(m.daily_capacity_m2) || 1000,
+      shift_count: Number(m.shift_count) || 1,
+      specialized_types: m.specialized_types || [],
+      notes: m.notes || '',
+      is_active: m.is_active !== false,
+    });
+    setCustomTypeInput('');
+    setShowMachineModal(true);
+  };
+
+  const handleSaveMachineModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!machineForm.machine_no.trim()) {
+      alert('Lütfen Makine No / Kodu alanını doldurunuz.');
+      return;
+    }
+    if (!machineForm.name.trim()) {
+      alert('Lütfen Makine Adı alanını doldurunuz.');
+      return;
+    }
+
+    setSavingMachine(true);
+    try {
+      const payload: any = {
+        machine_no: machineForm.machine_no.trim(),
+        name: machineForm.name.trim(),
+        daily_capacity_m2: Number(machineForm.daily_capacity_m2) || 1000,
+        shift_count: Number(machineForm.shift_count) || 1,
+        specialized_types: machineForm.specialized_types || [],
+        product_capacities: editingMachine?.product_capacities || {},
+        notes: machineForm.notes || '',
+        is_active: machineForm.is_active,
+        ...(targetCompanyId ? { company_id: targetCompanyId } : {}),
+      };
+
+      const { error: upsertErr } = await supabase.from('machine_definitions').upsert(payload);
+      if (upsertErr) {
+        console.warn('Direct column upsert failed, using notes fallback:', upsertErr.message);
+        const fallbackNotes = `${payload.notes || ''}\n[PRODUCT_CAPACITIES]${JSON.stringify(payload.product_capacities || {})}[/PRODUCT_CAPACITIES]`;
+        const fallbackPayload = {
+          ...payload,
+          product_capacities: undefined,
+          notes: fallbackNotes,
+        };
+        const { error: fbErr } = await supabase.from('machine_definitions').upsert(fallbackPayload);
+        if (fbErr) throw fbErr;
+      }
+
+      setMachines(prev => {
+        const idx = prev.findIndex(item => item.machine_no === payload.machine_no);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = { ...prev[idx], ...payload };
+          return next;
+        }
+        return [...prev, payload];
+      });
+
+      setShowMachineModal(false);
+      setEditingMachine(null);
+      alert(`✅ ${payload.name} başarıyla kaydedildi.`);
+    } catch (err: any) {
+      console.error('Machine save error:', err);
+      alert(`Makine kaydetme hatası: ${err.message || 'Bilinmeyen hata'}`);
+    } finally {
+      setSavingMachine(false);
+    }
+  };
+
+  const handleToggleMachineActive = async (m: MachineDefinition) => {
+    const nextActive = !m.is_active;
+    try {
+      let q = supabase
+        .from('machine_definitions')
+        .update({ is_active: nextActive })
+        .eq('machine_no', m.machine_no);
+      if (targetCompanyId) q = q.eq('company_id', targetCompanyId);
+      const { error } = await q;
+      if (error) throw error;
+      setMachines(prev => prev.map(item => item.machine_no === m.machine_no ? { ...item, is_active: nextActive } : item));
+    } catch (err: any) {
+      console.error('Machine toggle error:', err);
+      alert(`Durum değiştirilemedi: ${err.message || 'Bilinmeyen hata'}`);
+    }
+  };
+
+  const handleDeleteMachine = async (m: MachineDefinition) => {
+    try {
+      // 1. Check if production entries exist for this machine
+      let entryQ = supabase
+        .from('production_entries')
+        .select('id', { count: 'exact', head: true })
+        .eq('machine_no', m.machine_no);
+      if (targetCompanyId) entryQ = entryQ.eq('company_id', targetCompanyId);
+      const { count: prodCount } = await entryQ;
+
+      if (prodCount && prodCount > 0) {
+        const confirmDeactivate = window.confirm(
+          `⚠️ DİKKAT: "${m.name}" makinesiyle daha önce girilmiş ${prodCount} adet üretim fişi bulunmaktadır!\n\n` +
+          `Geçmiş üretim, lot ve maliyet kayıtlarının bozulmaması için makine tamamen silinemez.\n` +
+          `Bunun yerine makine "PASİFE" alınacaktır (yeni üretim fişi seçimlerinde görünmez).\n\n` +
+          `Makineyi pasife almak istiyor musunuz?`
+        );
+        if (confirmDeactivate) {
+          let updQ = supabase.from('machine_definitions').update({ is_active: false }).eq('machine_no', m.machine_no);
+          if (targetCompanyId) updQ = updQ.eq('company_id', targetCompanyId);
+          const { error } = await updQ;
+          if (error) throw error;
+          setMachines(prev => prev.map(item => item.machine_no === m.machine_no ? { ...item, is_active: false } : item));
+          alert(`ℹ️ "${m.name}" pasife alındı.`);
+        }
+        return;
+      }
+
+      // 2. Safe to delete
+      const confirmDelete = window.confirm(`"${m.name}" (${m.machine_no}) makinesini sistemden kalıcı olarak silmek istediğinize emin misiniz?`);
+      if (!confirmDelete) return;
+
+      let delQ = supabase.from('machine_definitions').delete().eq('machine_no', m.machine_no);
+      if (targetCompanyId) delQ = delQ.eq('company_id', targetCompanyId);
+      const { error: delErr } = await delQ;
+      if (delErr) throw delErr;
+
+      setMachines(prev => prev.filter(item => item.machine_no !== m.machine_no));
+      alert(`🗑️ "${m.name}" başarıyla silindi.`);
+    } catch (err: any) {
+      console.error('Machine delete error:', err);
+      alert(`Makine silinemedi: ${err.message || 'Bilinmeyen hata'}`);
+    }
+  };
+
+  const handleAutoCreateDefaultMachines = async () => {
+    if (!window.confirm('Fabrikanız için standart 2 makine (Hat 1: Parke Makinesi, Hat 2: Parke & Bordür Makinesi) tanımlanacaktır. Onaylıyor musunuz?')) return;
+    try {
+      const defaultM1: any = {
+        machine_no: '1',
+        name: '1 Nolu Parke Baskı Makinesi',
+        daily_capacity_m2: 1200,
+        shift_count: 1,
+        specialized_types: ['Parke', 'Kilitli', 'Prizma', 'Küp', 'Antik'],
+        product_capacities: {},
+        notes: 'Ana parke ve kilitli taş üretim hattı',
+        is_active: true,
+        ...(targetCompanyId ? { company_id: targetCompanyId } : {}),
+      };
+      const defaultM2: any = {
+        machine_no: '2',
+        name: '2 Nolu Parke & Bordür Makinesi',
+        daily_capacity_m2: 1000,
+        shift_count: 1,
+        specialized_types: ['Bordür', 'Oluk', 'Begonit', 'Plaka'],
+        product_capacities: {},
+        notes: 'Bordür, yağmur oluğu ve özel taşlar üretim hattı',
+        is_active: true,
+        ...(targetCompanyId ? { company_id: targetCompanyId } : {}),
+      };
+
+      await supabase.from('machine_definitions').upsert([defaultM1, defaultM2]);
+      await loadAllData();
+      alert('✅ Standart 2 makine başarıyla tanımlandı.');
+    } catch (err: any) {
+      console.error('Standart makineler oluşturulamadı:', err);
+      alert(`Hata: ${err.message || 'Makineler oluşturulamadı'}`);
+    }
+  };
+
   const handleSaveMachine = async (m: MachineDefinition) => {
     try {
       // 1. Always update localStorage cache
@@ -150,7 +386,8 @@ export default function ProductionPlanning() {
         specialized_types: m.specialized_types,
         product_capacities: m.product_capacities || {},
         notes: m.notes,
-        is_active: true,
+        is_active: m.is_active !== false,
+        ...(targetCompanyId ? { company_id: targetCompanyId } : {}),
       };
 
       const { error: upsertErr } = await supabase.from('machine_definitions').upsert(payload);
@@ -199,13 +436,27 @@ export default function ProductionPlanning() {
         itemsRes,
         shipItemsRes,
       ] = await Promise.all([
-        supabase.from('products').select('*').eq('is_active', true).order('name'),
-        supabase.from('customers').select('*').eq('is_active', true).order('name'),
-        supabase.from('sites').select('*').eq('is_active', true).order('name'),
-        supabase.from('customer_quotas').select('*, customers(*), sites(*), products(*)').eq('is_active', true),
-        supabase.from('production_orders').select('*, customers(*), sites(*), products(*)').order('created_at', { ascending: false }),
-        supabase.from('machine_definitions').select('*').order('machine_no'),
-        supabase.from('production_plans').select('*').order('created_at', { ascending: false }),
+        targetCompanyId
+          ? supabase.from('products').select('*').eq('is_active', true).eq('company_id', targetCompanyId).order('name')
+          : supabase.from('products').select('*').eq('is_active', true).order('name'),
+        targetCompanyId
+          ? supabase.from('customers').select('*').eq('is_active', true).eq('company_id', targetCompanyId).order('name')
+          : supabase.from('customers').select('*').eq('is_active', true).order('name'),
+        targetCompanyId
+          ? supabase.from('sites').select('*').eq('is_active', true).eq('company_id', targetCompanyId).order('name')
+          : supabase.from('sites').select('*').eq('is_active', true).order('name'),
+        targetCompanyId
+          ? supabase.from('customer_quotas').select('*, customers(*), sites(*), products(*)').eq('is_active', true).eq('company_id', targetCompanyId)
+          : supabase.from('customer_quotas').select('*, customers(*), sites(*), products(*)').eq('is_active', true),
+        targetCompanyId
+          ? supabase.from('production_orders').select('*, customers(*), sites(*), products(*)').eq('company_id', targetCompanyId).order('created_at', { ascending: false })
+          : supabase.from('production_orders').select('*, customers(*), sites(*), products(*)').order('created_at', { ascending: false }),
+        targetCompanyId
+          ? supabase.from('machine_definitions').select('*').eq('company_id', targetCompanyId).order('machine_no')
+          : supabase.from('machine_definitions').select('*').order('machine_no'),
+        targetCompanyId
+          ? supabase.from('production_plans').select('*').eq('company_id', targetCompanyId).order('created_at', { ascending: false })
+          : supabase.from('production_plans').select('*').order('created_at', { ascending: false }),
         supabase.from('v_product_stock').select('*'),
         supabase.from('production_plan_items').select('*, products(*), production_orders(*), customer_quotas(*)').order('planned_date').order('sequence_order'),
         supabase.from('shipment_items').select('product_id, m2, unit, shipments!inner(shipment_date, status)').eq('shipments.status', 'completed').gte('shipments.shipment_date', thirtyDaysAgoStr),
@@ -363,7 +614,7 @@ export default function ProductionPlanning() {
 
   useEffect(() => {
     loadAllData();
-  }, []);
+  }, [targetCompanyId]);
 
   // -------------------------------------------------------------
   // AI Planning Generator Trigger
@@ -2060,15 +2311,87 @@ export default function ProductionPlanning() {
       {/* ========================================================================= */}
       {activeTab === 'machines' && (
         <div className="space-y-6">
-          <div className="bg-amber-500/10 border border-amber-200/80 rounded-2xl p-4 text-xs text-amber-950 flex items-center gap-3">
-            <Sliders size={20} className="text-amber-600 flex-shrink-0" />
-            <div>
-              <strong className="font-bold block text-sm">Ürün Bazlı Makine Kapasite Ayarları</strong>
-              <span>
-                Beton parke, bordür ve yağmur oluklarının üretim hızları birbirinden farklıdır. Her makinede üretilen taş/ürün için 10 saatlik net günlük kapasite belirleyin. Akıllı Asistan (AI) üretim çizelgesini bu değerleri esas alarak oluşturacaktır.
-              </span>
+          {/* Top Bar with Info, Company Selector and Add Machine Button */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center shrink-0">
+                <Factory size={22} />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm sm:text-base flex items-center gap-2">
+                  Tesis Makineleri & Üretim Hatları
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 font-bold border border-slate-200">
+                    {machines.length} Makine
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Her makinenin günlük çalışma hızı, vardiya düzeni, uzmanlık alanları ve ürüne özel kapasiteleri
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {isSuperAdmin() && companies.length > 0 && (
+                <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                  <Building2 size={15} className="text-indigo-600" />
+                  <select
+                    value={selectedCompanyId}
+                    onChange={(e) => {
+                      setSelectedCompanyId(e.target.value);
+                      localStorage.setItem('parke_planning_selected_company', e.target.value);
+                    }}
+                    className="text-xs font-bold text-slate-700 bg-transparent focus:outline-none cursor-pointer"
+                  >
+                    {companies.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleOpenAddMachine}
+                className="flex items-center gap-1.5 px-4 py-2 bg-amber-600 hover:bg-amber-700 active:scale-[0.99] text-white rounded-xl text-xs font-bold transition-all shadow-sm shadow-amber-600/20 cursor-pointer"
+              >
+                <Plus size={16} />
+                <span>+ Yeni Makine Ekle</span>
+              </button>
             </div>
           </div>
+
+          {/* Empty state if 0 machines */}
+          {machines.length === 0 && (
+            <div className="bg-white rounded-3xl p-10 border-2 border-dashed border-slate-200 text-center space-y-4">
+              <div className="w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto">
+                <Factory size={28} />
+              </div>
+              <div>
+                <h4 className="font-bold text-slate-900 text-base">Henüz Makine Tanımlanmamış</h4>
+                <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
+                  Fabrikanızdaki üretim hatlarını ve baskı makinelerini ekleyerek günlük üretim kapasitelerini ve akıllı planlamayı başlatabilirsiniz.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={handleAutoCreateDefaultMachines}
+                  className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+                >
+                  ⚡ Standart 2 Makineyi Kur (Hat 1 & Hat 2)
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOpenAddMachine}
+                  className="px-4 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                >
+                  + Özel Makine Tanımla
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {machines.map(m => {
@@ -2077,22 +2400,74 @@ export default function ProductionPlanning() {
               const selectedProd = products.find(p => p.id === currentNew.productId);
 
               return (
-                <div key={m.machine_no} className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-5">
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div key={m.machine_no} className={`bg-white rounded-3xl p-6 border transition-all ${
+                  m.is_active === false ? 'border-dashed border-slate-300 opacity-70 bg-slate-50/50' : 'border-slate-200 shadow-xs'
+                } space-y-5`}>
+                  <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-600 flex items-center justify-center font-black text-base">
+                      <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-black text-base ${
+                        m.is_active === false ? 'bg-slate-200 text-slate-500' : 'bg-amber-500/10 text-amber-600'
+                      }`}>
                         {m.machine_no}
                       </div>
                       <div>
-                        <h3 className="font-bold text-slate-900 text-base">{m.name}</h3>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-bold text-slate-900 text-base">{m.name}</h3>
+                          {m.is_active === false && (
+                            <span className="px-2 py-0.5 bg-slate-200 text-slate-600 font-bold text-[10px] rounded-full">
+                              Pasif
+                            </span>
+                          )}
+                        </div>
                         <p className="text-xs text-slate-400">Tesis Makine Parametreleri & Ürün Kapasiteleri</p>
                       </div>
                     </div>
 
-                    <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 font-bold text-xs rounded-full border border-emerald-200 flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                      Aktif
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {/* Active/Passive Toggle */}
+                      <button
+                        type="button"
+                        onClick={() => handleToggleMachineActive(m)}
+                        className={`px-2.5 py-1 text-xs font-bold rounded-lg border transition-colors flex items-center gap-1 cursor-pointer ${
+                          m.is_active !== false
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                            : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                        }`}
+                        title={m.is_active !== false ? 'Makineyi pasife al' : 'Makineyi aktif et'}
+                      >
+                        {m.is_active !== false ? (
+                          <>
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                            Aktif
+                          </>
+                        ) : (
+                          <>
+                            <PowerOff size={12} />
+                            Pasif
+                          </>
+                        )}
+                      </button>
+
+                      {/* Edit Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditMachine(m)}
+                        className="p-1.5 text-slate-400 hover:text-amber-700 hover:bg-amber-50 border border-slate-200 rounded-lg transition-colors cursor-pointer"
+                        title="Makine bilgilerini düzenle"
+                      >
+                        <Edit3 size={15} />
+                      </button>
+
+                      {/* Delete / Deactivate Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteMachine(m)}
+                        className="p-1.5 text-slate-400 hover:text-red-700 hover:bg-red-50 border border-slate-200 rounded-lg transition-colors cursor-pointer"
+                        title="Makineyi kaldır veya sil"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
@@ -2513,6 +2888,198 @@ export default function ProductionPlanning() {
                 className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-xs transition-colors"
               >
                 Siparişi Kaydet
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MACHINE ADD / EDIT MODAL */}
+      {/* ========================================================================= */}
+      {showMachineModal && (
+        <Modal
+          title={editingMachine ? `Makineyi Düzenle: ${editingMachine.name}` : 'Yeni Üretim Makinesi / Hattı Ekle'}
+          onClose={() => {
+            setShowMachineModal(false);
+            setEditingMachine(null);
+          }}
+          size="md"
+        >
+          <form onSubmit={handleSaveMachineModal} className="space-y-4 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Makine Kodu / Numarası <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  disabled={!!editingMachine}
+                  value={machineForm.machine_no}
+                  onChange={e => setMachineForm(f => ({ ...f, machine_no: e.target.value }))}
+                  placeholder="Örn: 1, 2, 3, HAT-3"
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-slate-900 font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:bg-slate-100 disabled:text-slate-500"
+                />
+                <span className="text-[10px] text-slate-400 mt-0.5 block">
+                  Lot kodlarında kullanılır (Örn: LOT-M{machineForm.machine_no || '1'})
+                </span>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Makine Adı <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={machineForm.name}
+                  onChange={e => setMachineForm(f => ({ ...f, name: e.target.value }))}
+                  placeholder="Örn: 3 Nolu Bims & Parke Makinesi"
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-amber-400"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Genel Günlük Kapasite (10 Saat)
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="1"
+                    value={machineForm.daily_capacity_m2}
+                    onChange={e => setMachineForm(f => ({ ...f, daily_capacity_m2: Number(e.target.value) || 0 }))}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 text-slate-900 font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-400 pr-14"
+                  />
+                  <span className="absolute right-3 top-2 text-slate-400 text-xs font-semibold">m²/gün</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Vardiya Düzeni</label>
+                <select
+                  value={machineForm.shift_count}
+                  onChange={e => setMachineForm(f => ({ ...f, shift_count: Number(e.target.value) || 1 }))}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                >
+                  <option value={1}>1 Vardiya (Günlük 10 Saat)</option>
+                  <option value={2}>2 Vardiya (10 + 10 Saat)</option>
+                  <option value={3}>3 Vardiya (8 + 8 + 8 Saat)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Uzmanlaştığı Ürün Tipleri */}
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">
+                Uzmanlaştığı Ürün Tipleri
+              </label>
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {['Parke', 'Kilitli', 'Prizma', 'Küp', 'Bordür', 'Oluk', 'Begonit', 'Bims', 'Plaka'].map(tag => {
+                  const isSelected = machineForm.specialized_types.some(t => t.toLowerCase() === tag.toLowerCase());
+                  return (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => {
+                        setMachineForm(f => ({
+                          ...f,
+                          specialized_types: isSelected
+                            ? f.specialized_types.filter(t => t.toLowerCase() !== tag.toLowerCase())
+                            : [...f.specialized_types, tag]
+                        }));
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-amber-600 text-white border-amber-600 shadow-2xs'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {isSelected ? '✓ ' : '+ '}{tag}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Custom type input */}
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Başka ürün tipi ekle..."
+                  value={customTypeInput}
+                  onChange={e => setCustomTypeInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      if (customTypeInput.trim()) {
+                        setMachineForm(f => ({ ...f, specialized_types: [...f.specialized_types, customTypeInput.trim()] }));
+                        setCustomTypeInput('');
+                      }
+                    }
+                  }}
+                  className="flex-1 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (customTypeInput.trim()) {
+                      setMachineForm(f => ({ ...f, specialized_types: [...f.specialized_types, customTypeInput.trim()] }));
+                      setCustomTypeInput('');
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs cursor-pointer"
+                >
+                  Ekle
+                </button>
+              </div>
+            </div>
+
+            {/* Durum */}
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Çalışma Durumu</label>
+              <select
+                value={machineForm.is_active ? 'true' : 'false'}
+                onChange={e => setMachineForm(f => ({ ...f, is_active: e.target.value === 'true' }))}
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400"
+              >
+                <option value="true">🟢 Aktif (Üretim ve planlamaya açık)</option>
+                <option value="false">⚪ Pasif (Durdurulmuş / Bakımda)</option>
+              </select>
+            </div>
+
+            {/* Notlar */}
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Açıklama / Notlar</label>
+              <input
+                type="text"
+                value={machineForm.notes}
+                onChange={e => setMachineForm(f => ({ ...f, notes: e.target.value }))}
+                placeholder="Makine modeli, tesis içi konumu veya özel notlar..."
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400"
+              />
+            </div>
+
+            {/* Modal Buttons */}
+            <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMachineModal(false);
+                  setEditingMachine(null);
+                }}
+                className="px-4 py-2 border border-slate-200 text-slate-700 rounded-xl font-bold hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                İptal
+              </button>
+              <button
+                type="submit"
+                disabled={savingMachine}
+                className="px-6 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold transition-all disabled:opacity-50 cursor-pointer shadow-sm shadow-amber-600/20"
+              >
+                {savingMachine ? 'Kaydediliyor...' : editingMachine ? 'Değişiklikleri Kaydet' : 'Makineyi Ekle'}
               </button>
             </div>
           </form>

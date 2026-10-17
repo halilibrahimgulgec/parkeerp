@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { ProductionEntry, Product, Company, Mold } from '../types';
+import { ProductionEntry, Product, Company, Mold, MachineDefinition } from '../types';
 import Modal from '../components/Modal';
 import {
   Plus, Factory, Search, Filter, Calendar, CreditCard as Edit2,
@@ -44,14 +44,23 @@ const EMPTY_FORM: ProductionFormData = {
   mold_id: null,
 };
 
-function ProductionForm({ products, onSave, onClose, initial, targetCompanyId }: {
+function ProductionForm({ products, machines = [], onSave, onClose, initial, targetCompanyId }: {
   products: Product[];
+  machines?: MachineDefinition[];
   onSave: (savedInfo?: any) => void;
   onClose: () => void;
   initial?: ProductionEntry;
   targetCompanyId?: string | null;
 }) {
   const { user } = useAuth();
+  const activeMachines = useMemo(() => {
+    const list = (machines || []).filter(m => m.is_active !== false);
+    if (list.length > 0) return list;
+    return [
+      { machine_no: '1', name: '1 Nolu Parke Makinesi (Hat 1)', daily_capacity_m2: 1200, shift_count: 1, is_active: true },
+      { machine_no: '2', name: '2 Nolu Parke & Bordür Makinesi (Hat 2)', daily_capacity_m2: 1000, shift_count: 1, is_active: true },
+    ] as MachineDefinition[];
+  }, [machines]);
   const [form, setForm] = useState<ProductionFormData>(initial ? {
     date: initial.date,
     shift: initial.shift,
@@ -335,8 +344,11 @@ function ProductionForm({ products, onSave, onClose, initial, targetCompanyId }:
           <label className="block text-sm font-medium text-slate-700 mb-1">Makine / Hat *</label>
           <select value={form.machine_no} onChange={e => handleMachineChange(e.target.value)}
             className="w-full border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 font-bold text-sm">
-            <option value="1">1 Nolu Parke Makinesi (Hat 1)</option>
-            <option value="2">2 Nolu Parke & Bordür Makinesi (Hat 2)</option>
+            {activeMachines.map(m => (
+              <option key={m.machine_no} value={m.machine_no}>
+                {m.name} ({m.machine_no})
+              </option>
+            ))}
           </select>
         </div>
         <div>
@@ -691,7 +703,8 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
   const [endDate, setEndDate] = useState(() => getLocalDateStr(new Date()));
   const [selectedProductId, setSelectedProductId] = useState<string>('all');
   const [selectedShift, setSelectedShift] = useState<'all' | 'Gündüz' | 'Gece'>('all');
-  const [selectedMachine, setSelectedMachine] = useState<'all' | '1' | '2'>('all');
+  const [selectedMachine, setSelectedMachine] = useState<string>('all');
+  const [machines, setMachines] = useState<MachineDefinition[]>([]);
 
   // Breakdown accordion toggle
   const [showProductBreakdown, setShowProductBreakdown] = useState<boolean>(true);
@@ -709,21 +722,34 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
       .select('*, products(*), molds(*)')
       .order('date', { ascending: false })
       .order('created_at', { ascending: false });
+    let machQuery = supabase.from('machine_definitions').select('*').order('machine_no');
 
     if (targetCompanyId) {
       if (isDefaultCompany) {
         prodQuery = prodQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
         prodListQuery = prodListQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+        machQuery = machQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
       } else {
         prodQuery = prodQuery.eq('company_id', targetCompanyId);
         prodListQuery = prodListQuery.eq('company_id', targetCompanyId);
+        machQuery = machQuery.eq('company_id', targetCompanyId);
       }
     }
 
-    const [prodRes, prodListRes] = await Promise.all([
+    const [prodRes, prodListRes, machRes] = await Promise.all([
       prodQuery,
       prodListQuery,
+      machQuery,
     ]);
+
+    let machList = (machRes.data || []) as MachineDefinition[];
+    if (machList.length === 0) {
+      machList = [
+        { machine_no: '1', name: '1 Nolu Parke Makinesi (Hat 1)', daily_capacity_m2: 1200, shift_count: 1, is_active: true },
+        { machine_no: '2', name: '2 Nolu Parke & Bordür Makinesi (Hat 2)', daily_capacity_m2: 1000, shift_count: 1, is_active: true },
+      ];
+    }
+    setMachines(machList);
 
     let productList = (prodRes.data || []) as Product[];
     let prodEntries = (prodListRes.data || []) as ProductionEntry[];
@@ -864,6 +890,7 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
       entryCount: number;
       machine1Net: number;
       machine2Net: number;
+      machineNetMap: Record<string, number>;
       unit: string;
     }> = {};
 
@@ -879,6 +906,7 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
           entryCount: 0,
           machine1Net: 0,
           machine2Net: 0,
+          machineNetMap: {},
           unit: e.products.unit || 'm²',
         };
       }
@@ -892,7 +920,10 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
       map[e.product_id].totalWaste += waste;
       map[e.product_id].totalPallets += pallets;
       map[e.product_id].entryCount += 1;
-      if (e.machine_no === '1') {
+      
+      const mNo = e.machine_no || '1';
+      map[e.product_id].machineNetMap[mNo] = (map[e.product_id].machineNetMap[mNo] || 0) + net;
+      if (mNo === '1') {
         map[e.product_id].machine1Net += net;
       } else {
         map[e.product_id].machine2Net += net;
@@ -1196,12 +1227,15 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
             </label>
             <select
               value={selectedMachine}
-              onChange={e => setSelectedMachine(e.target.value as any)}
-              className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+              onChange={e => setSelectedMachine(e.target.value)}
+              className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer"
             >
               <option value="all">Tüm Makineler</option>
-              <option value="1">1 Nolu Makine (Hat 1)</option>
-              <option value="2">2 Nolu Makine (Hat 2)</option>
+              {machines.map(m => (
+                <option key={m.machine_no} value={m.machine_no}>
+                  {m.name}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -1313,7 +1347,15 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
                 <span className="text-sm font-semibold opacity-90"> Vardiya</span>
               </p>
               <p className="text-amber-100 text-xs mt-0.5 font-medium">
-                Hat 1: {selectedProductStats?.machine1Net.toLocaleString('tr-TR') || 0} • Hat 2: {selectedProductStats?.machine2Net.toLocaleString('tr-TR') || 0}
+                {selectedProductStats?.machineNetMap && Object.keys(selectedProductStats.machineNetMap).length > 0 ? (
+                  Object.entries(selectedProductStats.machineNetMap).map(([mNo, val]) => {
+                    const mDef = machines.find(m => m.machine_no === mNo);
+                    const label = mDef ? mDef.name.replace(/Baskı Makinesi|Makinesi/gi, '').trim() : `Makine ${mNo}`;
+                    return `${label}: ${val.toLocaleString('tr-TR')}`;
+                  }).join(' • ')
+                ) : (
+                  `Hat 1: ${selectedProductStats?.machine1Net.toLocaleString('tr-TR') || 0} • Hat 2: ${selectedProductStats?.machine2Net.toLocaleString('tr-TR') || 0}`
+                )}
               </p>
             </div>
           </div>
@@ -1445,7 +1487,15 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
                           {item.entryCount}
                         </td>
                         <td className="py-2.5 px-4 text-right font-mono text-slate-500 text-[11px]">
-                          Hat 1: {item.machine1Net.toLocaleString('tr-TR')} | Hat 2: {item.machine2Net.toLocaleString('tr-TR')}
+                          {item.machineNetMap && Object.keys(item.machineNetMap).length > 0 ? (
+                            Object.entries(item.machineNetMap).map(([mNo, val]) => {
+                              const mDef = machines.find(m => m.machine_no === mNo);
+                              const label = mDef ? mDef.name.replace(/Baskı Makinesi|Makinesi/gi, '').trim() : `M${mNo}`;
+                              return `${label}: ${val.toLocaleString('tr-TR')}`;
+                            }).join(' | ')
+                          ) : (
+                            `Hat 1: ${item.machine1Net.toLocaleString('tr-TR')} | Hat 2: ${item.machine2Net.toLocaleString('tr-TR')}`
+                          )}
                         </td>
                         <td className="py-2.5 px-4 text-center">
                           {isSelected ? (
@@ -1627,6 +1677,7 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
         >
           <ProductionForm
             products={products}
+            machines={machines}
             targetCompanyId={targetCompanyId}
             onSave={(savedInfo) => {
               setShowModal(false);
