@@ -7,7 +7,7 @@ import {
   XCircle, Clock, AlertTriangle, RefreshCw, Edit2, Users,
   Globe, Calendar, Key, Mail, Phone, MapPin, UserPlus,
   Eye, EyeOff, Lock, User, Shield, Sparkles, KeyRound,
-  Copy, Check, Send, X
+  Copy, Check, Send, X, Trash2
 } from 'lucide-react';
 
 const ROLE_LABELS: Record<string, string> = {
@@ -71,6 +71,19 @@ export default function SuperAdminCompanies() {
   const [resetLoading, setResetLoading] = useState(false);
   const [resetSuccess, setResetSuccess] = useState('');
   const [resetError, setResetError] = useState('');
+
+  // Kullanıcı Düzenleme Modalı State
+  const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
+  const [editUserFullName, setEditUserFullName] = useState('');
+  const [editUserRole, setEditUserRole] = useState<UserRole>('admin');
+  const [editUserCompanyId, setEditUserCompanyId] = useState('');
+  const [editUserIsApproved, setEditUserIsApproved] = useState(true);
+  const [editUserLoading, setEditUserLoading] = useState(false);
+  const [editUserError, setEditUserError] = useState('');
+
+  // Kullanıcı Silme Onay Modalı State
+  const [deletingUser, setDeletingUser] = useState<UserProfile | null>(null);
+  const [deleteUserLoading, setDeleteUserLoading] = useState(false);
 
   // Firmanın Kullanıcılarını Görüntüleme Modalı State
   const [viewUsersCompany, setViewUsersCompany] = useState<Company | null>(null);
@@ -380,6 +393,73 @@ export default function SuperAdminCompanies() {
       }
     } catch (err: any) {
       console.error('Rol değiştirilemedi:', err);
+    }
+  };
+
+  const handleOpenEditUser = (targetUser: UserProfile) => {
+    setEditingUser(targetUser);
+    setEditUserFullName(targetUser.full_name || '');
+    setEditUserRole(targetUser.role as UserRole);
+    setEditUserCompanyId(targetUser.company_id || viewUsersCompany?.id || '');
+    setEditUserIsApproved(targetUser.is_approved);
+    setEditUserError('');
+  };
+
+  const handleSaveEditUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+    if (!editUserFullName.trim()) {
+      setEditUserError('Lütfen kullanıcı adını doldurun.');
+      return;
+    }
+    setEditUserLoading(true);
+    setEditUserError('');
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({
+          full_name: editUserFullName.trim(),
+          role: editUserRole,
+          company_id: editUserCompanyId || null,
+          is_approved: editUserIsApproved,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', editingUser.id);
+
+      if (error) throw error;
+
+      setEditingUser(null);
+      if (viewUsersCompany) {
+        await handleOpenViewUsers(viewUsersCompany);
+      }
+      await fetchCompanies();
+    } catch (err: any) {
+      setEditUserError(err.message || 'Kullanıcı güncellenirken bir hata oluştu.');
+    } finally {
+      setEditUserLoading(false);
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!deletingUser) return;
+    setDeleteUserLoading(true);
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .delete()
+        .eq('id', deletingUser.id);
+
+      if (error) throw error;
+
+      setDeletingUser(null);
+      if (viewUsersCompany) {
+        await handleOpenViewUsers(viewUsersCompany);
+      }
+      await fetchCompanies();
+    } catch (err: any) {
+      alert('Kullanıcı silinirken hata oluştu: ' + (err.message || ''));
+    } finally {
+      setDeleteUserLoading(false);
     }
   };
 
@@ -1099,6 +1179,24 @@ export default function SuperAdminCompanies() {
                       >
                         <KeyRound size={14} />
                       </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditUser(u)}
+                        className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-blue-600 hover:bg-blue-50 hover:border-blue-200 transition-colors cursor-pointer"
+                        title="Kullanıcıyı Düzenle (Adı, Rolü, Şirketi)"
+                      >
+                        <Edit2 size={14} />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setDeletingUser(u)}
+                        className="p-1.5 rounded-lg border border-slate-200 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 transition-colors cursor-pointer"
+                        title="Kullanıcıyı Firmadan Sil"
+                      >
+                        <Trash2 size={14} />
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -1209,6 +1307,172 @@ export default function SuperAdminCompanies() {
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Edit User Modal */}
+      {editingUser && (
+        <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-in fade-in">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Edit2 size={20} className="text-indigo-600" />
+                <span>Kullanıcı Bilgilerini Düzenle</span>
+              </h2>
+              <button
+                onClick={() => setEditingUser(null)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {editUserError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl font-medium flex items-center gap-2">
+                <AlertTriangle size={15} className="shrink-0" />
+                <span>{editUserError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveEditUser} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Kullanıcı Adı Soyadı *
+                </label>
+                <div className="relative">
+                  <User size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    required
+                    value={editUserFullName}
+                    onChange={(e) => setEditUserFullName(e.target.value)}
+                    placeholder="Ad Soyad"
+                    className="w-full border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Kullanıcı Rolü / Görevi *
+                </label>
+                <select
+                  value={editUserRole}
+                  onChange={(e) => setEditUserRole(e.target.value as UserRole)}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+                >
+                  <option value="admin">👑 Firma Yöneticisi</option>
+                  <option value="field_manager">🏭 Saha Sorumlusu</option>
+                  <option value="weighbridge">🚚 Kantar Görevlisi</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Bağlı Olduğu Firma *
+                </label>
+                <select
+                  value={editUserCompanyId}
+                  onChange={(e) => setEditUserCompanyId(e.target.value)}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+                >
+                  {companies.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Kullanıcıyı başka bir firmaya aktarmak için buradan firma seçebilirsiniz.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="editIsApproved"
+                  checked={editUserIsApproved}
+                  onChange={(e) => setEditUserIsApproved(e.target.checked)}
+                  className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                />
+                <label htmlFor="editIsApproved" className="text-xs font-bold text-slate-700 cursor-pointer">
+                  Hesap Onaylı (Sisteme giriş yapabilir)
+                </label>
+              </div>
+
+              <div className="pt-2 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEditingUser(null)}
+                  disabled={editUserLoading}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold text-xs transition-colors cursor-pointer"
+                >
+                  İptal
+                </button>
+                <button
+                  type="submit"
+                  disabled={editUserLoading}
+                  className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md shadow-indigo-500/20 transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {editUserLoading ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <CheckCircle2 size={14} />
+                      <span>Değişiklikleri Kaydet</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete User Confirmation Modal */}
+      {deletingUser && (
+        <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 animate-in fade-in">
+            <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto">
+              <Trash2 size={24} />
+            </div>
+
+            <div className="text-center space-y-1">
+              <h3 className="text-base font-bold text-slate-900">Kullanıcıyı Sil</h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                <strong className="text-slate-800">"{deletingUser.full_name}"</strong> isimli kullanıcıyı bu firmadan silmek istediğinize emin misiniz?
+              </p>
+              <p className="text-[11px] text-rose-600 font-medium">
+                Bu işlem geri alınamaz ve kullanıcının firma erişimi tamamen kaldırılır.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeletingUser(null)}
+                disabled={deleteUserLoading}
+                className="flex-1 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+              >
+                Vazgeç
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteUser}
+                disabled={deleteUserLoading}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-md shadow-rose-500/20 transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
+              >
+                {deleteUserLoading ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <Trash2 size={13} />
+                    <span>Evet, Sil</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
