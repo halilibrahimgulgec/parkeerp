@@ -310,7 +310,11 @@ export default function SuperAdminCompanies() {
       setUserSuccess(`"${userFullName.trim() || userEmail}" kullanıcısı başarıyla oluşturuldu ve ${userModalCompany.name} firmasına bağlandı!`);
       await fetchCompanies();
     } catch (err: any) {
-      setUserError(err.message || 'Kullanıcı oluşturulurken bir hata oluştu.');
+      if (err.message?.includes('already registered') || err.message?.includes('user_already_exists')) {
+        setUserError(`"${userEmail}" e-posta adresi sistemde zaten kayıtlıdır. Şifresini güncellemek veya giriş yapmasını sağlamak için kullanıcılar listesindeki "Şifre Sıfırla" butonunu kullanabilirsiniz.`);
+      } else {
+        setUserError(err.message || 'Kullanıcı oluşturulurken bir hata oluştu.');
+      }
     } finally {
       setUserLoading(false);
     }

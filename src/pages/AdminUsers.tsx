@@ -236,13 +236,21 @@ export default function AdminUsers() {
         if (profileError) throw profileError;
       }
 
+      const compObj = companies.find(c => c.id === targetCompany);
+      setCreatedCredentials({
+        fullName: addFullName.trim(),
+        email: addEmail.trim(),
+        pass: addPassword,
+        companyName: compObj?.name || profile?.company?.name || 'Parke ERP',
+      });
       setAddSuccess('Alt kullanıcı başarıyla oluşturuldu ve onaylandı.');
-      setTimeout(() => {
-        setIsAddModalOpen(false);
-        fetchUsersAndCompanies();
-      }, 1200);
+      fetchUsersAndCompanies();
     } catch (err: any) {
-      setAddError(err.message || 'Kullanıcı oluşturulurken bir hata oluştu.');
+      if (err.message?.includes('already registered') || err.message?.includes('user_already_exists')) {
+        setAddError(`"${addEmail}" e-posta adresi sistemde zaten kayıtlıdır. Şifresini güncellemek için kullanıcı listesindeki "Şifre Sıfırla" butonunu kullanabilirsiniz.`);
+      } else {
+        setAddError(err.message || 'Kullanıcı oluşturulurken bir hata oluştu.');
+      }
     } finally {
       setAddLoading(false);
     }

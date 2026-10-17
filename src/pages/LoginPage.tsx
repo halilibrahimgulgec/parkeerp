@@ -29,8 +29,17 @@ export default function LoginPage({ onGoToLanding }: LoginPageProps = {}) {
     e.preventDefault();
     setError(''); setSuccess(''); setLoading(true);
     try {
-      const { error } = await signIn(email, password);
-      if (error) setError(error.message || 'E-posta veya şifre hatalı.');
+      const cleanEmail = email.trim();
+      const { error } = await signIn(cleanEmail, password);
+      if (error) {
+        if (error.message?.includes('Invalid login credentials')) {
+          setError('E-posta adresi veya şifre hatalı. Lütfen kontrol edip tekrar deneyin.');
+        } else if (error.message?.includes('Email not confirmed')) {
+          setError('E-posta adresiniz henüz onaylanmamış. Lütfen gelen kutunuzu kontrol edin.');
+        } else {
+          setError(error.message || 'E-posta veya şifre hatalı.');
+        }
+      }
     } finally {
       setLoading(false);
     }
