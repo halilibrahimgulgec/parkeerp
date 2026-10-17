@@ -36,6 +36,7 @@ interface MobileDashboardProps {
   onNavigate: (page: Page) => void;
   isDark: boolean;
   onToggleTheme: () => void;
+  targetCompanyId?: string | null;
 }
 
 interface RecentShipmentSummary {
@@ -47,8 +48,8 @@ interface RecentShipmentSummary {
   total_pallets: number;
 }
 
-export default function MobileDashboard({ onNavigate, isDark, onToggleTheme }: MobileDashboardProps) {
-  const { user } = useAuth();
+export default function MobileDashboard({ onNavigate, isDark, onToggleTheme, targetCompanyId }: MobileDashboardProps) {
+  const { user, profile, isSuperAdmin } = useAuth();
 
   // Metrics
   const [todayProdM2, setTodayProdM2] = useState<number>(0);
@@ -65,23 +66,37 @@ export default function MobileDashboard({ onNavigate, isDark, onToggleTheme }: M
     try {
       setLoading(true);
       const todayStr = new Date().toISOString().split('T')[0];
+      const effectiveCompanyId = targetCompanyId || (isSuperAdmin() ? (localStorage.getItem('parke_matrix_selected_company') || profile?.company_id || null) : (profile?.company_id || null));
+      const isDefaultCompany = !effectiveCompanyId || effectiveCompanyId === profile?.company_id;
 
       // 1. Günlük Üretim
-      const { data: prodData } = await supabase
+      let prodQuery = supabase
         .from('production_entries')
         .select('net_m2, total_m2')
         .eq('date', todayStr);
+      if (effectiveCompanyId) {
+        prodQuery = isDefaultCompany
+          ? prodQuery.or(`company_id.eq.${effectiveCompanyId},company_id.is.null`)
+          : prodQuery.eq('company_id', effectiveCompanyId);
+      }
+      const { data: prodData } = await prodQuery;
 
       const prodSum = (prodData || []).reduce((acc, row) => acc + (Number(row.net_m2 || row.total_m2) || 0), 0);
       setTodayProdM2(Math.round(prodSum));
 
       // 2. Son Sevkiyat
-      const { data: shipData } = await supabase
+      let shipQuery = supabase
         .from('shipments')
         .select('invoice_no, vehicle_plate, total_m2, customers(name), sites(name), shipment_items(pallets)')
         .order('shipment_date', { ascending: false })
         .order('created_at', { ascending: false })
         .limit(1);
+      if (effectiveCompanyId) {
+        shipQuery = isDefaultCompany
+          ? shipQuery.or(`company_id.eq.${effectiveCompanyId},company_id.is.null`)
+          : shipQuery.eq('company_id', effectiveCompanyId);
+      }
+      const { data: shipData } = await shipQuery;
 
       if (shipData && shipData.length > 0) {
         const s = shipData[0] as any;
@@ -97,7 +112,13 @@ export default function MobileDashboard({ onNavigate, isDark, onToggleTheme }: M
       }
 
       // 3. Stok Toplamı
-      const { data: stocks } = await supabase.from('v_product_stock').select('*');
+      let stockQuery = supabase.from('v_product_stock').select('*');
+      if (effectiveCompanyId) {
+        stockQuery = isDefaultCompany
+          ? stockQuery.or(`company_id.eq.${effectiveCompanyId},company_id.is.null`)
+          : stockQuery.eq('company_id', effectiveCompanyId);
+      }
+      const { data: stocks } = await stockQuery;
       if (stocks) {
         setStockList(stocks);
         const sumStock = stocks.reduce((acc, row: any) => acc + (Number(row.current_stock) || 0), 0);
@@ -105,14 +126,26 @@ export default function MobileDashboard({ onNavigate, isDark, onToggleTheme }: M
       }
 
       // 4. Müşteri Kotaları
-      const { count: quotaCount } = await supabase
+      let quotaQuery = supabase
         .from('customer_quotas')
         .select('*', { count: 'exact', head: true })
         .eq('is_active', true);
+      if (effectiveCompanyId) {
+        quotaQuery = isDefaultCompany
+          ? quotaQuery.or(`company_id.eq.${effectiveCompanyId},company_id.is.null`)
+          : quotaQuery.eq('company_id', effectiveCompanyId);
+      }
+      const { count: quotaCount } = await quotaQuery;
       setActiveQuotasCount(quotaCount || 0);
 
       // 5. Palet Borçları
-      const { data: palletTxs } = await supabase.from('pallet_transactions').select('transaction_type, quantity');
+      let palletQuery = supabase.from('pallet_transactions').select('transaction_type, quantity');
+      if (effectiveCompanyId) {
+        palletQuery = isDefaultCompany
+          ? palletQuery.or(`company_id.eq.${effectiveCompanyId},company_id.is.null`)
+          : palletQuery.eq('company_id', effectiveCompanyId);
+      }
+      const { data: palletTxs } = await palletQuery;
       if (palletTxs) {
         let sent = 0;
         let returned = 0;
@@ -131,7 +164,7 @@ export default function MobileDashboard({ onNavigate, isDark, onToggleTheme }: M
 
   useEffect(() => {
     fetchLiveMetrics();
-  }, []);
+  }, [targetCompanyId]);
 
   const completionPct = Math.min(100, Math.round((todayProdM2 / dailyTargetM2) * 100));
   const rawUserName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Halil İbrahim';

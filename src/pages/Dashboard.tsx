@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
+import { Company } from '../types';
 import {
   Factory, Truck, AlertTriangle, TrendingUp, Package,
   DollarSign, BarChart2, Calendar, Printer, Search, Target,
-  ArrowRight, FileSpreadsheet
+  ArrowRight, FileSpreadsheet, Building2
 } from 'lucide-react';
 import { getShipmentDisplayQuantity } from './Shipment';
 import { calculateAllQuotas } from '../utils/quotaCalculator';
@@ -121,6 +123,48 @@ function KPICard({ title, value, sub, icon: Icon, color }: { title: string; valu
 }
 
 export default function Dashboard({ onNavigate }: DashboardProps = {}) {
+  const { isSuperAdmin, profile } = useAuth();
+
+  // Multi-Tenant Isolation & Super Admin Company Switching
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>(() => {
+    return localStorage.getItem('parke_matrix_selected_company') || '';
+  });
+
+  useEffect(() => {
+    if (isSuperAdmin()) {
+      supabase
+        .from('companies')
+        .select('*')
+        .eq('is_active', true)
+        .order('created_at', { ascending: true })
+        .then(({ data }) => {
+          if (data && data.length > 0) {
+            setCompanies(data);
+            if (!selectedCompanyId) {
+              const defaultId = profile?.company_id || data[0].id;
+              setSelectedCompanyId(defaultId);
+            }
+          }
+        });
+    }
+  }, [profile?.is_super_admin, profile?.company_id]);
+
+  const targetCompanyId = useMemo(() => {
+    if (isSuperAdmin()) {
+      return selectedCompanyId || profile?.company_id || (companies[0]?.id ?? null);
+    }
+    return profile?.company_id || null;
+  }, [isSuperAdmin, selectedCompanyId, profile?.company_id, companies]);
+
+  const activeCompanyName = useMemo(() => {
+    if (isSuperAdmin() && companies.length > 0) {
+      const found = companies.find((c) => c.id === targetCompanyId);
+      if (found) return found.name;
+    }
+    return profile?.company?.name || 'Parke ERP';
+  }, [isSuperAdmin, companies, targetCompanyId, profile?.company?.name]);
+
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window !== 'undefined') {
       return window.innerWidth < 768;
@@ -174,134 +218,168 @@ export default function Dashboard({ onNavigate }: DashboardProps = {}) {
   const currentMonth = new Date().getMonth() + 1;
   const currentYear = new Date().getFullYear();
 
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true);
+  const load = async () => {
+    setLoading(true);
 
-      const [prodRes, shipRes, costRes, stockRes, quotaRes, shipItemRes] = await Promise.all([
-        supabase.from('production_entries').select('net_m2, products(unit)').eq('date', today),
-        supabase.from('shipments').select('total_m2, shipment_items(m2, unit, products(unit))').eq('shipment_date', today).eq('status', 'completed'),
-        supabase.from('cost_entries').select('cost_type, total_amount').eq('period_month', currentMonth).eq('period_year', currentYear),
-        supabase.from('v_product_stock').select('*'),
-        supabase.from('customer_quotas').select('*, customers(name), sites(name), products(name)').eq('is_active', true),
-        supabase.from('shipment_items').select('product_id, m2, unit, products(unit), shipments!inner(shipment_date, customer_id, site_id, status)').eq('shipments.status', 'completed'),
-      ]);
+    const isDefaultCompany =
+      !targetCompanyId ||
+      targetCompanyId === companies[0]?.id ||
+      targetCompanyId === profile?.company_id;
 
-      // Bugünkü Üretim hesaplama (Birim ayrımı: Parke m², Bordür Metre)
-      let prodParkeM2 = 0;
-      let prodBordurMetre = 0;
-      let prodAdet = 0;
-      (prodRes.data || []).forEach((r: any) => {
-        const u = r.products?.unit;
-        const val = Number(r.net_m2) || 0;
-        if (u === 'metre') prodBordurMetre += val;
-        else if (u === 'adet') prodAdet += val;
-        else prodParkeM2 += val;
-      });
+    let prodQuery = supabase.from('production_entries').select('net_m2, products(unit)').eq('date', today);
+    let shipQuery = supabase.from('shipments').select('total_m2, shipment_items(m2, unit, products(unit))').eq('shipment_date', today).eq('status', 'completed');
+    let costQuery = supabase.from('cost_entries').select('cost_type, total_amount').eq('period_month', currentMonth).eq('period_year', currentYear);
+    let stockQuery = supabase.from('v_product_stock').select('*');
+    let quotaQuery = supabase.from('customer_quotas').select('*, customers(name), sites(name), products(name)').eq('is_active', true);
+    let shipItemQuery = supabase.from('shipment_items').select('product_id, m2, unit, products(unit), shipments!inner(shipment_date, customer_id, site_id, status)').eq('shipments.status', 'completed');
+    let recentShipQuery = supabase
+      .from('shipments')
+      .select('id, invoice_no, total_m2, shipment_date, status, customers(name), shipment_items(*, products(*))')
+      .order('created_at', { ascending: false })
+      .limit(5);
 
-      const prodParts: string[] = [];
-      if (prodParkeM2 > 0) prodParts.push(`${prodParkeM2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`);
-      if (prodBordurMetre > 0) prodParts.push(`${prodBordurMetre.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m`);
-      if (prodAdet > 0) prodParts.push(`${prodAdet.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ad.`);
-      const productionDisplay = prodParts.length > 0 ? prodParts.join(' + ') : '0 m²';
-      const productionSub = (prodBordurMetre > 0 || prodAdet > 0)
-        ? `${(prodRes.data || []).length} vardiya kaydı`
-        : 'Net üretim (fire düşülmüş)';
-
-      // Bugünkü Sevkiyat hesaplama (Birim ayrımı: Parke m², Bordür Metre)
-      let shipParkeM2 = 0;
-      let shipBordurMetre = 0;
-      let shipAdet = 0;
-      (shipRes.data || []).forEach((s: any) => {
-        const items = s.shipment_items || [];
-        if (items.length === 0) {
-          shipParkeM2 += Number(s.total_m2) || 0;
-        } else {
-          items.forEach((it: any) => {
-            const u = (it.products?.unit === 'metre' || it.unit === 'metre')
-              ? 'metre'
-              : (it.products?.unit === 'adet' || it.unit === 'adet')
-              ? 'adet'
-              : 'm2';
-            const qty = Number(it.m2) || 0;
-            if (u === 'metre') shipBordurMetre += qty;
-            else if (u === 'adet') shipAdet += qty;
-            else shipParkeM2 += qty;
-          });
-        }
-      });
-
-      const shipParts: string[] = [];
-      if (shipParkeM2 > 0) shipParts.push(`${shipParkeM2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`);
-      if (shipBordurMetre > 0) shipParts.push(`${shipBordurMetre.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m`);
-      if (shipAdet > 0) shipParts.push(`${shipAdet.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ad.`);
-      const shipmentDisplay = shipParts.length > 0 ? shipParts.join(' + ') : '0 m²';
-      const shipmentSub = `${(shipRes.data || []).length} tamamlanan çıkış`;
-
-      const costs = costRes.data || [];
-      const monthCost = costs.reduce((s, r) => s + (r.total_amount || 0), 0);
-      const breakdown: CostBreakdown = { hammadde: 0, operasyonel: 0, genel: 0 };
-      costs.forEach(c => {
-        if (c.cost_type === 'hammadde') breakdown.hammadde += c.total_amount;
-        else if (c.cost_type === 'operasyonel') breakdown.operasyonel += c.total_amount;
-        else if (c.cost_type === 'genel') breakdown.genel += c.total_amount;
-      });
-      setCostBreakdown(breakdown);
-
-      const stockItems: StockItem[] = (stockRes.data || []).map((p: any) => ({
-        product_id: p.product_id,
-        product_name: p.product_name,
-        current_stock: p.current_stock || 0,
-        min_stock_alert: p.min_stock_alert,
-        color: p.color,
-        thickness: p.thickness,
-        unit: p.unit,
-      }));
-
-      const lowStockCount = stockItems.filter(s => s.current_stock <= s.min_stock_alert).length;
-      setStocks(stockItems);
-      setKpi({ productionDisplay, productionSub, shipmentDisplay, shipmentSub, monthCost, lowStockCount });
-
-      if (quotaRes.data && shipItemRes.data) {
-        const calculated = calculateAllQuotas(quotaRes.data || [], shipItemRes.data || []);
-        const qAlerts = calculated
-          .filter((q) => q.isApproaching || q.isExceeded)
-          .map((q) => ({
-            id: q.id,
-            customerName: q.customer_name,
-            siteName: q.site_name,
-            productName: q.product_name,
-            target: q.target_quantity,
-            shipped: q.shipped_quantity,
-            remaining: q.net_balance,
-            pct: q.completion_pct,
-            unit: q.unit,
-            isExceeded: q.isExceeded,
-          }))
-          .sort((a, b) => b.pct - a.pct);
-        setQuotaAlerts(qAlerts);
+    if (targetCompanyId) {
+      if (isDefaultCompany) {
+        prodQuery = prodQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+        shipQuery = shipQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+        costQuery = costQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+        stockQuery = stockQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+        quotaQuery = quotaQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+        shipItemQuery = shipItemQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+        recentShipQuery = recentShipQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+      } else {
+        prodQuery = prodQuery.eq('company_id', targetCompanyId);
+        shipQuery = shipQuery.eq('company_id', targetCompanyId);
+        costQuery = costQuery.eq('company_id', targetCompanyId);
+        stockQuery = stockQuery.eq('company_id', targetCompanyId);
+        quotaQuery = quotaQuery.eq('company_id', targetCompanyId);
+        shipItemQuery = shipItemQuery.eq('company_id', targetCompanyId);
+        recentShipQuery = recentShipQuery.eq('company_id', targetCompanyId);
       }
+    }
 
-      const { data: shipData } = await supabase
-        .from('shipments')
-        .select('id, invoice_no, total_m2, shipment_date, status, customers(name), shipment_items(*, products(*))')
-        .order('created_at', { ascending: false })
-        .limit(5);
+    const [prodRes, shipRes, costRes, stockRes, quotaRes, shipItemRes, shipDataRes] = await Promise.all([
+      prodQuery,
+      shipQuery,
+      costQuery,
+      stockQuery,
+      quotaQuery,
+      shipItemQuery,
+      recentShipQuery,
+    ]);
 
-      setRecentShipments((shipData || []).map((s: any) => ({
-        id: s.id,
-        invoice_no: s.invoice_no,
-        customer_name: s.customers?.name || '-',
-        total_m2: s.total_m2,
-        shipment_date: s.shipment_date,
-        status: s.status,
-        shipment_items: s.shipment_items,
-      })));
+    // Bugünkü Üretim hesaplama (Birim ayrımı: Parke m², Bordür Metre)
+    let prodParkeM2 = 0;
+    let prodBordurMetre = 0;
+    let prodAdet = 0;
+    (prodRes.data || []).forEach((r: any) => {
+      const u = r.products?.unit;
+      const val = Number(r.net_m2) || 0;
+      if (u === 'metre') prodBordurMetre += val;
+      else if (u === 'adet') prodAdet += val;
+      else prodParkeM2 += val;
+    });
 
-      setLoading(false);
-    };
+    const prodParts: string[] = [];
+    if (prodParkeM2 > 0) prodParts.push(`${prodParkeM2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`);
+    if (prodBordurMetre > 0) prodParts.push(`${prodBordurMetre.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m`);
+    if (prodAdet > 0) prodParts.push(`${prodAdet.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ad.`);
+    const productionDisplay = prodParts.length > 0 ? prodParts.join(' + ') : '0 m²';
+    const productionSub = (prodBordurMetre > 0 || prodAdet > 0)
+      ? `${(prodRes.data || []).length} vardiya kaydı`
+      : 'Net üretim (fire düşülmüş)';
+
+    // Bugünkü Sevkiyat hesaplama (Birim ayrımı: Parke m², Bordür Metre)
+    let shipParkeM2 = 0;
+    let shipBordurMetre = 0;
+    let shipAdet = 0;
+    (shipRes.data || []).forEach((s: any) => {
+      const items = s.shipment_items || [];
+      if (items.length === 0) {
+        shipParkeM2 += Number(s.total_m2) || 0;
+      } else {
+        items.forEach((it: any) => {
+          const u = (it.products?.unit === 'metre' || it.unit === 'metre')
+            ? 'metre'
+            : (it.products?.unit === 'adet' || it.unit === 'adet')
+            ? 'adet'
+            : 'm2';
+          const qty = Number(it.m2) || 0;
+          if (u === 'metre') shipBordurMetre += qty;
+          else if (u === 'adet') shipAdet += qty;
+          else shipParkeM2 += qty;
+        });
+      }
+    });
+
+    const shipParts: string[] = [];
+    if (shipParkeM2 > 0) shipParts.push(`${shipParkeM2.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m²`);
+    if (shipBordurMetre > 0) shipParts.push(`${shipBordurMetre.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} m`);
+    if (shipAdet > 0) shipParts.push(`${shipAdet.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ad.`);
+    const shipmentDisplay = shipParts.length > 0 ? shipParts.join(' + ') : '0 m²';
+    const shipmentSub = `${(shipRes.data || []).length} tamamlanan çıkış`;
+
+    const costs = costRes.data || [];
+    const monthCost = costs.reduce((s, r) => s + (r.total_amount || 0), 0);
+    const breakdown: CostBreakdown = { hammadde: 0, operasyonel: 0, genel: 0 };
+    costs.forEach(c => {
+      if (c.cost_type === 'hammadde') breakdown.hammadde += c.total_amount;
+      else if (c.cost_type === 'operasyonel') breakdown.operasyonel += c.total_amount;
+      else if (c.cost_type === 'genel') breakdown.genel += c.total_amount;
+    });
+    setCostBreakdown(breakdown);
+
+    const stockItems: StockItem[] = (stockRes.data || []).map((p: any) => ({
+      product_id: p.product_id,
+      product_name: p.product_name,
+      current_stock: p.current_stock || 0,
+      min_stock_alert: p.min_stock_alert,
+      color: p.color,
+      thickness: p.thickness,
+      unit: p.unit,
+    }));
+
+    const lowStockCount = stockItems.filter(s => s.current_stock <= s.min_stock_alert).length;
+    setStocks(stockItems);
+    setKpi({ productionDisplay, productionSub, shipmentDisplay, shipmentSub, monthCost, lowStockCount });
+
+    if (quotaRes.data && shipItemRes.data) {
+      const calculated = calculateAllQuotas(quotaRes.data || [], shipItemRes.data || []);
+      const qAlerts = calculated
+        .filter((q) => q.isApproaching || q.isExceeded)
+        .map((q) => ({
+          id: q.id,
+          customerName: q.customer_name,
+          siteName: q.site_name,
+          productName: q.product_name,
+          target: q.target_quantity,
+          shipped: q.shipped_quantity,
+          remaining: q.net_balance,
+          pct: q.completion_pct,
+          unit: q.unit,
+          isExceeded: q.isExceeded,
+        }))
+        .sort((a, b) => b.pct - a.pct);
+      setQuotaAlerts(qAlerts);
+    }
+
+    const shipData = shipDataRes.data || [];
+    setRecentShipments(shipData.map((s: any) => ({
+      id: s.id,
+      invoice_no: s.invoice_no,
+      customer_name: s.customers?.name || '-',
+      total_m2: s.total_m2,
+      shipment_date: s.shipment_date,
+      status: s.status,
+      shipment_items: s.shipment_items,
+    })));
+
+    setLoading(false);
+  };
+
+  useEffect(() => {
     load();
-  }, []);
+  }, [targetCompanyId]);
 
   if (loading) {
     return (
@@ -349,6 +427,7 @@ export default function Dashboard({ onNavigate }: DashboardProps = {}) {
         onNavigate={onNavigate}
         isDark={isMobileDark}
         onToggleTheme={handleToggleMobileTheme}
+        targetCompanyId={targetCompanyId}
       />
     );
   }
@@ -356,14 +435,43 @@ export default function Dashboard({ onNavigate }: DashboardProps = {}) {
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6">
       <div className="no-print space-y-6">
-        <div className="mb-6 flex items-center justify-between">
+        <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
+              <span className="px-2.5 py-0.5 text-xs font-bold bg-slate-100 text-slate-700 rounded-full border border-slate-200 flex items-center gap-1.5 shadow-2xs">
+                <Building2 size={13} className="text-slate-500" />
+                {activeCompanyName}
+              </span>
+            </div>
             <p className="text-slate-500 text-sm mt-1">
               <Calendar size={14} className="inline mr-1" />
               {new Date().toLocaleDateString('tr-TR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
             </p>
           </div>
+
+          {/* Super Admin Firma Değiştirme Seçici */}
+          {isSuperAdmin() && companies.length > 0 && (
+            <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-300 rounded-xl px-2.5 py-1.5 shadow-2xs">
+              <Building2 size={15} className="text-amber-700 shrink-0" />
+              <span className="text-[11px] font-bold text-amber-900 shrink-0">Firma:</span>
+              <select
+                value={targetCompanyId || ''}
+                onChange={(e) => {
+                  const newId = e.target.value;
+                  setSelectedCompanyId(newId);
+                  localStorage.setItem('parke_matrix_selected_company', newId);
+                }}
+                className="text-xs font-bold text-slate-800 bg-white border border-amber-200 rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer"
+              >
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         {/* ── 3 BÜYÜK HIZLI OPERASYONEL İŞLEM BUTONU ── */}
