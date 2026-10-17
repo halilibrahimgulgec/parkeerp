@@ -825,8 +825,9 @@ export default function SuperAdminCompanies() {
             </div>
 
             {userError && (
-              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl font-medium">
-                {userError}
+              <div className="p-3.5 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl font-medium flex items-start gap-2.5">
+                <AlertTriangle size={18} className="text-rose-600 shrink-0 mt-0.5" />
+                <div className="leading-relaxed">{userError}</div>
               </div>
             )}
 

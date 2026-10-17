@@ -5,7 +5,7 @@ import { UserProfile, Company, UserRole } from '../types';
 import {
   Users, CheckCircle, XCircle, Clock, Shield, RefreshCw,
   Plus, Building2, Mail, Lock, User, Eye, EyeOff, KeyRound,
-  Copy, Check, Send, X, Sparkles
+  Copy, Check, Send, X, Sparkles, AlertTriangle
 } from 'lucide-react';
 
 const ROLE_COLORS: Record<string, string> = {
@@ -550,8 +550,9 @@ export default function AdminUsers() {
             </div>
 
             {addError && (
-              <div className="p-3 rounded-xl bg-rose-50 text-rose-800 border border-rose-200 text-xs font-medium">
-                {addError}
+              <div className="p-3.5 rounded-xl bg-rose-50 text-rose-800 border border-rose-200 text-xs font-medium flex items-start gap-2.5">
+                <AlertTriangle size={18} className="text-rose-600 shrink-0 mt-0.5" />
+                <div className="leading-relaxed">{addError}</div>
               </div>
             )}
             {addSuccess && !createdCredentials && (
