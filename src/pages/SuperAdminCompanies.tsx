@@ -277,20 +277,31 @@ export default function SuperAdminCompanies() {
       }
 
       // Mevcut admin oturumunu bozmamak için izole istemci kullan
+      const cleanEmail = userEmail.trim().toLowerCase();
       const isolatedClient = createIsolatedClient();
       const { data, error } = await isolatedClient.auth.signUp({
-        email: userEmail.trim(),
+        email: cleanEmail,
         password: userPassword,
       });
 
-      if (error) throw error;
+      if (error) {
+        if (error.message?.includes('already') || (error as any).code === 'user_already_exists') {
+          throw new Error(`⚠️ "${cleanEmail}" e-posta adresi sistemde zaten kayıtlıdır! Aynı kullanıcı adı ile tekrar kayıt açılamaz. Şifresini güncellemek için firmanın kullanıcılar listesindeki "Şifre Sıfırla" butonunu kullanabilirsiniz.`);
+        }
+        throw error;
+      }
+
+      // Supabase e-posta koruması: kullanıcı zaten varsa identities boş dizi döner
+      if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+        throw new Error(`⚠️ "${cleanEmail}" e-posta adresi sistemde zaten kayıtlıdır! Aynı kullanıcı adı ile tekrar kayıt açılamaz. Şifresini güncellemek için firmanın kullanıcılar listesindeki "Şifre Sıfırla" butonunu kullanabilirsiniz.`);
+      }
 
       if (data.user) {
         const { error: profileError } = await supabase
           .from('user_profiles')
           .upsert({
             id: data.user.id,
-            full_name: userFullName.trim() || userEmail.trim().split('@')[0],
+            full_name: userFullName.trim() || cleanEmail.split('@')[0],
             role: userRole,
             company_id: userModalCompany.id,
             is_approved: true,
@@ -302,19 +313,15 @@ export default function SuperAdminCompanies() {
       }
 
       setCreatedCredentials({
-        fullName: userFullName.trim() || userEmail.trim().split('@')[0],
-        email: userEmail.trim(),
+        fullName: userFullName.trim() || cleanEmail.split('@')[0],
+        email: cleanEmail,
         pass: userPassword,
         companyName: userModalCompany.name,
       });
-      setUserSuccess(`"${userFullName.trim() || userEmail}" kullanıcısı başarıyla oluşturuldu ve ${userModalCompany.name} firmasına bağlandı!`);
+      setUserSuccess(`"${userFullName.trim() || cleanEmail}" kullanıcısı başarıyla oluşturuldu ve ${userModalCompany.name} firmasına bağlandı!`);
       await fetchCompanies();
     } catch (err: any) {
-      if (err.message?.includes('already registered') || err.message?.includes('user_already_exists')) {
-        setUserError(`"${userEmail}" e-posta adresi sistemde zaten kayıtlıdır. Şifresini güncellemek veya giriş yapmasını sağlamak için kullanıcılar listesindeki "Şifre Sıfırla" butonunu kullanabilirsiniz.`);
-      } else {
-        setUserError(err.message || 'Kullanıcı oluşturulurken bir hata oluştu.');
-      }
+      setUserError(err.message || 'Kullanıcı oluşturulurken bir hata oluştu.');
     } finally {
       setUserLoading(false);
     }

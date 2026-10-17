@@ -105,9 +105,17 @@ export default function LoginPage({ onGoToLanding }: LoginPageProps = {}) {
     e.preventDefault();
     setError(''); setSuccess(''); setLoading(true);
     try {
-      const { error } = await signUp(email, password, fullName, role);
-      if (error) setError(error.message);
-      else setSuccess('Hesabınız oluşturuldu. Yönetici onayından sonra giriş yapabilirsiniz.');
+      const cleanEmail = email.trim();
+      const { error } = await signUp(cleanEmail, password, fullName, role);
+      if (error) {
+        if (error.message?.includes('already') || error.message?.includes('kayıtlı')) {
+          setError(`⚠️ "${cleanEmail}" e-posta adresi sistemde zaten kayıtlıdır! Lütfen giriş yapmayı deneyin veya şifrenizi sıfırlayın.`);
+        } else {
+          setError(error.message);
+        }
+      } else {
+        setSuccess('Hesabınız oluşturuldu. Yönetici onayından sonra giriş yapabilirsiniz.');
+      }
     } finally {
       setLoading(false);
     }

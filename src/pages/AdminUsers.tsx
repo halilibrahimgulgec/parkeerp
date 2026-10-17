@@ -211,13 +211,24 @@ export default function AdminUsers() {
       }
 
       // Create user via isolated client so current admin session is not lost
+      const cleanEmail = addEmail.trim().toLowerCase();
       const isolatedClient = createIsolatedClient();
       const { data, error } = await isolatedClient.auth.signUp({
-        email: addEmail.trim(),
+        email: cleanEmail,
         password: addPassword,
       });
 
-      if (error) throw error;
+      if (error) {
+        if (error.message?.includes('already') || (error as any).code === 'user_already_exists') {
+          throw new Error(`⚠️ "${cleanEmail}" e-posta adresi sistemde zaten kayıtlıdır! Aynı kullanıcı adı ile tekrar yeni kayıt açılamaz. Şifresini güncellemek için onaylı kullanıcılar listesindeki "Şifre Sıfırla" butonunu kullanabilirsiniz.`);
+        }
+        throw error;
+      }
+
+      // Supabase e-posta koruması: kullanıcı zaten varsa identities boş dizi döner
+      if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+        throw new Error(`⚠️ "${cleanEmail}" e-posta adresi sistemde zaten kayıtlıdır! Aynı kullanıcı adı ile tekrar yeni kayıt açılamaz. Şifresini güncellemek için onaylı kullanıcılar listesindeki "Şifre Sıfırla" butonunu kullanabilirsiniz.`);
+      }
 
       if (data.user) {
         // Automatically approve the user created directly by company admin
@@ -239,18 +250,14 @@ export default function AdminUsers() {
       const compObj = companies.find(c => c.id === targetCompany);
       setCreatedCredentials({
         fullName: addFullName.trim(),
-        email: addEmail.trim(),
+        email: cleanEmail,
         pass: addPassword,
         companyName: compObj?.name || profile?.company?.name || 'Parke ERP',
       });
       setAddSuccess('Alt kullanıcı başarıyla oluşturuldu ve onaylandı.');
       fetchUsersAndCompanies();
     } catch (err: any) {
-      if (err.message?.includes('already registered') || err.message?.includes('user_already_exists')) {
-        setAddError(`"${addEmail}" e-posta adresi sistemde zaten kayıtlıdır. Şifresini güncellemek için kullanıcı listesindeki "Şifre Sıfırla" butonunu kullanabilirsiniz.`);
-      } else {
-        setAddError(err.message || 'Kullanıcı oluşturulurken bir hata oluştu.');
-      }
+      setAddError(err.message || 'Kullanıcı oluşturulurken bir hata oluştu.');
     } finally {
       setAddLoading(false);
     }

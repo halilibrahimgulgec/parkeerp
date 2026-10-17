@@ -166,8 +166,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signUp = async (email: string, password: string, fullName: string, role: string, companyId?: string) => {
-    const { data, error } = await supabase.auth.signUp({ email, password });
-    if (error) return { error: error as Error };
+    const cleanEmail = email.trim();
+    const { data, error } = await supabase.auth.signUp({ email: cleanEmail, password });
+    if (error) {
+      if (error.message?.includes('already') || (error as any).code === 'user_already_exists') {
+        return { error: new Error(`"${cleanEmail}" e-posta adresi sistemde zaten kayıtlıdır! Lütfen giriş yapın veya şifrenizi sıfırlayın.`) };
+      }
+      return { error: error as Error };
+    }
+
+    // Supabase e-posta koruması: kullanıcı zaten varsa identities boş dizi döner
+    if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+      return { error: new Error(`"${cleanEmail}" e-posta adresi sistemde zaten kayıtlıdır! Lütfen giriş yapın veya şifrenizi sıfırlayın.`) };
+    }
+
     if (data.user) {
       let targetCompanyId = companyId;
       if (!targetCompanyId) {
@@ -182,7 +194,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       await supabase.from('user_profiles').upsert({
         id: data.user.id,
-        full_name: fullName,
+        full_name: fullName.trim(),
         role,
         company_id: targetCompanyId || null,
         is_approved: false,
