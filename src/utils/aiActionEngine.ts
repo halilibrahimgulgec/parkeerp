@@ -30,6 +30,49 @@ function decodePhoneticLetters(s: string): string {
 }
 
 /**
+ * Sesli komut metninden plaka, ürün ve miktar kelimelerini ayıklayarak müşteri / cari adını tespit eder.
+ */
+function extractCustomerCandidate(query: string, detectedPlate?: string): string {
+  let text = query;
+  if (detectedPlate) {
+    const parts = detectedPlate.split(/\s+/);
+    for (const part of parts) {
+      if (part) {
+        text = text.replace(new RegExp('\\b' + part + '\\b', 'gi'), ' ');
+      }
+    }
+  }
+  // Yaygın fonetik plaka kelimelerini ve sayıları temizle
+  text = text.replace(/\b(aleye|alje|aleje|anele|anle|keye|hene)\b/gi, ' ');
+  text = text.replace(/\b(0[1-9]|[1-7][0-9]|8[01])\b/g, ' ');
+  text = text.replace(/\b\d{2,4}\b/g, ' ');
+
+  // Ürün isimlerini temizle
+  const pWords = [
+    'bahce', 'bahçe', 'bordur', 'bordür', 'karayolu', 'karayollari', 'karayolları',
+    'ankara', 'kilit', 'parke', 'tasi', 'taşı', 'tas', 'taş', 'oluk', 'prizma', 'begonit',
+    'cimen', 'çimen', 'limonluk', 'briket', 'naturel'
+  ];
+  for (const pw of pWords) {
+    text = text.replace(new RegExp('\\b' + pw + '\\b', 'gi'), ' ');
+  }
+
+  // Miktar ve eylem kelimelerini temizle
+  text = text.replace(/\b\d+(\s*(?:metre|metretul|metretül|mt|m2|metrekare|m²|adet|tane|palet))?\b/gi, ' ');
+  text = text.replace(/\b(palet|tahta|uretim|üretim|sevkiyat|metre|adet|m2|metrekare|ton)\b/gi, ' ');
+  text = text.replace(/\b(sevk|fisi|fişi|irsaliye|irsaliyeyi|bas|kes|hazirla|hazırla|yaz|kantar|cikis|çıkış|yukle|yükle|gonder|gönder)\b/gi, ' ');
+
+  // Noktalama ve boşlukları toparla
+  text = text.replace(/[^a-zA-ZçğıöşüÇĞİÖŞÜ\s]/g, ' ').replace(/\s+/g, ' ').trim();
+
+  const words = text.split(/\s+/).filter(w => w.length >= 2);
+  if (words.length > 0) {
+    return words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+  }
+  return 'Müşteri';
+}
+
+/**
  * 1. PARSE ACTION INTENT FROM OPERATOR QUERY
  * Analyzes natural language commands to detect actionable intents and builds draft previews.
  */
@@ -44,29 +87,63 @@ export async function parseActionIntentFromQuery(
   // -------------------------------------------------------------------------
   // A. INTENT: SHIPMENT & WEIGHBRIDGE SLIP (Kantar & Sevkiyat Fişi Hazırlama)
   // -------------------------------------------------------------------------
+  const hasPlatePattern =
+    /\b(0[1-9]|[1-7][0-9]|8[01])\s*(?:[A-Za-z]{1,4}|[a-zA-ZçğıöşüÇĞİÖŞÜ]{2,10})\s*\d{2,4}\b/i.test(query);
+
+  const hasProduct =
+    qNorm.includes('parke') ||
+    qNorm.includes('bordur') ||
+    qNorm.includes('oluk') ||
+    qNorm.includes('prizma') ||
+    qNorm.includes('begonit') ||
+    qNorm.includes('tas') ||
+    qNorm.includes('tasi');
+
+  const hasQty =
+    qNorm.includes('palet') ||
+    qNorm.includes('metre') ||
+    qNorm.includes('metretul') ||
+    qNorm.includes('m2') ||
+    qNorm.includes('metrekare') ||
+    qNorm.includes('adet');
+
+  const isProductionIntentCheck =
+    qNorm.includes('uretim') ||
+    qNorm.includes('baski') ||
+    qNorm.includes('basildi') ||
+    qNorm.includes('vardiya');
+
   const isShipmentIntent =
-    qNorm.includes('sevk fisi') ||
-    qNorm.includes('sevk irsaliye') ||
-    qNorm.includes('sevk irsaliyesi') ||
-    qNorm.includes('kantar fisi') ||
-    qNorm.includes('kantar') ||
-    qNorm.includes('sevkiyat olustur') ||
-    qNorm.includes('sevk et') ||
-    qNorm.includes('sevk yap') ||
-    qNorm.includes('kamyona yukle') ||
-    qNorm.includes('araca yukle') ||
-    qNorm.includes('araba yukle') ||
-    qNorm.includes('irsaliye kes') ||
-    qNorm.includes('irsaliye hazirla') ||
-    qNorm.includes('irsaliye') ||
-    qNorm.includes('fisi hazirla') ||
-    qNorm.includes('fis kes') ||
-    qNorm.includes('fis hazirla') ||
-    qNorm.includes('fis yaz') ||
-    qNorm.includes('cikis yap') ||
-    (qNorm.includes('palet') && (qNorm.includes('yukle') || qNorm.includes('gonder') || qNorm.includes('sevk'))) ||
-    (qNorm.includes('kamyon') && (qNorm.includes('yukle') || qNorm.includes('gonder') || qNorm.includes('sevk'))) ||
-    (qNorm.includes('arac') && (qNorm.includes('yukle') || qNorm.includes('gonder') || qNorm.includes('sevk')));
+    !isProductionIntentCheck &&
+    (
+      qNorm.includes('sevk fisi') ||
+      qNorm.includes('sevk irsaliye') ||
+      qNorm.includes('sevk irsaliyesi') ||
+      qNorm.includes('kantar fisi') ||
+      qNorm.includes('kantar') ||
+      qNorm.includes('sevkiyat olustur') ||
+      qNorm.includes('sevk et') ||
+      qNorm.includes('sevk yap') ||
+      qNorm.includes('sevk') ||
+      qNorm.includes('kamyona yukle') ||
+      qNorm.includes('araca yukle') ||
+      qNorm.includes('araba yukle') ||
+      qNorm.includes('irsaliye kes') ||
+      qNorm.includes('irsaliye hazirla') ||
+      qNorm.includes('irsaliye bas') ||
+      qNorm.includes('irsaliyeyi bas') ||
+      qNorm.includes('irsaliye') ||
+      qNorm.includes('fisi hazirla') ||
+      qNorm.includes('fis kes') ||
+      qNorm.includes('fis hazirla') ||
+      qNorm.includes('fis yaz') ||
+      qNorm.includes('cikis yap') ||
+      (qNorm.includes('palet') && (qNorm.includes('yukle') || qNorm.includes('gonder') || qNorm.includes('sevk'))) ||
+      (qNorm.includes('kamyon') && (qNorm.includes('yukle') || qNorm.includes('gonder') || qNorm.includes('sevk'))) ||
+      (qNorm.includes('arac') && (qNorm.includes('yukle') || qNorm.includes('gonder') || qNorm.includes('sevk'))) ||
+      (hasPlatePattern && (hasProduct || hasQty || qNorm.length > 8)) ||
+      (hasProduct && hasQty)
+    );
 
   if (isShipmentIntent) {
     // 1. Veritabanından kayıtlı son araç plakalarını çek (Sesli algılamadaki harf kaymalarını eşlemek için)
@@ -174,8 +251,9 @@ export async function parseActionIntentFromQuery(
       }
     }
 
-    // Default customer if none matched
-    const customerName = matchedCustomer?.name || 'Müşteri';
+    // Default customer if none matched: ses metninden ayıklanan müşteri adayı (Örn: "Ökkeş Kamalak")
+    const candidateCustomer = extractCustomerCandidate(query, detectedPlate);
+    const customerName = matchedCustomer?.name || candidateCustomer || 'Müşteri';
 
     // 3. Match Site (Aktif firmanın ve müşterinin şantiyeleri)
     let siteName: string | undefined = undefined;
@@ -530,6 +608,17 @@ export async function executeApprovedAction(
           .ilike('name', `%${d.customer_name}%`)
           .limit(1);
         customerId = custs?.[0]?.id || '';
+      }
+
+      if (!customerId && d.customer_name && d.customer_name !== 'Müşteri') {
+        try {
+          const { data: newCust } = await supabase.from('customers').insert({
+            name: d.customer_name,
+            company_id: targetCompanyId,
+            is_active: true,
+          }).select('id').single();
+          if (newCust?.id) customerId = newCust.id;
+        } catch {}
       }
 
       if (!customerId) {
