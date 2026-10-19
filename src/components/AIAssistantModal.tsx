@@ -95,7 +95,7 @@ const QUICK_PROMPTS = [
 ];
 
 export default function AIAssistantModal() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'chat' | 'watchdog' | 'briefing'>('chat');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -350,7 +350,8 @@ export default function AIAssistantModal() {
           currentImg.base64,
           currentImg.mimeType,
           query,
-          apiKey
+          apiKey,
+          profile?.company_id
         );
 
         const aiMsg: ChatMessage = {
@@ -687,7 +688,8 @@ export default function AIAssistantModal() {
         msg.pendingImageForOcr.base64,
         msg.pendingImageForOcr.mimeType,
         msg.pendingImageForOcr.query,
-        cleanKey
+        cleanKey,
+        profile?.company_id
       );
 
       setMessages(prev => prev.map(m => {

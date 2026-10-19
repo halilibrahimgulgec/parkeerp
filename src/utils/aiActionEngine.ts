@@ -331,6 +331,9 @@ export async function executeApprovedAction(
       const tare = 14000;
       const net = d.estimated_tonnage * 1000;
 
+      const targetCompanyId = d.company_id || (currentUser as any)?.company_id || null;
+      const targetDate = d.shipment_date || new Date().toISOString().split('T')[0];
+
       // A. Insert Shipment
       const { data: newShipment, error: shipErr } = await supabase
         .from('shipments')
@@ -345,9 +348,10 @@ export async function executeApprovedAction(
           net_weight: net,
           total_m2: d.total_m2,
           status: 'completed',
-          shipment_date: new Date().toISOString().split('T')[0],
+          shipment_date: targetDate,
           notes: `${d.notes || ''} [İrsaliye No: ${nextInvNo}]`,
           created_by: currentUser?.id,
+          company_id: targetCompanyId,
         })
         .select()
         .single();
@@ -361,17 +365,22 @@ export async function executeApprovedAction(
         // Resolve a valid product_id
         let validProductId = d.items[0].product_id;
         if (!validProductId || validProductId.includes('auto')) {
-          const { data: prods } = await supabase.from('products').select('id').limit(1);
+          let prodQ = supabase.from('products').select('id').limit(1);
+          if (targetCompanyId) {
+            prodQ = prodQ.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+          }
+          const { data: prods } = await prodQ;
           validProductId = prods?.[0]?.id || '';
         }
 
         const itemsToInsert = d.items.map(it => ({
           shipment_id: newShipment.id,
-          product_id: validProductId,
+          product_id: it.product_id && !it.product_id.includes('auto') ? it.product_id : validProductId,
           pallets: it.pallets,
           pallet_type: it.pallet_type || 'sevkiyat',
           m2: it.m2,
           unit: it.unit || 'm2',
+          company_id: targetCompanyId,
         }));
 
         await supabase.from('shipment_items').insert(itemsToInsert);
@@ -379,15 +388,16 @@ export async function executeApprovedAction(
         // C. Record Sent Pallets
         if (d.total_pallets > 0) {
           await supabase.from('pallet_transactions').insert({
-            date: new Date().toISOString().split('T')[0],
+            date: targetDate,
             customer_id: customerId,
             site_id: d.site_id || null,
             shipment_id: newShipment.id,
             transaction_type: 'sent',
-            pallet_type: 'sevkiyat',
+            pallet_type: d.items[0]?.pallet_type || 'sevkiyat',
             quantity: d.total_pallets,
             notes: `${nextInvNo} no'lu sevkiyat ile şantiyeye sevk edildi.`,
             created_by: currentUser?.id,
+            company_id: targetCompanyId,
           });
         }
       }

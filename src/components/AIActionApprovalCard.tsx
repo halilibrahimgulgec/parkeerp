@@ -130,6 +130,12 @@ export const AIActionApprovalCard: React.FC<Props> = ({ draft, currentUser, onUp
                   <span className="font-mono font-bold text-amber-300 text-xs">#{s.invoice_no}</span>
                 </div>
               )}
+              {s.shipment_date && (
+                <div className="col-span-2 pt-1 border-t border-slate-700/50 flex items-center justify-between">
+                  <span className="text-slate-400 text-[10px]">Sevk Tarihi:</span>
+                  <span className="font-bold text-slate-200 text-xs">{s.shipment_date}</span>
+                </div>
+              )}
             </div>
 
             <div className="space-y-1">

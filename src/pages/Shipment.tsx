@@ -959,7 +959,7 @@ function ShipmentForm({
   onSaveSuccess: (savedShipment: Shipment) => void;
   onClose: () => void;
 }) {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [form, setForm] = useState<ShipmentFormData>(() => {
     if (initial) {
       const sup = getSupplierInfo(initial);
@@ -1183,7 +1183,8 @@ function ShipmentForm({
 
     try {
       setScanStepMessage('🧠 [2/3] Gemini Vision AI ile irsaliye ve el yazıları okunuyor...');
-      const res = await scanWaybillImageForShipment(file);
+      const targetCompanyId = profile?.company_id || (initial as any)?.company_id;
+      const res = await scanWaybillImageForShipment(file, undefined, targetCompanyId);
 
       if (!res.success) {
         if (res.needsApiKey) {

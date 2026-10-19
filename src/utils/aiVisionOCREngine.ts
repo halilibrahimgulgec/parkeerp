@@ -152,6 +152,66 @@ export function normalizePalletType(rawType?: string | null): 'uretim' | 'tahta'
 }
 
 /**
+ * Türk araç plakalarını (01-81 il kodu, harf ve sayılar) temizleyip standartlaştırır.
+ * "Araç: 46 KY 189", "kamyon plakası 34abc123" gibi girişleri "46 KY 189" yapar.
+ */
+export function normalizePlateNumber(rawPlate?: string | null): string {
+  if (!rawPlate || typeof rawPlate !== 'string') return '';
+  let cleaned = rawPlate.toUpperCase().trim()
+    .replace(/^(PLAKA|ARAC\s*PLAKASI|KAMYON\s*PLAKASI|ARAC|KAMYON|CEKICI|DORSE|TASIT|OTO)\s*[:.-]?\s*/i, '')
+    .replace(/[^A-Z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // 01-81 + 1-3 harf + 2-5 rakam deseni
+  const match = cleaned.match(/\b(0[1-9]|[1-7][0-9]|8[01])\s*([A-Z]{1,3})\s*(\d{2,5})\b/);
+  if (match) {
+    return `${match[1]} ${match[2]} ${match[3]}`;
+  }
+  return cleaned;
+}
+
+/**
+ * Çoklu Firma (Multi-Tenant) OCR Bağlamı
+ * Her firmanın veritabanındaki aktif müşteri ve ürün listesini prompt için ipucu olarak taşır.
+ */
+export interface CompanyOcrContext {
+  companyId?: string;
+  companyName?: string;
+  customerNames?: string[];
+  siteNames?: string[];
+  productNames?: string[];
+  customRules?: string;
+}
+
+/**
+ * Aktif firmanın veritabanındaki kayıtlı müşterilerini, şantiyelerini ve ürünlerini
+ * OCR eşleştirme ipuçları olarak arka planda hazırlar.
+ */
+export async function fetchCompanyOcrContext(companyId?: string): Promise<CompanyOcrContext> {
+  const ctx: CompanyOcrContext = { companyId };
+  if (!companyId) return ctx;
+
+  try {
+    const [compRes, custRes, prodRes, siteRes] = await Promise.all([
+      supabase.from('companies').select('id, name').eq('id', companyId).maybeSingle(),
+      supabase.from('customers').select('name').eq('is_active', true).or(`company_id.eq.${companyId},company_id.is.null`).limit(50),
+      supabase.from('products').select('name').eq('is_active', true).or(`company_id.eq.${companyId},company_id.is.null`).limit(50),
+      supabase.from('sites').select('name').eq('is_active', true).or(`company_id.eq.${companyId},company_id.is.null`).limit(30)
+    ]);
+
+    if (compRes.data) ctx.companyName = compRes.data.name;
+    if (custRes.data) ctx.customerNames = custRes.data.map((c: any) => c.name);
+    if (prodRes.data) ctx.productNames = prodRes.data.map((p: any) => p.name);
+    if (siteRes.data) ctx.siteNames = siteRes.data.map((s: any) => s.name);
+  } catch (err) {
+    console.warn('fetchCompanyOcrContext error:', err);
+  }
+
+  return ctx;
+}
+
+/**
  * ══════════════════════════════════════════════════════════════════════════════
  * TİP TANIMLARI (TYPES)
  * ══════════════════════════════════════════════════════════════════════════════
@@ -207,36 +267,75 @@ export interface VisionAnalysisResult {
  * ══════════════════════════════════════════════════════════════════════════════
  * Yalnızca saf JSON nesnesi üretir, sohbet metni yazmaz, 1 saniyede biter.
  */
-export function buildFastWaybillPrompt(): string {
+export function buildFastWaybillPrompt(companyContext?: CompanyOcrContext): string {
+  const hints: string[] = [];
+  if (companyContext?.companyName) {
+    hints.push(`Aktif Fabrika/Firma: "${companyContext.companyName}"`);
+  }
+  if (companyContext?.customerNames && companyContext.customerNames.length > 0) {
+    hints.push(`Bu fabrikanın sistemde kayıtlı başlıca müşterileri: [${companyContext.customerNames.slice(0, 35).join(', ')}]`);
+  }
+  if (companyContext?.siteNames && companyContext.siteNames.length > 0) {
+    hints.push(`Bu fabrikanın sistemde kayıtlı şantiyeleri: [${companyContext.siteNames.slice(0, 25).join(', ')}]`);
+  }
+  if (companyContext?.productNames && companyContext.productNames.length > 0) {
+    hints.push(`Bu fabrikanın sistemde kayıtlı ürünleri: [${companyContext.productNames.slice(0, 35).join(', ')}]`);
+  }
+  if (companyContext?.customRules) {
+    hints.push(`FİRMAYA ÖZEL FİŞ OKUMA KURALLARI: ${companyContext.customRules}`);
+  }
+
+  const contextSection = hints.length > 0
+    ? `\n═══ SİSTEM VERİTABANI İPUÇLARI (EŞLEŞTİRME İÇİN ÖNCELİKLİ KULLAN) ═══\n${hints.join('\n')}\n`
+    : '';
+
   return [
-    'Sen "Parke ERP" fabrikasının yüksek hızlı ve sıfır hata hedefli Sevkiyat Formu / İrsaliye Okuma Yapay Zekasısın.',
-    'Görsel, SARİTEK veya benzeri bir beton parke/bordür fabrikasının matbu "PARKE SEVKİYAT FORMU" veya sevk irsaliyesidir.',
+    'Sen "Parke ERP" sisteminin yüksek hızlı, çok firmalı (multi-tenant) ve sıfır hata hedefli Evrensel Sevkiyat Formu / İrsaliye Okuma Yapay Zekasısın.',
+    'Görsel; herhangi bir beton parke, bordür, büz, kantar veya hazır yapı elemanları fabrikasının matbu veya elle doldurulmuş SEVKİYAT FORMU, SEVK İRSALİYESİ, TAŞIMA İRSALİYESİ veya KANTAR FİŞİDİR.',
     '',
-    'DİKKAT: Fotoğraf yan (90 derece sağa/sola dönük) veya dikey çekilmiş olabilir. Belge başlığındaki "SARİTEK PARKE SEVKİYAT FORMU" ve matbu tablo yönüne göre tüm alanları dikkatle oku.',
+    'DİKKAT: Fotoğraf yan (90 derece sağa/sola dönük), ters veya eğik çekilmiş olabilir. Metinlerin yönüne göre belgeyi doğru açıdan oku.',
+    'ÖNEMLİ KURAL: Her fabrikanın matbu fişi farklıdır (tarih sağ üstte, sol başta veya altta olabilir; plaka "Plaka", "Kamyon", "Araç" veya "Araç Plakası" yazabilir). Bilgileri SABİT BİR KOORDİNATA GÖRE DEĞİL, AŞAĞIDAKİ ANLAMSAL EŞ ANLAMLILAR (SYNONYMS) VE DESENLERE GÖRE TESPİT ET:',
     '',
-    'Belgede matbu bir tablo ve başlık bilgileri bulunur. Özellikle şu alanları ayıkla:',
-    '1. İrsaliye / Form No: Sağ üst köşede kırmızı renkli "№" işaretinin yanındaki matbu numara (Örn: "2627"). Bunu "invoice_no" alanına yaz.',
-    '2. Tarih: Sağ üst köşede "№" numarasının hemen altında "Tarih:" alanında elle yazılmış olan tarihi oku (Örn: "29.09.2026"). Bunu MUTLAKA "YYYY-MM-DD" (örn: "2026-09-29") formatında "shipment_date" alanına yaz! Asla bugünün tarihini uydurma, formda ne yazıyorsa o tarihi çıkar.',
-    '3. Firma (Müşteri & Şantiye): Tablonun ilk satırında "Firma" sütununda yazar (Örn: "Medikent - Altınova").',
-    '   - Tireden önceki kısım müşteri ("customer_name": "Medikent"),',
-    '   - Tireden sonraki kısım şantiye ("site_name": "Altınova").',
-    '4. Plaka: Tabloda "Plaka" satırında yazan araç plakası (Örn: "46 KY 189").',
-    '5. Malzeme Cinsi & Miktar:',
-    '   - "Malzeme Cinsi 1" satırında taş cinsi ve m² yazar (Örn: "10\'luk taş - 120 m2").',
-    '   - "product_name": "10 LUK NATUREL PARKE" veya "10\'luk taş",',
-    '   - "m2": 120,',
-    '   - "unit": "m²".',
-    '6. Palet Cinsi:',
-    '   - Tabloda "Palet Cinsi" satırında yazar.',
-    '   - Formda "Üretim", "üretim", "demir" veya benzeri yazıyorsa "pallet_type": "uretim" olmalıdır!',
-    '   - Formda "Tahta" veya "ahşap" yazıyorsa "pallet_type": "tahta" olmalıdır!',
-    '   - Formda "Dökme" veya "paletsiz" yazıyorsa "pallet_type": "dokme" olmalıdır!',
-    '   - Formda "Üretim" yazan yere KESİNLİKLE "uretim" yaz! Asla tahtaya çevirme!',
-    '7. Palet Adeti:',
-    '   - Tabloda "Palet Adeti" satırında yazan asıl sevk palet sayısıdır (Örn: "20").',
-    '   - "pallets": 20.',
-    '   - (DİKKAT: Tablonun sağında el yazısıyla alt alta yazılmış olan "Üretim 555 + 20 = 575" veya "Tahta 1664" fabrikanın kendi ambar stok düşüm hesabıdır; sevkiyat palet adedi tablonun içindeki 20\'dir!).',
+    '1. İrsaliye / Fiş No ("invoice_no"):',
+    '   - Eş anlamlı etiketler: "İrsaliye No", "Fiş No", "Form No", "Sıra No", "Seri No", "Belge No", "№", "Kantar Fiş No".',
+    '   - Genellikle matbu basılmış (kırmızı/siyah) veya kaşeyle basılmış seri/numaradır (Örn: "2627", "A-10492").',
     '',
+    '2. Tarih ("shipment_date"):',
+    '   - Eş anlamlı etiketler: "Tarih", "Sevk Tarihi", "Düzenleme Tarihi", "Fiş Tarihi", "Teslim Tarihi".',
+    '   - Fişin neresinde olursa olsun (üstte, ortada, imza yanında) yazılı olan tarihi (örn: "29.09.2026", "29/09/2026", "29-09-2026") bul.',
+    '   - MUTLAKA "YYYY-MM-DD" formatında (örn: "2026-09-29") yaz! Asla bugünün tarihini uydurma, belgede ne yazıyorsa onu çıkar.',
+    '',
+    '3. Plaka / Araç ("vehicle_plate"):',
+    '   - Eş anlamlı etiketler: "Plaka", "Araç Plakası", "Kamyon Plakası", "Araç", "Kamyon", "Çekici", "Dorse", "Taşıt No", "Oto".',
+    '   - Ya da belgede Türk plaka kalıbında olan metni tespit et (Örn: "46 KY 189", "34 ABC 789", "06 B 1234").',
+    '   - Plakayı standart büyük harf ve aralıklı formatta yaz (Örn: "46 KY 189").',
+    '',
+    '4. Müşteri & Şantiye ("customer_name", "site_name"):',
+    '   - Müşteri Eş Anlamlıları: "Firma", "Müşteri", "Alıcı", "Sayın", "Kime", "Teslim Edilen", "Ünvan".',
+    '   - Şantiye Eş Anlamlıları: "Şantiye", "Sevk Yeri", "Teslim Yeri", "Gideceği Yer", "Boşaltma Yeri", "Adres", "Proje".',
+    '   - Eğer firma kutusunda "Medikent - Altınova" veya "Ergişi İnş. / Doğukent" gibi tire veya bölü ile şantiye belirtilmişse:',
+    '     * "customer_name": "Medikent",',
+    '     * "site_name": "Altınova".',
+    '',
+    '5. Malzeme Cinsi, Miktar ve Birim ("items"):',
+    '   - Tablo veya satırlardaki taş cinsini (Örn: "10 luk taş", "8 lik Kilit Parke", "Bordür", "Oluk Taşı", "Çim Taşı") ayıkla.',
+    '   - Miktar ("m2"): m² veya metre veya adet cinsinden sevk miktarı (Örn: 120).',
+    '   - Birim ("unit"): "m²", "Metre", "Adet".',
+    '',
+    '6. Palet Türü ("pallet_type"):',
+    '   - Formda "Üretim", "üretim", "demir", "metal", "çelik" yazıyorsa -> "pallet_type": "uretim"',
+    '   - Formda "Tahta", "ahşap", "wood" yazıyorsa -> "pallet_type": "tahta"',
+    '   - Formda "Dökme", "paletsiz", "damper" yazıyorsa -> "pallet_type": "dokme"',
+    '   - Formda "Sevkiyat", "euro", "standart" yazıyorsa -> "pallet_type": "sevkiyat"',
+    '',
+    '7. Palet Adeti ("pallets"):',
+    '   - Sevk edilen asıl palet sayısıdır (Örn: 20).',
+    '   - (DİKKAT: Tablo haricinde sağda veya dipnotta el yazısıyla yazılmış ambar stok düşüm hesaplarını (örn. "Üretim 555 + 20 = 575") sevk paleti sanma; sevkiyat palet adedi tablodaki sevk adedidir).',
+    '',
+    '8. Şoför & Kantar Tartımı (varsa):',
+    '   - "driver_name": Şoför veya teslim alan kişi adı.',
+    '   - "gross_weight", "tare_weight", "net_weight": Varsa kantar brüt, dara ve net kg değerleri.',
+    contextSection,
     'SADECE ve YALNIZCA geçerli bir JSON nesnesi döndür. JSON haricinde hiçbir selamlama, özet veya markdown açıklaması yazma.',
     'Örnek JSON formatı:',
     JSON.stringify({
@@ -271,13 +370,34 @@ export function buildFastWaybillPrompt(): string {
 /**
  * Kapsamlı Optik Belge, İrsaliye ve Kalite Kontrol Sistem İstemi (Asistan Modalı için)
  */
-function buildVisionPrompt(userNote = ''): string {
+function buildVisionPrompt(userNote = '', companyContext?: CompanyOcrContext): string {
   const learned = getLearnedRules();
   const learnedSection = learned.length > 0
     ? '\nÖĞRENİLMİŞ FABRİKA VE İRSALİYE KURALLARI:\n' + learned.map(r => `• ${r.rule}`).join('\n')
     : '';
 
-  return `Sen "Parke ERP" fabrikasının Üst Düzey Optik Karakter Tanıma (OCR) ve Belge/Kalite Yapay Zekasısın.
+  const hints: string[] = [];
+  if (companyContext?.companyName) {
+    hints.push(`Aktif Fabrika/Firma: "${companyContext.companyName}"`);
+  }
+  if (companyContext?.customerNames && companyContext.customerNames.length > 0) {
+    hints.push(`Bu fabrikanın sistemde kayıtlı başlıca müşterileri: [${companyContext.customerNames.slice(0, 35).join(', ')}]`);
+  }
+  if (companyContext?.siteNames && companyContext.siteNames.length > 0) {
+    hints.push(`Bu fabrikanın sistemde kayıtlı şantiyeleri: [${companyContext.siteNames.slice(0, 25).join(', ')}]`);
+  }
+  if (companyContext?.productNames && companyContext.productNames.length > 0) {
+    hints.push(`Bu fabrikanın sistemde kayıtlı ürünleri: [${companyContext.productNames.slice(0, 35).join(', ')}]`);
+  }
+  if (companyContext?.customRules) {
+    hints.push(`FİRMAYA ÖZEL FİŞ OKUMA KURALLARI: ${companyContext.customRules}`);
+  }
+
+  const contextSection = hints.length > 0
+    ? `\n═══ SİSTEM VERİTABANI İPUÇLARI (EŞLEŞTİRME İÇİN ÖNCELİKLİ KULLAN) ═══\n${hints.join('\n')}\n`
+    : '';
+
+  return `Sen "Parke ERP" sisteminin Üst Düzey Evrensel Optik Karakter Tanıma (OCR) ve Belge/Kalite Yapay Zekasısın.
 Sana gönderilen görsel bir SEVKİYAT İRSALİYESİ, KANTAR ÇIKIŞ FİŞİ, HAMMADDE GİRİŞ İRSALİYESİ veya BOZUK TAŞ FOTOĞRAFIDIR.
 Görseli en yüksek dikkatle incele. Hem matbaa/yazıcı yazılarını hem de elle yazılmış (tükenmez/kurşun kalem) notları eksiksiz oku.
 DİKKAT: Fotoğraf yan (90 derece sağa/sola) çekilmiş olabilir, başlık ve tablo yönüne göre oku.
@@ -285,27 +405,19 @@ DİKKAT: Fotoğraf yan (90 derece sağa/sola) çekilmiş olabilir, başlık ve t
 Belgeler çoğunlukla şu 3 sınıftan birine aittir:
 
 SINIF 1: PARKE / BORDÜR SEVKİYAT FORMU VEYA SEVK İRSALİYESİ (ÇIKIŞ)
-Özellikle şu alanları bul ve ayıkla:
-- İrsaliye No / Form No (kırmızı "№" yanındaki numara örn: 2627)
-- Müşteri / Firma Ünvanı (Alıcı: örn. MEDİKENT, FATİH ERGİŞİ vb.)
-- Teslim Şantiyesi / Sevk Yeri (örn. Altınova, Kılavuzlu vb.)
-- Araç Plakası (örn. 46 KY 189)
-- Şoför Adı veya Teslim Alan
-- Tarih (sağ üstteki "Tarih:" alanındaki tarih örn: 29.09.2026 -> 2026-09-29)
+ÖNEMLİ KURAL: Her fabrikanın matbu fişi farklıdır (tarih sağ üstte, sol başta veya altta olabilir; plaka "Plaka", "Kamyon", "Araç" veya "Araç Plakası" yazabilir). Bilgileri SABİT BİR KOORDİNATA GÖRE DEĞİL, ANLAMSAL EŞ ANLAMLILAR (SYNONYMS) VE DESENLERE GÖRE TESPİT ET:
+- İrsaliye No / Form No ("İrsaliye No", "Fiş No", "Form No", "Sıra No", "№", "Kantar No" etiketleri örn: 2627)
+- Müşteri / Firma Ünvanı ("Firma", "Müşteri", "Alıcı", "Sayın", "Kime", "Teslim Edilen")
+- Teslim Şantiyesi / Sevk Yeri ("Şantiye", "Sevk Yeri", "Teslim Adresi", "Gideceği Yer", "Boşaltma Yeri")
+- Araç Plakası ("Plaka", "Araç Plakası", "Kamyon Plakası", "Araç", "Kamyon", "Çekici", "Dorse" veya Türkiye plaka deseni örn: 46 KY 189)
+- Şoför Adı veya Teslim Alan ("Şoför", "Sürücü", "Teslim Eden", "Teslim Alan")
+- Tarih ("Tarih", "Sevk Tarihi", "Düzenleme Tarihi", "Fiş Tarihi" nerede olursa olsun örn: 29.09.2026 -> 2026-09-29)
 - Sevk Edilen Malzemeler (Taş cinsi örn. "10'luk taş", "8'lik Kilit Parke", Miktar, Birim m²/Metre, Palet Sayısı, Palet Türü: uretim / tahta / sevkiyat / dokme)
 - Kantar Tartımı varsa (Brüt kg, Dara kg, Net kg)
 
-═══ SARİTEK VE PARKE SEVKİYAT FORMLARINDA ÇOK KRİTİK OKUMA KURALLARI ═══
-1. TABLO ALANLARI:
-   [ Firma | Plaka | Malzeme Cinsi 1 | Malzeme Cinsi 2 | Palet Cinsi | Palet Adeti ]
-   - "Firma": Müşteri ve Şantiye (Örn: "Medikent - Altınova" -> müşteri: "MEDİKENT", şantiye: "Altınova").
-   - "Plaka": Sevk aracının plakası (Örn: "46 KY 189").
-   - "Malzeme Cinsi 1": Taş cinsi ve m² (Örn: "10'luk taş - 120 m2").
-   - "Palet Cinsi": Sevk edilen paletin türüdür. Formda "Üretim", "üretim", "demir" yazıyorsa "pallet_type": "uretim" (Üretim Paleti) olmalıdır! Formda "Tahta" veya "ahşap" yazıyorsa "pallet_type": "tahta" olmalıdır!
-   - "Palet Adeti": SEVKİYATIN ASIL PALET SAYISI BU SÜTUNDUR! Tablodaki "Palet Adeti" sütununun altında kaç yazıyorsa (Örn: 20) "pallets" değerine O SAYIYI YAZ.
-
-2. ÇOK ÖNEMLİ: SAĞ TARAFTAKİ STOK DÜŞÜM NOTLARI SEVKİYAT PALETİ DEĞİLDİR!
-   Formun sağ kenarında, altında el yazısıyla yazılmış olan "Üretim 555 + 20 = 575", "Tahta 1664" fabrikanın İÇ STOK DÜŞÜMÜDÜR; sevkiyat palet adedi tablodaki sayıdır (20).
+═══ PALET TÜRÜ VE AMBAR STOK AYRIMI KURALLARI ═══
+1. Palet Cinsi: Formda "Üretim", "üretim", "demir" yazıyorsa "pallet_type": "uretim" olmalıdır! "Tahta" veya "ahşap" yazıyorsa "pallet_type": "tahta" olmalıdır! "Dökme" veya "paletsiz" yazıyorsa "pallet_type": "dokme" olmalıdır!
+2. Palet Adeti: Tablodaki sevk adedidir. Tablo dışındaki sağ kenarda el yazısıyla alt alta yazılmış ambar stok düşüm hesapları (örn: "Üretim 555 + 20 = 575", "Tahta 1664") fabrikanın kendi stok hesabıdır; sevk paleti tablodaki sevk adedidir.
 
 SINIF 2: HAMMADDE / ÇİMENTO / AGREGA / MICIR GİRİŞİ VEYA KANTAR FİŞİ
 - Tedarikçi Adı
@@ -317,6 +429,7 @@ SINIF 2: HAMMADDE / ÇİMENTO / AGREGA / MICIR GİRİŞİ VEYA KANTAR FİŞİ
 SINIF 3: BOZUK / HATALI PARKE VEYA BORDÜR TAŞI (KALİTE KONTROL)
 - Hata Tipi, şiddeti ve operatöre tavsiye
 
+${contextSection}
 ${learnedSection}
 
 ÇOK ÖNEMLİ KURALLAR:
@@ -541,7 +654,8 @@ export async function callVisionCascade(
   base64Image: string,
   mimeType = 'image/jpeg',
   userNote = '',
-  apiKey?: string
+  apiKey?: string,
+  companyContext?: CompanyOcrContext
 ): Promise<{ candidateText: string; usedModel: string }> {
   const savedKey = typeof window !== 'undefined' && window.localStorage ? window.localStorage.getItem('parke_gemini_api_key') : null;
   const envKey = typeof import.meta !== 'undefined' && (import.meta as any).env ? (import.meta as any).env?.VITE_GEMINI_API_KEY : null;
@@ -559,7 +673,7 @@ export async function callVisionCascade(
     ...ROBUST_FALLBACK_MODELS
   ]));
 
-  const prompt = buildVisionPrompt(userNote);
+  const prompt = (userNote && userNote.startsWith('Sen ')) ? userNote : buildVisionPrompt(userNote, companyContext);
   const detailedErrors: string[] = [];
 
   for (const model of candidateModels) {
@@ -682,6 +796,17 @@ export function smartMatchProduct(rawName: string, products: any[]): any | null 
       if (isProd8 || isProd10) score -= 90;
     }
 
+    // Renk Eşleşmesi (Gri, Kırmızı vb.)
+    const colors = ['gri', 'kirmizi', 'antrasit', 'siyah', 'sari', 'beyaz'];
+    for (const col of colors) {
+      if (targetNorm.includes(col)) {
+        const pCol = norm(p.color || '');
+        if (pCol.includes(col) || pNorm.includes(col)) {
+          score += 25;
+        }
+      }
+    }
+
     // Anahtar Kelime Puanlaması
     const keywords = ['kilit', 'parke', 'tas', 'tasi', 'bordur', 'oluk', 'cimen'];
     for (const kw of keywords) {
@@ -707,14 +832,22 @@ export function smartMatchProduct(rawName: string, products: any[]): any | null 
  * ══════════════════════════════════════════════════════════════════════════════
  * VERİTABANI VARLIK ÇÖZÜMLEME (DATABASE ENTITY RESOLUTION)
  * ══════════════════════════════════════════════════════════════════════════════
+ * OCR'dan çıkan ham veriyi aktif firmanın müşteri, şantiye, ürün ve plaka veritabanıyla eşleştirir.
  */
-export async function resolveEntitiesWithDatabase(rawShipment: any): Promise<ParsedShipmentOCRData> {
+export async function resolveEntitiesWithDatabase(
+  rawShipment: any,
+  companyId?: string
+): Promise<ParsedShipmentOCRData> {
   const norm = (s: string) => normalizeTurkish(s || '').toLowerCase().trim();
 
   let customerId = '';
   let customerName = rawShipment.customer_name || '';
   let siteId = '';
   let siteName = rawShipment.site_name || '';
+
+  // Etiket ön eklerini temizle (Örn: "Müşteri: Medikent", "Alıcı: Ergişi")
+  customerName = customerName.replace(/^(musteri|alici|firma|sayin|unvan|kime)\s*[:.-]?\s*/i, '').trim();
+  siteName = siteName.replace(/^(santiye|sevk yeri|teslim yeri|gidecegi yer|proje)\s*[:.-]?\s*/i, '').trim();
 
   // "Medikent - Altınova" gibi tireli girişlerde müşteri ve şantiyeyi ayır
   if (customerName.includes('-') || customerName.includes('/')) {
@@ -727,14 +860,20 @@ export async function resolveEntitiesWithDatabase(rawShipment: any): Promise<Par
     }
   }
 
-  // 1. Resolve Customer
+  // 1. Resolve Customer (Aktif firmaya izole sorgu)
   try {
-    const { data: customers } = await supabase.from('customers').select('id, name').eq('is_active', true);
+    let custQuery = supabase.from('customers').select('id, name, company_id').eq('is_active', true);
+    if (companyId) {
+      custQuery = custQuery.or(`company_id.eq.${companyId},company_id.is.null`);
+    }
+    const { data: customers } = await custQuery;
     if (customers && customers.length > 0 && customerName) {
       const cTarget = norm(customerName);
       const matched = customers.find(c => {
         const cn = norm(c.name);
-        return cn === cTarget || (cn.length >= 3 && cTarget.includes(cn)) || (cTarget.length >= 3 && cn.includes(cTarget));
+        return cn === cTarget ||
+               (cn.length >= 3 && cTarget.includes(cn)) ||
+               (cTarget.length >= 3 && cn.includes(cTarget));
       });
       if (matched) {
         customerId = matched.id;
@@ -745,18 +884,22 @@ export async function resolveEntitiesWithDatabase(rawShipment: any): Promise<Par
     console.warn('Customer resolution error:', err);
   }
 
-  // 2. Resolve Site
+  // 2. Resolve Site (Aktif firmaya / müşteriye izole sorgu)
   try {
-    const query = supabase.from('sites').select('id, name, customer_id').eq('is_active', true);
+    let query = supabase.from('sites').select('id, name, customer_id, company_id').eq('is_active', true);
     if (customerId) {
-      query.eq('customer_id', customerId);
+      query = query.eq('customer_id', customerId);
+    } else if (companyId) {
+      query = query.or(`company_id.eq.${companyId},company_id.is.null`);
     }
     const { data: sites } = await query;
     if (sites && sites.length > 0 && siteName) {
       const sTarget = norm(siteName);
       const matchedSite = sites.find(s => {
         const sn = norm(s.name);
-        return sn === sTarget || (sn.length >= 3 && sTarget.includes(sn)) || (sTarget.length >= 3 && sn.includes(sTarget));
+        return sn === sTarget ||
+               (sn.length >= 3 && sTarget.includes(sn)) ||
+               (sTarget.length >= 3 && sn.includes(sTarget));
       });
       if (matchedSite) {
         siteId = matchedSite.id;
@@ -773,10 +916,15 @@ export async function resolveEntitiesWithDatabase(rawShipment: any): Promise<Par
     console.warn('Site resolution error:', err);
   }
 
-  // 3. Resolve Products & Pallet Types
+  // 3. Resolve Products & Pallet Types (Aktif firmaya izole sorgu)
   let resolvedItems: ParsedShipmentOCRItem[] = [];
   try {
-    const { data: products } = await supabase.from('products').select('id, name, unit, thickness, color, price').eq('is_active', true);
+    let prodQuery = supabase.from('products').select('id, name, unit, thickness, color, price, company_id').eq('is_active', true);
+    if (companyId) {
+      prodQuery = prodQuery.or(`company_id.eq.${companyId},company_id.is.null`);
+    }
+    const { data: products } = await prodQuery;
+
     const rawItems = Array.isArray(rawShipment.items) && rawShipment.items.length > 0
       ? rawShipment.items
       : [{
@@ -814,7 +962,7 @@ export async function resolveEntitiesWithDatabase(rawShipment: any): Promise<Par
       }
 
       // Pallet count sanity check:
-      // Formun sağındaki 555 + 20 = 575 toplam stok düşüm notu sevkiyat paleti sanılmışsa düzelt
+      // Formun sağındaki stok notu sevkiyat sanılmışsa düzelt
       if (m2 > 0 && pal > 0) {
         const ratio = m2 / pal;
         if (ratio < 2.0 && pal > 10) {
@@ -850,22 +998,24 @@ export async function resolveEntitiesWithDatabase(rawShipment: any): Promise<Par
     estTonnage = Number(((totalM2 * 220) / 1000).toFixed(2));
   }
 
-  // 5. Araç Plakası Temizliği ve Veritabanı Teyidi
-  let cleanPlate = (rawShipment.vehicle_plate || '').toUpperCase().trim();
-  const plateMatch = cleanPlate.match(/\b(\d{2})\s*([A-Z]{1,3})\s*(\d{2,4})\b/i);
-  if (plateMatch) {
-    cleanPlate = `${plateMatch[1]} ${plateMatch[2].toUpperCase()} ${plateMatch[3]}`;
-  }
+  // 5. Araç Plakası Temizliği ve Veritabanı Teyidi (normalizePlateNumber ile standartlaştır)
+  let cleanPlate = normalizePlateNumber(rawShipment.vehicle_plate || '');
 
-  // El yazısı benzerliği için (188 vs 189) son sevkiyat plakalarıyla çapraz kontrol
+  // El yazısı benzerliği için son sevkiyat plakalarıyla çapraz kontrol
   try {
     if (cleanPlate) {
       const prefix = cleanPlate.substring(0, Math.max(5, cleanPlate.length - 1));
-      const { data: existingShipments } = await supabase
+      let shipQuery = supabase
         .from('shipments')
         .select('vehicle_plate')
         .ilike('vehicle_plate', `${prefix}%`)
         .limit(5);
+
+      if (companyId) {
+        shipQuery = shipQuery.or(`company_id.eq.${companyId},company_id.is.null`);
+      }
+
+      const { data: existingShipments } = await shipQuery;
 
       if (existingShipments && existingShipments.length > 0) {
         const exact = existingShipments.find(s => norm(s.vehicle_plate) === norm(cleanPlate));
@@ -915,16 +1065,20 @@ export async function resolveEntitiesWithDatabase(rawShipment: any): Promise<Par
  */
 export async function scanWaybillImageForShipment(
   file: File,
-  apiKey?: string
+  apiKey?: string,
+  companyId?: string
 ): Promise<{ success: boolean; data?: ParsedShipmentOCRData; message?: string; needsApiKey?: boolean }> {
   try {
     // 1. Görüntü Ön İşleme (1280px, 0.80 kalite: ~200 KB boyut, hızlı yükleme)
     const preprocessed = await preprocessImageForOCR(file, 1280, 0.80);
 
-    // 2. Yüksek Hızlı Odaklanmış Vision AI Promptu
-    const prompt = buildFastWaybillPrompt();
+    // 2. Çoklu Firma Bağlamı ve İpuçları
+    const companyContext = await fetchCompanyOcrContext(companyId);
 
-    // 3. Fast Vision API Cascade (Gemini 2.0 Flash)
+    // 3. Yüksek Hızlı Odaklanmış Vision AI Promptu
+    const prompt = buildFastWaybillPrompt(companyContext);
+
+    // 4. Fast Vision API Cascade (Gemini 2.0 Flash)
     const { candidateText, usedModel } = await callFastVisionCascade(
       preprocessed.base64,
       preprocessed.mimeType,
@@ -932,7 +1086,7 @@ export async function scanWaybillImageForShipment(
       apiKey
     );
 
-    // 4. Extract & Parse JSON
+    // 5. Extract & Parse JSON
     let parsedJson: any = null;
     try {
       const cleanText = candidateText.trim();
@@ -955,8 +1109,8 @@ export async function scanWaybillImageForShipment(
       };
     }
 
-    // 5. Supabase Veritabanı Varlıkları ile Eşleştir (Müşteri, Şantiye, Ürün, Plaka, Tarih, Palet Tipi)
-    const resolvedData = await resolveEntitiesWithDatabase(parsedJson);
+    // 6. Supabase Veritabanı Varlıkları ile Eşleştir (Aktif firmanın müşteri, şantiye, ürün ve plakaları)
+    const resolvedData = await resolveEntitiesWithDatabase(parsedJson, companyId);
 
     return {
       success: true,
@@ -987,7 +1141,8 @@ export async function analyzeImageWithVision(
   base64Image: string,
   mimeType = 'image/jpeg',
   userNote = '',
-  apiKey?: string
+  apiKey?: string,
+  companyId?: string
 ): Promise<VisionAnalysisResult> {
   const savedKey = typeof window !== 'undefined' && window.localStorage ? window.localStorage.getItem('parke_gemini_api_key') : null;
   const envKey = typeof import.meta !== 'undefined' && (import.meta as any).env ? (import.meta as any).env?.VITE_GEMINI_API_KEY : null;
@@ -1007,7 +1162,8 @@ export async function analyzeImageWithVision(
   }
 
   try {
-    const { candidateText, usedModel } = await callVisionCascade(base64Image, mimeType, userNote, geminiKey);
+    const companyContext = await fetchCompanyOcrContext(companyId);
+    const { candidateText, usedModel } = await callVisionCascade(base64Image, mimeType, userNote, geminiKey, companyContext);
 
     // Extract JSON block
     const jsonMatch = candidateText.match(/```json\s*([\s\S]*?)```/);
@@ -1028,7 +1184,7 @@ export async function analyzeImageWithVision(
       (!parsedJson?.analysis_type && (candidateText.includes('SEVK') || candidateText.includes('İRSALİYE') || candidateText.includes('PARKE')));
 
     if (isShipment && parsedJson) {
-      parsedShipment = await resolveEntitiesWithDatabase(parsedJson);
+      parsedShipment = await resolveEntitiesWithDatabase(parsedJson, companyId);
 
       const draftItems: ShipmentItemDraft[] = parsedShipment.items.map(it => ({
         product_id: it.product_id || 'prod-auto-match',
@@ -1055,6 +1211,8 @@ export async function analyzeImageWithVision(
           driver_name: parsedShipment.driver_name || '',
           driver_phone: parsedShipment.driver_phone || '',
           invoice_no: parsedShipment.invoice_no || '',
+          shipment_date: parsedShipment.date || new Date().toISOString().split('T')[0],
+          company_id: companyId,
           items: draftItems,
           total_m2: parsedShipment.total_m2,
           total_pallets: parsedShipment.total_pallets,
