@@ -178,15 +178,17 @@ export default function MobileDashboard({ onNavigate, isDark, onToggleTheme, tar
     >
       {/* ── 1. HEADER SECTION (KAVİSLİ DEGRADE BAŞLIK) ── */}
       <div
-        className={`relative pt-7 pb-10 px-5 rounded-b-[2.5rem] shadow-xl overflow-hidden transition-all duration-300 ${
+        className={`relative z-30 pt-7 pb-10 px-5 rounded-b-[2.5rem] shadow-xl transition-all duration-300 ${
           isDark
             ? 'bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 border-b border-slate-800'
             : 'bg-gradient-to-br from-[#0f172a] via-[#1e293b] to-[#1e3a8a]'
         }`}
       >
-        {/* Dekoratif Arka Plan Kavisli Dalga */}
-        <div className="absolute -right-10 -bottom-14 w-48 h-48 bg-gradient-to-br from-amber-500/25 to-orange-600/30 rounded-full blur-2xl pointer-events-none" />
-        <div className="absolute -left-12 -top-12 w-40 h-40 bg-blue-500/20 rounded-full blur-xl pointer-events-none" />
+        {/* Dekoratif Arka Plan Kavisli Dalga (İç taşmayı önlemek için izole edilmiş katman) */}
+        <div className="absolute inset-0 rounded-b-[2.5rem] overflow-hidden pointer-events-none">
+          <div className="absolute -right-10 -bottom-14 w-48 h-48 bg-gradient-to-br from-amber-500/25 to-orange-600/30 rounded-full blur-2xl" />
+          <div className="absolute -left-12 -top-12 w-40 h-40 bg-blue-500/20 rounded-full blur-xl" />
+        </div>
 
         {/* ParkeSaha Marka & Slogan Rozeti */}
         <div className="relative z-10 flex items-center justify-between pb-2.5 border-b border-white/10 mb-4">
@@ -199,7 +201,7 @@ export default function MobileDashboard({ onNavigate, isDark, onToggleTheme, tar
         </div>
 
         {/* Üst Çubuk (Profil + Tema & Bildirim) */}
-        <div className="relative z-10 flex items-center justify-between gap-3">
+        <div className="relative z-40 flex items-center justify-between gap-3">
           {/* Kullanıcı Profili */}
           <div className="flex items-center gap-3">
             <div className="relative">
@@ -241,7 +243,7 @@ export default function MobileDashboard({ onNavigate, isDark, onToggleTheme, tar
             </button>
 
             {/* Bildirim Zili */}
-            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-1 border border-white/10 text-white">
+            <div className="bg-white/15 hover:bg-white/20 rounded-2xl p-1 border border-white/15 text-white relative z-50">
               <NotificationBell onNavigate={onNavigate} />
             </div>
           </div>

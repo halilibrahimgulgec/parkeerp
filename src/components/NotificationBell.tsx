@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { Bell, AlertTriangle, Clock, ArrowRight, Target, CheckCircle2 } from 'lucide-react';
+import { Bell, AlertTriangle, Clock, ArrowRight, Target, CheckCircle2, X } from 'lucide-react';
 
 interface QuotaAlert {
   id: string;
@@ -112,7 +112,7 @@ export default function NotificationBell({ onNavigate }: { onNavigate: (page: an
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="relative p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-colors"
+        className="relative p-2 text-inherit hover:opacity-80 rounded-xl transition-colors cursor-pointer"
         title="Kota Bildirimleri"
         aria-label="Kota Bildirimleri"
       >
@@ -124,19 +124,37 @@ export default function NotificationBell({ onNavigate }: { onNavigate: (page: an
         )}
       </button>
 
+      {/* Dropdown Popup Backdrop (Mobil için dışa dokunup kapatma ve arka planı netleştirme) */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40 backdrop-blur-xs md:hidden"
+          onClick={() => setIsOpen(false)}
+        />
+      )}
+
       {/* Dropdown Popup */}
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-80 sm:w-96 rounded-2xl bg-white p-3 shadow-2xl border border-slate-100 z-50 animate-in fade-in zoom-in-95 duration-150">
+        <div className="absolute right-0 mt-2 w-[calc(100vw-2.5rem)] sm:w-96 max-w-[24rem] rounded-2xl bg-white p-3 shadow-2xl border border-slate-200 z-50 animate-in fade-in zoom-in-95 duration-150 text-slate-800">
           <div className="flex items-center justify-between pb-3 px-2 border-b border-slate-100">
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-amber-500 text-white flex items-center justify-center">
+              <div className="w-7 h-7 rounded-lg bg-amber-500 text-white flex items-center justify-center shrink-0">
                 <Target size={14} />
               </div>
               <h3 className="font-bold text-xs text-slate-900">Müşteri Kota Bildirimleri</h3>
             </div>
-            <span className="text-[11px] font-semibold text-slate-400">
-              {count} Aktif Uyarı
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                {count} Uyarı
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                aria-label="Kapat"
+              >
+                <X size={16} />
+              </button>
+            </div>
           </div>
 
           <div className="max-h-80 overflow-y-auto py-2 space-y-1.5 divide-y divide-slate-50">
