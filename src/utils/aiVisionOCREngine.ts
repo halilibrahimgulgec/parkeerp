@@ -770,6 +770,16 @@ export function smartMatchProduct(rawName: string, products: any[]): any | null 
   const isTarget6 = /\b6(\s*lik|\s*cm|lik|\b)/i.test(targetNorm);
   const isTarget10 = /\b10(\s*luk|\s*cm|luk|\b)/i.test(targetNorm);
 
+  // 2. Ürün Ailesi & Özel Bordür Türü Tespiti (Karayolu, Bahçe, Ankara, vb.)
+  const isTargetKarayolu = /karayol/i.test(targetNorm);
+  const isTargetAnkara = /ankara/i.test(targetNorm);
+  const isTargetBahce = /bahce/i.test(targetNorm);
+  const isTargetLimonluk = /limonluk/i.test(targetNorm);
+  const isTargetOluk = /oluk|yagmur/i.test(targetNorm);
+  const isTargetPrizma = /prizma|20x10/i.test(targetNorm);
+  const isTargetBegonit = /begonit/i.test(targetNorm);
+  const isTargetKilit = /kilit/i.test(targetNorm);
+
   let bestProd: any = null;
   let bestScore = -999;
 
@@ -781,6 +791,15 @@ export function smartMatchProduct(rawName: string, products: any[]): any | null 
     const isProd8 = /\b8(\s*lik|\s*cm|lik|\b)/i.test(pCombined);
     const isProd6 = /\b6(\s*lik|\s*cm|lik|\b)/i.test(pCombined);
     const isProd10 = /\b10(\s*luk|\s*cm|luk|\b)/i.test(pCombined);
+
+    const isProdKarayolu = /karayol/i.test(pCombined);
+    const isProdAnkara = /ankara/i.test(pCombined);
+    const isProdBahce = /bahce/i.test(pCombined);
+    const isProdLimonluk = /limonluk/i.test(pCombined);
+    const isProdOluk = /oluk|yagmur/i.test(pCombined);
+    const isProdPrizma = /prizma|20x10/i.test(pCombined);
+    const isProdBegonit = /begonit/i.test(pCombined);
+    const isProdKilit = /kilit/i.test(pCombined);
 
     let score = 0;
 
@@ -796,6 +815,28 @@ export function smartMatchProduct(rawName: string, products: any[]): any | null 
       if (isProd8 || isProd10) score -= 90;
     }
 
+    // Bordür / Taş Ailesi Öncelik Puanlaması
+    if (isTargetKarayolu) {
+      if (isProdKarayolu) score += 95;
+      if (isProdAnkara || isProdBahce) score -= 80;
+    } else if (isTargetAnkara) {
+      if (isProdAnkara) score += 95;
+      if (isProdKarayolu || isProdBahce) score -= 80;
+    } else if (isTargetBahce) {
+      if (isProdBahce) score += 95;
+      if (isProdKarayolu || isProdAnkara) score -= 80;
+    } else if (isTargetLimonluk) {
+      if (isProdLimonluk) score += 95;
+    } else if (isTargetOluk) {
+      if (isProdOluk) score += 95;
+    } else if (isTargetPrizma) {
+      if (isProdPrizma) score += 95;
+    } else if (isTargetBegonit) {
+      if (isProdBegonit) score += 95;
+    } else if (isTargetKilit) {
+      if (isProdKilit) score += 60;
+    }
+
     // Renk Eşleşmesi (Gri, Kırmızı vb.)
     const colors = ['gri', 'kirmizi', 'antrasit', 'siyah', 'sari', 'beyaz'];
     for (const col of colors) {
@@ -808,9 +849,17 @@ export function smartMatchProduct(rawName: string, products: any[]): any | null 
     }
 
     // Anahtar Kelime Puanlaması
-    const keywords = ['kilit', 'parke', 'tas', 'tasi', 'bordur', 'oluk', 'cimen'];
+    const keywords = ['kilit', 'parke', 'tas', 'tasi', 'bordur', 'oluk', 'cimen', 'karayol', 'ankara', 'bahce', 'limonluk', 'prizma', 'begonit'];
     for (const kw of keywords) {
       if (targetNorm.includes(kw) && pCombined.includes(kw)) {
+        score += 20;
+      }
+    }
+
+    // Kelime / Kök Bazlı Eşleşme
+    const pTokens = pNorm.split(/[\s_\-/]+/).filter((w: string) => w.length >= 3);
+    for (const tok of pTokens) {
+      if (targetNorm.includes(tok)) {
         score += 20;
       }
     }

@@ -124,17 +124,34 @@ export async function parseActionIntentFromQuery(
       }
     }
 
-    // 4. Extract Pallet or M2 quantity from voice
+    // 4. Extract Pallet or Metric (Metre / m² / Adet) quantity from voice
     let pallets = 0;
-    const palletMatch = query.match(/(\d+)\s*(?:adet)?\s*palet/i);
+    const palletMatch =
+      query.match(/(\d+)\s*(?:adet)?\s*(?:tahta|uretim|üretim|sevkiyat|ahsap|ahşap)?\s*palet/i) ||
+      query.match(/palet\s*(?:adedi|sayisi|sayısı)?\s*[:=-]?\s*(\d+)/i);
     if (palletMatch) {
       pallets = parseInt(palletMatch[1], 10);
     }
 
-    let m2 = 0;
+    let metricQty = 0;
+    let explicitUnit: 'm²' | 'Metre' | 'Adet' | null = null;
+
+    // Metre / Metretül / Mt / M
+    const metreMatch = query.match(/(\d+(?:[\.,]\d+)?)\s*(?:metre|metretul|metretül|mt\b|m\b)/i);
+    // Metrekare / m2 / m²
     const m2Match = query.match(/(\d+(?:[\.,]\d+)?)\s*(?:m2|metrekare|m²)/i);
-    if (m2Match) {
-      m2 = parseFloat(m2Match[1].replace(',', '.'));
+    // Adet / Tane
+    const adetMatch = query.match(/(\d+(?:[\.,]\d+)?)\s*(?:adet|tane)/i);
+
+    if (metreMatch) {
+      metricQty = parseFloat(metreMatch[1].replace(',', '.'));
+      explicitUnit = 'Metre';
+    } else if (m2Match) {
+      metricQty = parseFloat(m2Match[1].replace(',', '.'));
+      explicitUnit = 'm²';
+    } else if (adetMatch) {
+      metricQty = parseFloat(adetMatch[1].replace(',', '.'));
+      explicitUnit = 'Adet';
     }
 
     // 5. Sesli Komutta Palet Cinsi Tespiti (Üretim / Tahta / Dökme / Sevkiyat)
@@ -143,11 +160,11 @@ export async function parseActionIntentFromQuery(
     // 6. Match Product from database or snapshot
     let productName = "8'lik Kilit Parke Gri";
     let productId = '';
-    let unit = 'm²';
+    let unit = explicitUnit || 'm²';
     let m2PerPallet = 10.66;
 
     try {
-      let prodQ = supabase.from('products').select('id, name, unit, thickness, color, price, company_id').eq('is_active', true);
+      let prodQ = supabase.from('products').select('id, name, unit, thickness, color, price, m2_per_pallet, company_id').eq('is_active', true);
       if (companyId) {
         prodQ = prodQ.or(`company_id.eq.${companyId},company_id.is.null`);
       }
@@ -157,47 +174,89 @@ export async function parseActionIntentFromQuery(
         if (best) {
           productName = best.name;
           productId = best.id;
-          unit = best.unit === 'metre' ? 'Metre' : (best.unit === 'adet' ? 'Adet' : 'm²');
-          if (best.name.includes('10')) m2PerPallet = 8.5;
-          else if (best.name.includes('6')) m2PerPallet = 12.0;
-          else if (best.name.includes('Bordür') || best.unit === 'metre') m2PerPallet = 15.0;
+          unit = explicitUnit || (best.unit === 'metre' ? 'Metre' : (best.unit === 'adet' ? 'Adet' : 'm²'));
+          if (best.m2_per_pallet && Number(best.m2_per_pallet) > 0) {
+            m2PerPallet = Number(best.m2_per_pallet);
+          } else if (best.name.includes('10')) {
+            m2PerPallet = 8.5;
+          } else if (best.name.includes('6')) {
+            m2PerPallet = 12.0;
+          } else if (best.name.toLowerCase().includes('bordür') || best.unit === 'metre') {
+            m2PerPallet = 15.0;
+          }
         }
       }
     } catch {}
 
     if (!productId) {
-      if (qNorm.includes('10 luk') || qNorm.includes('10\'luk') || qNorm.includes('10luk')) {
+      if (qNorm.includes('karayol')) {
+        productName = "75x30x15 Karayolu Bordürü";
+        unit = explicitUnit || 'Metre';
+        m2PerPallet = 15.0;
+      } else if (qNorm.includes('bahce')) {
+        productName = "50x20x10 Bahçe Bordürü";
+        unit = explicitUnit || 'Metre';
+        m2PerPallet = 15.0;
+      } else if (qNorm.includes('ankara')) {
+        productName = "50x25x20 Ankara Bordürü";
+        unit = explicitUnit || 'Metre';
+        m2PerPallet = 15.0;
+      } else if (qNorm.includes('bordur')) {
+        productName = "50x25x20 Ankara Bordürü";
+        unit = explicitUnit || 'Metre';
+        m2PerPallet = 15.0;
+      } else if (qNorm.includes('oluk') || qNorm.includes('yagmur')) {
+        productName = "50x25x10 Yağmur Oluğu";
+        unit = explicitUnit || 'Metre';
+        m2PerPallet = 15.0;
+      } else if (qNorm.includes('10 luk') || qNorm.includes('10\'luk') || qNorm.includes('10luk')) {
         productName = "10'luk Naturel Parke Taşı";
+        unit = explicitUnit || 'm²';
         m2PerPallet = 8.5;
+      } else if (qNorm.includes('6 lik') || qNorm.includes('6\'lik') || qNorm.includes('6lik')) {
+        productName = "6'lık Kilit Parke Gri";
+        unit = explicitUnit || 'm²';
+        m2PerPallet = 12.0;
       } else if (qNorm.includes('prizma') || qNorm.includes('20x10')) {
         productName = "20x10x6 Prizma Parke Gri";
+        unit = explicitUnit || 'm²';
         m2PerPallet = 10.0;
-      } else if (qNorm.includes('bordur') || qNorm.includes('50x25') || qNorm.includes('ankara')) {
-        productName = "50x25x20 Ankara Bordürü";
-        unit = 'Metre';
-        m2PerPallet = 15.0;
+      } else if (qNorm.includes('begonit')) {
+        productName = "Begonit Taş Grubu";
+        unit = explicitUnit || 'm²';
+        m2PerPallet = 10.0;
       }
     }
 
     // Calculate totals
-    if (pallets > 0 && m2 === 0) {
-      m2 = Math.round(pallets * m2PerPallet);
-    } else if (m2 > 0 && pallets === 0) {
-      pallets = Math.ceil(m2 / m2PerPallet);
-    } else if (pallets === 0 && m2 === 0) {
+    let totalQty = metricQty;
+    if (pallets > 0 && totalQty === 0) {
+      totalQty = Math.round(pallets * m2PerPallet);
+    } else if (totalQty > 0 && pallets === 0) {
+      pallets = Math.ceil(totalQty / m2PerPallet);
+    } else if (pallets === 0 && totalQty === 0) {
       pallets = 15;
-      m2 = Math.round(15 * m2PerPallet);
+      totalQty = Math.round(15 * m2PerPallet);
     }
 
-    // Estimated weight (1 m2 parke ~ 180 kg)
-    const estimatedTonnage = Number(((m2 * 180) / 1000).toFixed(2));
+    // Estimated weight:
+    // Parke: ~180 kg/m²
+    // Bordür: ~85 kg/metre (Karayolu bordürü 75x30x15 is ~85-90 kg/m)
+    // Adet / Briket: ~20 kg/adet
+    let weightPerUnit = 180;
+    if (unit === 'Metre' || productName.toLowerCase().includes('bordür') || productName.toLowerCase().includes('oluk')) {
+      weightPerUnit = 85;
+    } else if (unit === 'Adet') {
+      weightPerUnit = 20;
+    }
+    const estimatedTonnage = Number(((totalQty * weightPerUnit) / 1000).toFixed(2));
 
     const itemDraft: ShipmentItemDraft = {
       product_id: productId || 'prod-auto-match',
       product_name: productName,
       pallets,
       pallet_type: detectedPalletType,
-      m2,
+      m2: totalQty,
       unit,
     };
 
@@ -206,7 +265,7 @@ export async function parseActionIntentFromQuery(
       type: 'create_shipment',
       status: 'draft',
       title: 'Sesli Sevk & Kantar Fişi',
-      description: `${customerName} için ${pallets} ${detectedPalletType} paleti (${m2} ${unit}) sevk fişi hazırlandı.`,
+      description: `${customerName} için ${pallets} ${detectedPalletType} paleti (${totalQty} ${unit}) sevk fişi hazırlandı.`,
       createdAt: new Date().toISOString(),
       shipmentData: {
         customer_id: matchedCustomer?.id || '',
@@ -218,7 +277,7 @@ export async function parseActionIntentFromQuery(
         shipment_date: new Date().toISOString().split('T')[0],
         company_id: companyId,
         items: [itemDraft],
-        total_m2: m2,
+        total_m2: totalQty,
         total_pallets: pallets,
         estimated_tonnage: estimatedTonnage,
         notes: `AI Saha Asistanı ile sesli komutla oluşturuldu. [${detectedPalletType} palet]`,
@@ -250,17 +309,39 @@ export async function parseActionIntentFromQuery(
     if (palletMatch) pallets = parseInt(palletMatch[1], 10);
 
     let m2 = 0;
-    const m2Match = query.match(/(\d+(?:[\.,]\d+)?)\s*(?:m2|metrekare|m²)/i);
-    if (m2Match) m2 = parseFloat(m2Match[1].replace(',', '.'));
+    let prodUnit = 'm²';
+    const prodMetreMatch = query.match(/(\d+(?:[\.,]\d+)?)\s*(?:metre|metretul|metretül|mt\b|m\b)/i);
+    const prodM2Match = query.match(/(\d+(?:[\.,]\d+)?)\s*(?:m2|metrekare|m²)/i);
+    const prodAdetMatch = query.match(/(\d+(?:[\.,]\d+)?)\s*(?:adet|tane)/i);
+
+    if (prodMetreMatch) {
+      m2 = parseFloat(prodMetreMatch[1].replace(',', '.'));
+      prodUnit = 'Metre';
+    } else if (prodM2Match) {
+      m2 = parseFloat(prodM2Match[1].replace(',', '.'));
+      prodUnit = 'm²';
+    } else if (prodAdetMatch) {
+      m2 = parseFloat(prodAdetMatch[1].replace(',', '.'));
+      prodUnit = 'Adet';
+    }
 
     let wasteM2 = 0;
-    const wasteMatch = query.match(/(\d+(?:[\.,]\d+)?)\s*(?:m2|metrekare)?\s*(?:fire|iskarta)/i);
+    const wasteMatch = query.match(/(\d+(?:[\.,]\d+)?)\s*(?:m2|metrekare|metre|adet)?\s*(?:fire|iskarta)/i);
     if (wasteMatch) wasteM2 = parseFloat(wasteMatch[1].replace(',', '.'));
 
     let productName = machineNo === '1' ? "8'lik Kilit Parke Gri" : "50x25x20 Ankara Bordürü";
-    if (m2 === 0 && pallets > 0) m2 = pallets * 10.66;
-    if (m2 === 0) m2 = 500;
-    if (pallets === 0) pallets = Math.ceil(m2 / 10.66);
+    if (machineNo === '2' && qNorm.includes('karayol')) {
+      productName = "75x30x15 Karayolu Bordürü";
+      prodUnit = 'Metre';
+    } else if (machineNo === '2' && qNorm.includes('bahce')) {
+      productName = "50x20x10 Bahçe Bordürü";
+      prodUnit = 'Metre';
+    }
+
+    const ratio = machineNo === '2' ? 15.0 : 10.66;
+    if (m2 === 0 && pallets > 0) m2 = Math.round(pallets * ratio);
+    if (m2 === 0) m2 = machineNo === '2' ? 300 : 500;
+    if (pallets === 0) pallets = Math.ceil(m2 / ratio);
 
     const netM2 = Math.max(0, m2 - wasteM2);
 
@@ -269,7 +350,7 @@ export async function parseActionIntentFromQuery(
       type: 'create_production',
       status: 'draft',
       title: 'Taslak Vardiya Üretim Girişi',
-      description: `${machineName} için ${netM2} m² net üretim kaydı hazırlandı.`,
+      description: `${machineName} için ${netM2} ${prodUnit} net üretim kaydı hazırlandı.`,
       createdAt: new Date().toISOString(),
       productionData: {
         product_id: '',
@@ -406,7 +487,6 @@ export async function executeApprovedAction(
           driver_name: d.driver_name || 'Kayıtlı Şoför',
           gross_weight: gross,
           tare_weight: tare,
-          net_weight: net,
           total_m2: d.total_m2,
           status: 'completed',
           shipment_date: targetDate,
