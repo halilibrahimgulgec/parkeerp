@@ -452,7 +452,7 @@ export default function AIAssistantModal() {
       }
 
       // 1. Action Intent Recognition (Kantar, Sevkiyat, Üretim, Palet İade Girişi)
-      const actionDraft = await parseActionIntentFromQuery(query, currentData);
+      const actionDraft = await parseActionIntentFromQuery(query, currentData, profile?.company_id);
       if (actionDraft) {
         setActivePendingDraft(actionDraft);
         const actionMsg: ChatMessage = {
@@ -465,7 +465,7 @@ export default function AIAssistantModal() {
         };
         setMessages((prev) => [...prev, actionMsg]);
         if (autoSpeak || isWalkieTalkieOpen) {
-          handleToggleSpeak(actionMsg.id, `${actionDraft.title} hazırlandı. Onaylıyor musunuz?`);
+          handleToggleSpeak(actionMsg.id, `${actionDraft.description}. Onaylıyor musunuz?`);
         }
         setIsLoading(false);
         return;

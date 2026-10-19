@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase';
 import { ActionDraftPayload, ShipmentItemDraft } from '../types/aiActionTypes';
 import { FactorySnapshot, normalizeTurkish } from './aiFactoryBrain';
+import { smartMatchProduct, normalizePlateNumber, normalizePalletType } from './aiVisionOCREngine';
 
 /**
  * 1. PARSE ACTION INTENT FROM OPERATOR QUERY
@@ -8,7 +9,8 @@ import { FactorySnapshot, normalizeTurkish } from './aiFactoryBrain';
  */
 export async function parseActionIntentFromQuery(
   query: string,
-  factoryData: FactorySnapshot
+  factoryData: FactorySnapshot,
+  companyId?: string
 ): Promise<ActionDraftPayload | null> {
   const qNorm = normalizeTurkish(query);
   if (!qNorm) return null;
@@ -17,35 +19,56 @@ export async function parseActionIntentFromQuery(
   // A. INTENT: SHIPMENT & WEIGHBRIDGE SLIP (Kantar & Sevkiyat Fişi Hazırlama)
   // -------------------------------------------------------------------------
   const isShipmentIntent =
+    qNorm.includes('sevk fisi') ||
+    qNorm.includes('sevk irsaliye') ||
+    qNorm.includes('sevk irsaliyesi') ||
     qNorm.includes('kantar fisi') ||
-    qNorm.includes('kantar fisi hazirla') ||
+    qNorm.includes('kantar') ||
     qNorm.includes('sevkiyat olustur') ||
     qNorm.includes('sevk et') ||
+    qNorm.includes('sevk yap') ||
     qNorm.includes('kamyona yukle') ||
     qNorm.includes('araca yukle') ||
+    qNorm.includes('araba yukle') ||
     qNorm.includes('irsaliye kes') ||
     qNorm.includes('irsaliye hazirla') ||
+    qNorm.includes('irsaliye') ||
     qNorm.includes('fisi hazirla') ||
+    qNorm.includes('fis kes') ||
+    qNorm.includes('fis hazirla') ||
+    qNorm.includes('fis yaz') ||
     qNorm.includes('cikis yap') ||
-    (qNorm.includes('palet') && qNorm.includes('yukle')) ||
-    (qNorm.includes('kamyon') && qNorm.includes('yukle'));
+    (qNorm.includes('palet') && (qNorm.includes('yukle') || qNorm.includes('gonder') || qNorm.includes('sevk'))) ||
+    (qNorm.includes('kamyon') && (qNorm.includes('yukle') || qNorm.includes('gonder') || qNorm.includes('sevk'))) ||
+    (qNorm.includes('arac') && (qNorm.includes('yukle') || qNorm.includes('gonder') || qNorm.includes('sevk')));
 
   if (isShipmentIntent) {
-    // 1. Extract Vehicle Plate (e.g. 46 K 1234, 46AFB273, 46 AFB 273)
+    // 1. Extract Vehicle Plate (Türk plaka formatı ve temizliği)
     let detectedPlate: string | undefined = undefined;
     const plateMatch = query.match(/\b(\d{2})\s*([A-Z]{1,3})\s*(\d{2,4})\b/i);
     if (plateMatch) {
       detectedPlate = `${plateMatch[1]} ${plateMatch[2].toUpperCase()} ${plateMatch[3]}`;
+    } else {
+      const cleanP = normalizePlateNumber(query);
+      if (cleanP && cleanP.length >= 7 && /\d/.test(cleanP)) {
+        detectedPlate = cleanP;
+      }
     }
 
-    // 2. Match Customer
+    // 2. Match Customer (Aktif firmanın kayıtlı cari listesi)
     let matchedCustomer: { id: string; name: string } | null = null;
     try {
-      const { data: custList } = await supabase.from('customers').select('id, name').eq('is_active', true);
+      let custQ = supabase.from('customers').select('id, name, company_id').eq('is_active', true);
+      if (companyId) {
+        custQ = custQ.or(`company_id.eq.${companyId},company_id.is.null`);
+      }
+      const { data: custList } = await custQ;
       if (custList && custList.length > 0) {
+        // Tam eşleşme veya kelime bazlı eşleşme
         for (const c of custList) {
           const cNorm = normalizeTurkish(c.name);
-          if (cNorm.length >= 3 && qNorm.includes(cNorm)) {
+          const words = cNorm.split(/\s+/).filter(w => w.length >= 3);
+          if (qNorm.includes(cNorm) || words.some(w => qNorm.includes(w))) {
             matchedCustomer = c;
             break;
           }
@@ -65,19 +88,43 @@ export async function parseActionIntentFromQuery(
     }
 
     // Default customer if none matched
-    const customerName = matchedCustomer?.name || 'Ahmet Yılmaz (Müşteri)';
+    const customerName = matchedCustomer?.name || 'Müşteri';
 
-    // 3. Match Site (e.g. Altınova, Hacı Kel, Mustafa Kaya, Merkez)
+    // 3. Match Site (Aktif firmanın ve müşterinin şantiyeleri)
     let siteName: string | undefined = undefined;
-    const knownSites = ['Altınova', 'Hacı Kel', 'Mustafa Kaya', 'Mustafa Yılmaz', 'Merkez'];
-    for (const s of knownSites) {
-      if (qNorm.includes(normalizeTurkish(s))) {
-        siteName = s;
-        break;
+    let siteId: string | undefined = undefined;
+    try {
+      let siteQ = supabase.from('sites').select('id, name, customer_id, company_id').eq('is_active', true);
+      if (matchedCustomer?.id) {
+        siteQ = siteQ.eq('customer_id', matchedCustomer.id);
+      } else if (companyId) {
+        siteQ = siteQ.or(`company_id.eq.${companyId},company_id.is.null`);
+      }
+      const { data: siteList } = await siteQ;
+      if (siteList && siteList.length > 0) {
+        for (const s of siteList) {
+          const sNorm = normalizeTurkish(s.name);
+          const words = sNorm.split(/\s+/).filter(w => w.length >= 3);
+          if (qNorm.includes(sNorm) || words.some(w => qNorm.includes(w))) {
+            siteName = s.name;
+            siteId = s.id;
+            break;
+          }
+        }
+      }
+    } catch {}
+
+    if (!siteName) {
+      const knownSites = ['Altınova', 'Hacı Kel', 'Mustafa Kaya', 'Mustafa Yılmaz', 'Merkez', 'Şantiye'];
+      for (const s of knownSites) {
+        if (qNorm.includes(normalizeTurkish(s))) {
+          siteName = s;
+          break;
+        }
       }
     }
 
-    // 4. Extract Pallet or M2 quantity
+    // 4. Extract Pallet or M2 quantity from voice
     let pallets = 0;
     const palletMatch = query.match(/(\d+)\s*(?:adet)?\s*palet/i);
     if (palletMatch) {
@@ -90,34 +137,45 @@ export async function parseActionIntentFromQuery(
       m2 = parseFloat(m2Match[1].replace(',', '.'));
     }
 
-    // 5. Match Product (e.g. 8'lik Kilit Parke, 10'luk Parke, 20x10 Prizma, 50x25 Bordür)
+    // 5. Sesli Komutta Palet Cinsi Tespiti (Üretim / Tahta / Dökme / Sevkiyat)
+    const detectedPalletType = normalizePalletType(query);
+
+    // 6. Match Product from database or snapshot
     let productName = "8'lik Kilit Parke Gri";
     let productId = '';
     let unit = 'm²';
     let m2PerPallet = 10.66;
 
-    if (qNorm.includes('10 luk') || qNorm.includes('10\'luk') || qNorm.includes('10luk')) {
-      productName = "10'luk Naturel Parke Taşı";
-      m2PerPallet = 8.5;
-    } else if (qNorm.includes('prizma') || qNorm.includes('20x10')) {
-      productName = "20x10x6 Prizma Parke Gri";
-      m2PerPallet = 10.0;
-    } else if (qNorm.includes('bordur') || qNorm.includes('50x25') || qNorm.includes('ankara')) {
-      productName = "50x25x20 Ankara Bordürü";
-      unit = 'Metre';
-      m2PerPallet = 15.0;
-    }
+    try {
+      let prodQ = supabase.from('products').select('id, name, unit, thickness, color, price, company_id').eq('is_active', true);
+      if (companyId) {
+        prodQ = prodQ.or(`company_id.eq.${companyId},company_id.is.null`);
+      }
+      const { data: prodList } = await prodQ;
+      if (prodList && prodList.length > 0) {
+        const best = smartMatchProduct(query, prodList);
+        if (best) {
+          productName = best.name;
+          productId = best.id;
+          unit = best.unit === 'metre' ? 'Metre' : (best.unit === 'adet' ? 'Adet' : 'm²');
+          if (best.name.includes('10')) m2PerPallet = 8.5;
+          else if (best.name.includes('6')) m2PerPallet = 12.0;
+          else if (best.name.includes('Bordür') || best.unit === 'metre') m2PerPallet = 15.0;
+        }
+      }
+    } catch {}
 
-    // Try finding exact product from snapshot
-    if (factoryData.allProductsStock && factoryData.allProductsStock.length > 0) {
-      const foundProd = factoryData.allProductsStock.find(p => {
-        const pNorm = normalizeTurkish(p.name);
-        return pNorm.length >= 4 && qNorm.includes(pNorm);
-      });
-      if (foundProd) {
-        productName = foundProd.name;
-        productId = foundProd.id;
-        unit = foundProd.unit.toLowerCase() === 'm2' ? 'm²' : foundProd.unit;
+    if (!productId) {
+      if (qNorm.includes('10 luk') || qNorm.includes('10\'luk') || qNorm.includes('10luk')) {
+        productName = "10'luk Naturel Parke Taşı";
+        m2PerPallet = 8.5;
+      } else if (qNorm.includes('prizma') || qNorm.includes('20x10')) {
+        productName = "20x10x6 Prizma Parke Gri";
+        m2PerPallet = 10.0;
+      } else if (qNorm.includes('bordur') || qNorm.includes('50x25') || qNorm.includes('ankara')) {
+        productName = "50x25x20 Ankara Bordürü";
+        unit = 'Metre';
+        m2PerPallet = 15.0;
       }
     }
 
@@ -138,7 +196,7 @@ export async function parseActionIntentFromQuery(
       product_id: productId || 'prod-auto-match',
       product_name: productName,
       pallets,
-      pallet_type: 'sevkiyat',
+      pallet_type: detectedPalletType,
       m2,
       unit,
     };
@@ -147,20 +205,23 @@ export async function parseActionIntentFromQuery(
       id: `draft-ship-${Date.now()}`,
       type: 'create_shipment',
       status: 'draft',
-      title: 'Taslak Kantar & Sevkiyat Fişi',
-      description: `${customerName} için ${pallets} palet (${m2} ${unit}) sevkiyat taslağı hazırlandı.`,
+      title: 'Sesli Sevk & Kantar Fişi',
+      description: `${customerName} için ${pallets} ${detectedPalletType} paleti (${m2} ${unit}) sevk fişi hazırlandı.`,
       createdAt: new Date().toISOString(),
       shipmentData: {
         customer_id: matchedCustomer?.id || '',
         customer_name: customerName,
+        site_id: siteId || '',
         site_name: siteName || 'Ana Şantiye / Merkez',
-        vehicle_plate: detectedPlate || '46 K 1234',
+        vehicle_plate: detectedPlate || '',
         driver_name: 'Kayıtlı Sürücü',
+        shipment_date: new Date().toISOString().split('T')[0],
+        company_id: companyId,
         items: [itemDraft],
         total_m2: m2,
         total_pallets: pallets,
         estimated_tonnage: estimatedTonnage,
-        notes: `AI Saha Asistanı ile sesli/hızlı komutla oluşturuldu.`,
+        notes: `AI Saha Asistanı ile sesli komutla oluşturuldu. [${detectedPalletType} palet]`,
       },
     };
   }
