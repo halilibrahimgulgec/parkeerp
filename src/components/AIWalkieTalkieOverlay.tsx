@@ -65,7 +65,7 @@ export const AIWalkieTalkieOverlay: React.FC<Props> = ({
     try {
       const recognition = new SpeechRecognition();
       recognition.lang = 'tr-TR';
-      recognition.continuous = isAutoHandsFree;
+      recognition.continuous = true; // Kesintileri önlemek için sürekli dinleme
       recognition.interimResults = true;
 
       recognition.onstart = () => {
@@ -82,14 +82,14 @@ export const AIWalkieTalkieOverlay: React.FC<Props> = ({
         if (currentText) {
           setTranscript(currentText);
 
-          // In hands-free mode, trigger auto-submit after 1.4s of silence
+          // In hands-free mode, trigger auto-submit after 4.0s of silence (rahat konuşma süresi)
           if (isAutoHandsFree) {
             if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
             silenceTimerRef.current = setTimeout(() => {
               if (currentText.trim()) {
                 handleFinishTransmission(currentText.trim());
               }
-            }, 1400);
+            }, 4000);
           }
         }
       };

@@ -168,6 +168,8 @@ export default function AIAssistantModal() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
+  const silenceTimerRef = useRef<any>(null);
+  const maxDurationTimerRef = useRef<any>(null);
 
   const handleToggleSpeak = (msgId: string, text: string) => {
     if (speakingMsgId === msgId) {
@@ -274,7 +276,7 @@ export default function AIAssistantModal() {
     }
   }, [messages, isLoading, activeTab]);
 
-  // Speech to Text (Web Speech API)
+  // Speech to Text (Web Speech API) - Kesintisiz & Uzatılmış Dinleme Modu
   const toggleSpeechRecognition = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
@@ -284,6 +286,8 @@ export default function AIAssistantModal() {
     }
 
     if (isListening) {
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      if (maxDurationTimerRef.current) clearTimeout(maxDurationTimerRef.current);
       recognitionRef.current?.stop();
       setIsListening(false);
       return;
@@ -292,27 +296,61 @@ export default function AIAssistantModal() {
     try {
       const recognition = new SpeechRecognition();
       recognition.lang = 'tr-TR';
-      recognition.continuous = false;
-      recognition.interimResults = false;
+      recognition.continuous = true; // Kesintileri önlemek için sürekli dinleme açık
+      recognition.interimResults = true; // Konuşurken ekranda anlık yazma
+
+      let finalAccumulated = '';
 
       recognition.onstart = () => {
         setIsListening(true);
+        // Maksimum 45 saniye dinleme emniyet süresi
+        if (maxDurationTimerRef.current) clearTimeout(maxDurationTimerRef.current);
+        maxDurationTimerRef.current = setTimeout(() => {
+          try {
+            recognition.stop();
+          } catch {}
+        }, 45000);
       };
 
       recognition.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        if (transcript) {
-          setInputText((prev) => (prev ? `${prev} ${transcript}` : transcript));
+        let interimText = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const res = event.results[i];
+          const text = res[0].transcript;
+          if (res.isFinal) {
+            finalAccumulated += (finalAccumulated ? ' ' : '') + text;
+          } else {
+            interimText += text;
+          }
         }
+
+        const currentFull = (finalAccumulated + (interimText ? ' ' + interimText : '')).trim();
+        if (currentFull) {
+          setInputText(currentFull);
+        }
+
+        // Uzatılmış Sessizlik Zamanlayıcısı: Cümle aralarında nefes almak için 4.5 saniye bekle
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = setTimeout(() => {
+          try {
+            recognition.stop();
+          } catch {}
+        }, 4500);
       };
 
       recognition.onerror = (event: any) => {
-        console.warn('Ses tanıma hatası:', event.error);
-        setIsListening(false);
+        console.warn('Ses tanıma uyarısı:', event.error);
+        if (event.error !== 'no-speech') {
+          setIsListening(false);
+          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+          if (maxDurationTimerRef.current) clearTimeout(maxDurationTimerRef.current);
+        }
       };
 
       recognition.onend = () => {
         setIsListening(false);
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        if (maxDurationTimerRef.current) clearTimeout(maxDurationTimerRef.current);
       };
 
       recognitionRef.current = recognition;
