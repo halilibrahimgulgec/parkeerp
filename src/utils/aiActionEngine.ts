@@ -4,6 +4,32 @@ import { FactorySnapshot, normalizeTurkish } from './aiFactoryBrain';
 import { smartMatchProduct, normalizePlateNumber, normalizePalletType } from './aiVisionOCREngine';
 
 /**
+ * Türkçe sesli plaka hecelemesini (Örn: "aleye" -> "ALY", "alje" -> "ALJ", "keye" -> "KY", "hene" -> "HN") harfe dönüştürür.
+ */
+function decodePhoneticLetters(s: string): string {
+  let text = s.toLowerCase().trim();
+  const syllables: [RegExp, string][] = [
+    [/aleye|ale\s*ye|a\s*le\s*ye|a\s*ley/g, 'ALY'],
+    [/alje|ale\s*je|a\s*le\s*je/g, 'ALJ'],
+    [/anele|ane\s*le|a\s*ne\s*le/g, 'ANL'],
+    [/keye|ke\s*ye|k\s*eye/g, 'KY'],
+    [/hene|he\s*ne/g, 'HN'],
+    [/bejeke|be\s*je\s*ke/g, 'BJK'],
+    [/gese|ge\s*se/g, 'GS'],
+    [/febe|fe\s*be/g, 'FB'],
+    [/be\b/g, 'B'], [/ce\b/g, 'C'], [/de\b/g, 'D'], [/fe\b/g, 'F'],
+    [/ge\b/g, 'G'], [/he\b/g, 'H'], [/je\b/g, 'J'], [/ke\b/g, 'K'],
+    [/le\b/g, 'L'], [/me\b/g, 'M'], [/ne\b/g, 'N'], [/pe\b/g, 'P'],
+    [/re\b/g, 'R'], [/se\b/g, 'S'], [/te\b/g, 'T'], [/ve\b/g, 'V'],
+    [/ye\b/g, 'Y'], [/ze\b/g, 'Z'],
+  ];
+  for (const [re, rep] of syllables) {
+    text = text.replace(re, rep);
+  }
+  return text.replace(/[^A-Z]/gi, '').toUpperCase();
+}
+
+/**
  * 1. PARSE ACTION INTENT FROM OPERATOR QUERY
  * Analyzes natural language commands to detect actionable intents and builds draft previews.
  */
@@ -43,16 +69,77 @@ export async function parseActionIntentFromQuery(
     (qNorm.includes('arac') && (qNorm.includes('yukle') || qNorm.includes('gonder') || qNorm.includes('sevk')));
 
   if (isShipmentIntent) {
-    // 1. Extract Vehicle Plate (Türk plaka formatı ve temizliği)
+    // 1. Veritabanından kayıtlı son araç plakalarını çek (Sesli algılamadaki harf kaymalarını eşlemek için)
+    let knownPlates: string[] = [];
+    try {
+      let shipQ = supabase.from('shipments').select('vehicle_plate').order('created_at', { ascending: false }).limit(60);
+      if (companyId) {
+        shipQ = shipQ.or(`company_id.eq.${companyId},company_id.is.null`);
+      }
+      const { data: recShips } = await shipQ;
+      if (recShips && recShips.length > 0) {
+        knownPlates = [...new Set(recShips.map(s => (s.vehicle_plate || '').trim()).filter(Boolean))];
+      }
+    } catch {}
+
+    // 2. Extract Vehicle Plate (Türk plaka formatı, fonetik heceleme ve temizliği)
     let detectedPlate: string | undefined = undefined;
-    const plateMatch = query.match(/\b(\d{2})\s*([A-Z]{1,3})\s*(\d{2,4})\b/i);
-    if (plateMatch) {
+
+    // A. Doğrudan standart plaka deseni (Örn: "46 ALY 455", "46 KY 189", "46ky 189")
+    const plateMatch = query.match(/\b(0[1-9]|[1-7][0-9]|8[01])\s*([A-Za-z]{1,4})\s*(\d{2,4})\b/i);
+    if (plateMatch && plateMatch[2].length <= 3) {
       detectedPlate = `${plateMatch[1]} ${plateMatch[2].toUpperCase()} ${plateMatch[3]}`;
-    } else {
+    }
+
+    // B. Ayrı ayrı hecelenmiş harfler (Örn: "46 a l y 455" veya "46 al y 455")
+    if (!detectedPlate) {
+      const spacedMatch = query.match(/\b(0[1-9]|[1-7][0-9]|8[01])\s+([A-Za-z](?:\s+[A-Za-z]){1,3})\s+(\d{2,4})\b/i);
+      if (spacedMatch) {
+        const letters = spacedMatch[2].replace(/\s+/g, '').toUpperCase();
+        detectedPlate = `${spacedMatch[1]} ${letters} ${spacedMatch[3]}`;
+      }
+    }
+
+    // C. Fonetik Türkçe seslendirme ve kayıtlı plaka eşleme (Örn: "46 aleye 455" -> 46 ALY 455, "46 hene 616" -> 46 HN 616)
+    if (!detectedPlate) {
+      const phoneticMatch = query.match(/\b(0[1-9]|[1-7][0-9]|8[01])\s+([a-zA-ZçğıöşüÇĞİÖŞÜ]{2,10})\s+(\d{2,4})\b/i);
+      if (phoneticMatch) {
+        const city = phoneticMatch[1];
+        const rawLetters = phoneticMatch[2];
+        const digits = phoneticMatch[3];
+
+        // Fabrikanın kayıtlı araç plakaları arasında il ve rakamları uyuşan plakayı bul
+        if (knownPlates.length > 0) {
+          const found = knownPlates.find(p => {
+            const pClean = p.replace(/\s+/g, '').toUpperCase();
+            return pClean.startsWith(city) && pClean.endsWith(digits);
+          });
+          if (found) {
+            detectedPlate = found;
+          }
+        }
+
+        // Kayıtlı plaka bulunamadıysa fonetik hece çözücüyü çalıştır
+        if (!detectedPlate) {
+          const decoded = decodePhoneticLetters(rawLetters);
+          if (decoded && decoded.length >= 1 && decoded.length <= 4) {
+            detectedPlate = `${city} ${decoded} ${digits}`;
+          }
+        }
+      }
+    }
+
+    // D. normalizePlateNumber yedek kontrolü
+    if (!detectedPlate) {
       const cleanP = normalizePlateNumber(query);
-      if (cleanP && cleanP.length >= 7 && /\d/.test(cleanP)) {
+      if (cleanP && cleanP.length >= 7 && cleanP.length <= 12 && /^[0-9A-Z\s]+$/.test(cleanP)) {
         detectedPlate = cleanP;
       }
+    }
+
+    // Güvenlik ve Kesin Doğrulama: Plaka asla 12 karakterden uzun olamaz ve Türk plaka formatına uymalıdır
+    if (detectedPlate && (detectedPlate.length > 12 || !/^(0[1-9]|[1-7][0-9]|8[01])\s+[A-Z]{1,4}\s+\d{2,4}$/.test(detectedPlate))) {
+      detectedPlate = undefined;
     }
 
     // 2. Match Customer (Aktif firmanın kayıtlı cari listesi)
@@ -279,7 +366,7 @@ export async function parseActionIntentFromQuery(
         items: [itemDraft],
         total_m2: totalQty,
         total_pallets: pallets,
-        estimated_tonnage: estimatedTonnage,
+        estimated_tonnage: 0,
         notes: `AI Saha Asistanı ile sesli komutla oluşturuldu. [${detectedPalletType} palet]`,
       },
     };
@@ -469,9 +556,9 @@ export async function executeApprovedAction(
         }
       }
 
-      const gross = (d.estimated_tonnage * 1000) + 14000;
-      const tare = 14000;
-      const net = d.estimated_tonnage * 1000;
+      // Kantar tartımı fiilen yapılana kadar brüt ve dara 0 kg olarak kaydedilir (Listede 0 t görünür)
+      const gross = Number(d.gross_weight) || 0;
+      const tare = Number(d.tare_weight) || 0;
 
       const targetCompanyId = d.company_id || (currentUser as any)?.company_id || null;
       const targetDate = d.shipment_date || new Date().toISOString().split('T')[0];

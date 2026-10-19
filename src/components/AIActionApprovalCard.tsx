@@ -149,11 +149,6 @@ export const AIActionApprovalCard: React.FC<Props> = ({ draft, currentUser, onUp
                 </div>
               ))}
             </div>
-
-            <div className="flex items-center justify-between text-[11px] bg-slate-800/30 px-2.5 py-1.5 rounded border border-slate-700/40">
-              <span className="text-slate-400">Tahmini Net Kantar Tonajı:</span>
-              <span className="font-bold text-emerald-400">{s.estimated_tonnage} Ton (~{(s.estimated_tonnage * 1000).toLocaleString('tr-TR')} kg)</span>
-            </div>
           </>
         )}
 

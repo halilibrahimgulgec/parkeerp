@@ -163,12 +163,25 @@ export function normalizePlateNumber(rawPlate?: string | null): string {
     .replace(/\s+/g, ' ')
     .trim();
 
-  // 01-81 + 1-3 harf + 2-5 rakam deseni
-  const match = cleaned.match(/\b(0[1-9]|[1-7][0-9]|8[01])\s*([A-Z]{1,3})\s*(\d{2,5})\b/);
+  // 1. Standart 01-81 + 1-4 harf + 2-5 rakam deseni (Örn: 46 ALY 455, 46KY 189)
+  const match = cleaned.match(/\b(0[1-9]|[1-7][0-9]|8[01])\s*([A-Z]{1,4})\s*(\d{2,5})\b/);
   if (match) {
     return `${match[1]} ${match[2]} ${match[3]}`;
   }
-  return cleaned;
+
+  // 2. Harfleri boşlukla söylenmiş plaka (Örn: 46 A L Y 455 veya 46 AL Y 455)
+  const spacedMatch = cleaned.match(/\b(0[1-9]|[1-7][0-9]|8[01])\s+([A-Z](?:\s+[A-Z]){1,3})\s+(\d{2,5})\b/);
+  if (spacedMatch) {
+    const letters = spacedMatch[2].replace(/\s+/g, '');
+    return `${spacedMatch[1]} ${letters} ${spacedMatch[3]}`;
+  }
+
+  // Yalnızca kısa ve doğrudan plaka biçimindeyse döndür, cümleleri asla plaka olarak döndürme
+  if (cleaned.length <= 12 && /\d/.test(cleaned) && /^[0-9A-Z\s]+$/.test(cleaned) && /^(0[1-9]|[1-7][0-9]|8[01])/.test(cleaned)) {
+    return cleaned;
+  }
+
+  return '';
 }
 
 /**
