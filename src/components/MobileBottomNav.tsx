@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Truck, Factory, Package, Settings } from 'lucide-react';
+import { Home, Truck, Factory, Package, Settings, LucideIcon } from 'lucide-react';
 
 type Page =
   | 'dashboard'
@@ -25,7 +25,7 @@ interface MobileBottomNavProps {
 }
 
 export default function MobileBottomNav({ currentPage, onNavigate, isDark = false }: MobileBottomNavProps) {
-  const navItems: { page: Page; label: string; icon: React.ComponentType<{ size: number; className?: string }> }[] = [
+  const navItems: { page: Page; label: string; icon: LucideIcon }[] = [
     { page: 'dashboard', label: 'Ana Sayfa', icon: Home },
     { page: 'shipment', label: 'Sevkiyat', icon: Truck },
     { page: 'production', label: 'Üretim', icon: Factory },

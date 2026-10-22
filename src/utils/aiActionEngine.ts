@@ -162,15 +162,15 @@ export async function parseActionIntentFromQuery(
     // 2. Extract Vehicle Plate (Türk plaka formatı, fonetik heceleme ve temizliği)
     let detectedPlate: string | undefined = undefined;
 
-    // A. Doğrudan standart plaka deseni (Örn: "46 ALY 455", "46 KY 189", "46ky 189")
-    const plateMatch = query.match(/\b(0[1-9]|[1-7][0-9]|8[01])\s*([A-Za-z]{1,4})\s*(\d{2,4})\b/i);
+    // A. Doğrudan standart plaka deseni (Örn: "46 ALY 455", "46 KY 189", "46ky 189", "46-ky-189")
+    const plateMatch = query.match(/(?:^|[^\d])(0[1-9]|[1-7][0-9]|8[01])[\s\-_]*([A-Za-z]{1,4})[\s\-_]*(\d{2,4})(?:$|[^\d])/i);
     if (plateMatch && plateMatch[2].length <= 3) {
       detectedPlate = `${plateMatch[1]} ${plateMatch[2].toUpperCase()} ${plateMatch[3]}`;
     }
 
-    // B. Ayrı ayrı hecelenmiş harfler (Örn: "46 a l y 455" veya "46 al y 455")
+    // B. Ayrı ayrı hecelenmiş harfler (Örn: "46 a l y 455" veya "46 al y 455", "46 k y 189")
     if (!detectedPlate) {
-      const spacedMatch = query.match(/\b(0[1-9]|[1-7][0-9]|8[01])\s+([A-Za-z](?:\s+[A-Za-z]){1,3})\s+(\d{2,4})\b/i);
+      const spacedMatch = query.match(/(?:^|[^\d])(0[1-9]|[1-7][0-9]|8[01])\s+([A-Za-z](?:\s+[A-Za-z]){1,3})\s+(\d{2,4})(?:$|[^\d])/i);
       if (spacedMatch) {
         const letters = spacedMatch[2].replace(/\s+/g, '').toUpperCase();
         detectedPlate = `${spacedMatch[1]} ${letters} ${spacedMatch[3]}`;
@@ -179,17 +179,26 @@ export async function parseActionIntentFromQuery(
 
     // C. Fonetik Türkçe seslendirme ve kayıtlı plaka eşleme (Örn: "46 aleye 455" -> 46 ALY 455, "46 hene 616" -> 46 HN 616)
     if (!detectedPlate) {
-      const phoneticMatch = query.match(/\b(0[1-9]|[1-7][0-9]|8[01])\s+([a-zA-ZçğıöşüÇĞİÖŞÜ]{2,10})\s+(\d{2,4})\b/i);
+      const phoneticMatch = query.match(/(?:^|[^\d])(0[1-9]|[1-7][0-9]|8[01])\s+([a-zA-ZçğıöşüÇĞİÖŞÜ]{2,10})\s+(\d{2,4})(?:$|[^\d])/i);
       if (phoneticMatch) {
         const city = phoneticMatch[1];
         const rawLetters = phoneticMatch[2];
         const digits = phoneticMatch[3];
+        const decoded = decodePhoneticLetters(rawLetters);
 
-        // Fabrikanın kayıtlı araç plakaları arasında il ve rakamları uyuşan plakayı bul
+        // Fabrikanın kayıtlı araç plakaları arasında il, harfler ve rakamları uyuşan plakayı bul
         if (knownPlates.length > 0) {
           const found = knownPlates.find(p => {
             const pClean = p.replace(/\s+/g, '').toUpperCase();
-            return pClean.startsWith(city) && pClean.endsWith(digits);
+            const pCity = pClean.slice(0, 2);
+            const pDigits = pClean.match(/\d+$/)?.[0] || '';
+            const pLetters = pClean.slice(2, pClean.length - pDigits.length);
+            
+            // İl ve rakam kesin uyuşmalı; harfler ise fonetik çözülenle veya ham harflerle uyuşmalı
+            const lettersMatch = (decoded && pLetters === decoded) || 
+                                 pLetters.includes(rawLetters.toUpperCase()) || 
+                                 rawLetters.toUpperCase().includes(pLetters);
+            return pCity === city && pDigits === digits && lettersMatch;
           });
           if (found) {
             detectedPlate = found;
@@ -198,7 +207,6 @@ export async function parseActionIntentFromQuery(
 
         // Kayıtlı plaka bulunamadıysa fonetik hece çözücüyü çalıştır
         if (!detectedPlate) {
-          const decoded = decodePhoneticLetters(rawLetters);
           if (decoded && decoded.length >= 1 && decoded.length <= 4) {
             detectedPlate = `${city} ${decoded} ${digits}`;
           }
@@ -407,15 +415,6 @@ export async function parseActionIntentFromQuery(
     // Estimated weight:
     // Parke: ~180 kg/m²
     // Bordür: ~85 kg/metre (Karayolu bordürü 75x30x15 is ~85-90 kg/m)
-    // Adet / Briket: ~20 kg/adet
-    let weightPerUnit = 180;
-    if (unit === 'Metre' || productName.toLowerCase().includes('bordür') || productName.toLowerCase().includes('oluk')) {
-      weightPerUnit = 85;
-    } else if (unit === 'Adet') {
-      weightPerUnit = 20;
-    }
-    const estimatedTonnage = Number(((totalQty * weightPerUnit) / 1000).toFixed(2));
-
     const itemDraft: ShipmentItemDraft = {
       product_id: productId || 'prod-auto-match',
       product_name: productName,
@@ -598,6 +597,8 @@ export async function executeApprovedAction(
     // -----------------------------------------------------------------------
     if (draft.type === 'create_shipment' && draft.shipmentData) {
       const d = draft.shipmentData;
+      const targetCompanyId = d.company_id || (currentUser as any)?.company_id || null;
+      const targetDate = d.shipment_date || new Date().toISOString().split('T')[0];
 
       // Find or resolve customer ID
       let customerId = d.customer_id;
@@ -627,16 +628,22 @@ export async function executeApprovedAction(
         customerId = anyCust?.[0]?.id || '';
       }
 
-      // Generate invoice number (Use draft invoice_no if provided by OCR, else find latest and increment)
+      // Generate invoice number (Tenant-scoped, latest increment)
       let nextInvNo = d.invoice_no || '';
       if (!nextInvNo) {
-        const { data: lastShipment } = await supabase
+        let shipQ = supabase
           .from('shipments')
           .select('invoice_no')
           .order('created_at', { ascending: false })
           .limit(1);
 
-        nextInvNo = '2458';
+        if (targetCompanyId) {
+          shipQ = shipQ.eq('company_id', targetCompanyId);
+        }
+
+        const { data: lastShipment } = await shipQ;
+
+        nextInvNo = '1001';
         if (lastShipment && lastShipment[0]?.invoice_no) {
           const parsed = parseInt(lastShipment[0].invoice_no, 10);
           if (!isNaN(parsed) && parsed > 0) {
@@ -645,12 +652,36 @@ export async function executeApprovedAction(
         }
       }
 
+      // Stok Ön Kontrolü: Doğrudan dış alım/transit sevkiyat değilse depodaki stoğu doğrula
+      const isTransitShipment = Boolean(
+        d.notes?.toLowerCase().includes('transit') ||
+        d.notes?.toLowerCase().includes('dis alim') ||
+        d.notes?.toLowerCase().includes('dış alım')
+      );
+
+      if (!isTransitShipment && d.items && d.items.length > 0) {
+        for (const item of d.items) {
+          if (item.product_id && !item.product_id.includes('auto')) {
+            const { data: stockRow } = await supabase
+              .from('v_product_stock')
+              .select('current_stock')
+              .eq('product_id', item.product_id)
+              .maybeSingle();
+
+            const available = Number(stockRow?.current_stock || 0);
+            if (item.m2 > available) {
+              return {
+                success: false,
+                message: `🚫 Stok Yetersiz: "${item.product_name}" için depodaki mevcut stok (${available.toLocaleString('tr-TR')} ${item.unit}), sevk edilmek istenen miktardan (${item.m2} ${item.unit}) azdır. Lütfen önce üretim girişi yapınız veya komutunuzda 'transit sevk' olduğunu belirtiniz.`,
+              };
+            }
+          }
+        }
+      }
+
       // Kantar tartımı fiilen yapılana kadar brüt ve dara 0 kg olarak kaydedilir (Listede 0 t görünür)
       const gross = Number(d.gross_weight) || 0;
       const tare = Number(d.tare_weight) || 0;
-
-      const targetCompanyId = d.company_id || (currentUser as any)?.company_id || null;
-      const targetDate = d.shipment_date || new Date().toISOString().split('T')[0];
 
       // A. Insert Shipment
       const { data: newShipment, error: shipErr } = await supabase
@@ -659,7 +690,7 @@ export async function executeApprovedAction(
           invoice_no: nextInvNo,
           customer_id: customerId,
           site_id: d.site_id || null,
-          vehicle_plate: d.vehicle_plate || '46 K 1234',
+          vehicle_plate: d.vehicle_plate || '',
           driver_name: d.driver_name || 'Kayıtlı Şoför',
           gross_weight: gross,
           tare_weight: tare,

@@ -28,6 +28,7 @@ import {
 import DailyShipmentStockMatrixReport from '../components/DailyShipmentStockMatrixReport';
 import StockLedgerReport from '../components/StockLedgerReport';
 import { calculateAllQuotas, calculateFactoryOpenOrders, CalculatedQuotaItem } from '../utils/quotaCalculator';
+import { fetchAllPaged } from '../utils/supabasePagination';
 
 const MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 
@@ -389,11 +390,6 @@ export default function Reports() {
           .from('customer_quotas')
           .select('*, customers(name), sites(name), products(name, unit, thickness, color)')
           .eq('is_active', true);
-        let allShipmentItemsQuery = supabase
-          .from('shipment_items')
-          .select('id, product_id, m2, unit, shipments!inner(id, customer_id, site_id, shipment_date, status)')
-          .eq('shipments.status', 'completed')
-          .limit(50000);
         let productsQuery = supabase
           .from('products')
           .select('*')
@@ -406,18 +402,30 @@ export default function Reports() {
           costsQuery = costsQuery.eq('company_id', targetCompanyId);
           shipmentsQuery = shipmentsQuery.eq('company_id', targetCompanyId);
           quotasQuery = quotasQuery.eq('company_id', targetCompanyId);
-          allShipmentItemsQuery = allShipmentItemsQuery.eq('company_id', targetCompanyId);
           productsQuery = productsQuery.eq('company_id', targetCompanyId);
         }
 
-        const [prodMonthRes, shipMonthRes, stocksRes, costsRes, shipmentsRes, quotasRes, allShipmentItemsRes, productsRes] = await Promise.all([
+        const allShipmentItemsPagedPromise = fetchAllPaged(async (from, to) => {
+          let q = supabase
+            .from('shipment_items')
+            .select('id, product_id, m2, unit, shipments!inner(id, customer_id, site_id, shipment_date, status)')
+            .eq('shipments.status', 'completed')
+            .range(from, to);
+
+          if (targetCompanyId) {
+            q = q.eq('company_id', targetCompanyId);
+          }
+          return q;
+        });
+
+        const [prodMonthRes, shipMonthRes, stocksRes, costsRes, shipmentsRes, quotasRes, allItemsData, productsRes] = await Promise.all([
           prodMonthQuery,
           shipMonthQuery,
           stocksQuery,
           costsQuery,
           shipmentsQuery,
           quotasQuery,
-          allShipmentItemsQuery,
+          allShipmentItemsPagedPromise,
           productsQuery,
         ]);
 
@@ -574,7 +582,7 @@ export default function Reports() {
 
         // 7. Customer Quotas & Open Balance Calculations (Standart quotaCalculator Motoru)
         const activeQuotas = quotasRes.data || [];
-        const allItems = allShipmentItemsRes.data || [];
+        const allItems = allItemsData || [];
         const productList = productsRes.data || [];
         const quotaList = calculateAllQuotas(activeQuotas, allItems, productList);
         setQuotas(quotaList);
@@ -901,7 +909,7 @@ export default function Reports() {
         <DailyShipmentStockMatrixReport />
       ) : activeReportTab === 'ledger' ? (
         <StockLedgerReport
-          targetCompanyId={targetCompanyId}
+          targetCompanyId={targetCompanyId || undefined}
           initialProductId={selectedLedgerProductId}
           onBackToFactorySummary={() => setActiveReportTab('factory')}
         />

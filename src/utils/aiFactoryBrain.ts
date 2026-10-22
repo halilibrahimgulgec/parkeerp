@@ -14,6 +14,11 @@ export interface CustomerPalletDetail {
 export interface CustomerPalletDebtor {
   customer: string;
   balance: number;
+  total: number;
+  unreturned: number;
+  unreturnedUretim: number;
+  unreturnedTahta: number;
+  financialRisk: number;
   uretim: number;
   tahta: number;
   sevkiyat: number;
@@ -286,8 +291,8 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
 
       // Check external / transit shipment
       const notesLower = (s.notes || '').toLowerCase();
-      const isExternal = Boolean(s.is_external || s.supplier_name || notesLower.includes('transit') || notesLower.includes('dis alim') || notesLower.includes('dış alım') || notesLower.includes('tedarikci') || notesLower.includes('tedarikçi') || s.invoice_no === '2453');
-      const isTransit = isExternal || s.invoice_no === '2453' || notesLower.includes('transit');
+      const isExternal = Boolean(s.is_external || (s.supplier_name && s.supplier_name.trim() !== '') || notesLower.includes('transit') || notesLower.includes('dis alim') || notesLower.includes('dış alım') || notesLower.includes('tedarikci') || notesLower.includes('tedarikçi'));
+      const isTransit = isExternal || notesLower.includes('transit');
       const supplierName = s.supplier_name || (notesLower.includes('tedarik') ? (s.notes.match(/Tedarikçi:\s*([^)\—\-,]+)/i)?.[1] || '') : '') || (isTransit ? 'Dış Tedarikçi' : '');
       const supplierInv = s.supplier_invoice_no || (s.notes ? s.notes.match(/Alış İrsaliye:\s*([^)\—\-,]+)/i)?.[1] : undefined);
 
@@ -435,14 +440,25 @@ export async function getLiveFactorySnapshot(): Promise<FactorySnapshot> {
     });
 
     const palletDebtors: CustomerPalletDebtor[] = Object.entries(customerPalletMap)
-      .map(([customer, stats]) => ({
-        customer,
-        balance: stats.total,
-        uretim: stats.uretim,
-        tahta: stats.tahta,
-        sevkiyat: stats.sevkiyat,
-        sites: stats.sites,
-      }))
+      .map(([customer, stats]) => {
+        const u = stats.uretim || 0;
+        const t = stats.tahta || 0;
+        const tot = stats.total || (u + t + (stats.sevkiyat || 0));
+        const risk = (u * FACTORY_CORE_RULES.PALLET_PRICES.uretim) + (t * FACTORY_CORE_RULES.PALLET_PRICES.tahta);
+        return {
+          customer,
+          balance: tot,
+          total: tot,
+          unreturned: tot,
+          uretim: u,
+          unreturnedUretim: u,
+          tahta: t,
+          unreturnedTahta: t,
+          sevkiyat: stats.sevkiyat || 0,
+          financialRisk: risk,
+          sites: stats.sites,
+        };
+      })
       .filter((d) => d.balance !== 0)
       .sort((a, b) => b.balance - a.balance);
 
@@ -1080,8 +1096,8 @@ AŞAĞIDA FABRİKANIN ŞU ANKİ CANLI VERİTABANI RÖNTGENİ YER ALMAKTADIR:
 - Bugünkü Sevkiyat & Kantar: Toplam ${data.todayShipmentsCount} kamyon çıkışı, Net Tonaj: ${data.todayShipmentTonnage} Ton, Sevk: ${data.todayShipmentParkeM2} m² parke, ${data.todayShipmentBordurMetre} m bordür.
 - BUGÜNKÜ ŞANTİYE BAZLI SEVKİYAT VE İRSALİYE LİSTESİ:
 ${data.todayRecentShipments.map(s => `  * Müşteri: ${s.customer} | Şantiye: ${s.site} | İrsaliye: ${s.invoice}${s.isTransit ? ' (TRANSİT SEVK)' : ''} | Ürünler: ${s.qty} (Plaka: ${s.plate || '-'}, Şoför: ${s.driver || '-'})`).join('\n') || '  * Bugün sevkiyat yok.'}
-- SEVKİYAT SORULARI İÇİN TALİMAT: Kullanıcı belirli bir müşteri veya şantiye sevkiyatını sorduğunda (Örn: "Onikişubat Hacı Kel şantiyesine ne kadar gitti?"), kesinlikle tüm fabrikanın sevkiyat özetini sıralama! Yalnızca o şantiyeye/müşteriye ait çıkışları, irsaliye numaralarını ve o şantiyeye giden ürün toplamını net olarak listele.
-- ÖNEMLİ KURAL - TRANSİT SEVKİYATLAR: 2453 nolu irsaliye (Medikent Altınova - 140 m² 10'luk parke taşı) TRANSİT SEVKİYATTIR (dış alım / dış tedarikçi). Bu malzeme fabrika içi üretim hatlarından veya depo stok sahasından değil; doğrudan dış tedarikçiden temin edilip fabrikaya girmeden şantiyeye sevk edilmiştir. Bu irsaliye veya transit sevk sorulduğunda bu durumu açıkça belirt.
+- ÖNEMLİ KURAL - TRANSİT SEVKİYATLAR: Transit sevkiyatlar (dış alım / tedarikçiden doğrudan sevk) fabrika içi imalat hatlarından veya fabrika depo stok sahasından değil; doğrudan dış tedarikçiden temin edilip fabrikaya girmeden şantiyeye sevk edilen malzemelerdir. Bu tür irsaliyeler fabrika üretim sayaçlarına veya fabrika depo stok düşümüne girmez, yalnızca müşteri teslimat ve kantar kayıtlarında yer alır.
+${data.todayRecentShipments.some(s => s.isTransit) ? `- BUGÜNKÜ TRANSİT SEVKİYATLAR:\n${data.todayRecentShipments.filter(s => s.isTransit).map(s => `  * İrsaliye: ${s.invoice} | Müşteri: ${s.customer} | Şantiye: ${s.site} | Sevk: ${s.qty}`).join('\n')}` : '- BUGÜNKÜ TRANSİT SEVKİYATLAR: Bugün kayıtlı transit sevkiyat bulunmamaktadır.'}
 - Mevcut Depo Stoku: Parke: ${data.totalStockParkeM2} m², Bordür: ${data.totalStockBordurMetre} m, Adet: ${data.totalStockAdet} adet.
 - TÜM ÜRÜNLERİN CANLI DEPO MEVCUDU:
 ${data.allProductsStock && data.allProductsStock.length > 0 ? data.allProductsStock.map(p => `  * ${p.name}: ${p.currentStock.toLocaleString('tr-TR')} ${p.unit} (Emniyet Stoğu Sınırı: ${p.minStock.toLocaleString('tr-TR')} ${p.unit})`).join('\n') : '  * Ürün listesi boş.'}
@@ -1103,28 +1119,55 @@ Kullanıcının sorusunu bu canlı verileri ve öğretilmiş kuralları referans
       { role: 'user', parts: [{ text: query }] }
     ];
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: {
-          parts: [{ text: systemPrompt }]
-        },
-        contents,
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 1200,
-        }
-      })
-    });
+    let candidateText: string | undefined;
 
-    if (!response.ok) {
-      console.warn('Gemini API HTTP hatası, yerel motora geçiliyor:', response.status);
-      return runLocalFactoryIntelligence(query, data);
+    // 1. Try secure Edge Function proxy first (keeps key hidden from client query logs)
+    try {
+      const { data: edgeData, error: edgeErr } = await supabase.functions.invoke('ai-proxy', {
+        body: {
+          action: 'gemini_generate',
+          model: 'gemini-2.0-flash',
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents,
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 1200,
+          },
+          apiKey: geminiKey,
+        },
+        headers: geminiKey ? { 'X-Gemini-Key': geminiKey } : {},
+      });
+
+      if (!edgeErr && edgeData?.candidates?.[0]?.content?.parts?.[0]?.text) {
+        candidateText = edgeData.candidates[0].content.parts[0].text;
+      }
+    } catch (proxyErr) {
+      console.debug('Edge function proxy çağrısı denenmedi veya hata verdi, doğrudan API çağrısına geçiliyor:', proxyErr);
     }
 
-    const resJson = await response.json();
-    const candidateText = resJson.candidates?.[0]?.content?.parts?.[0]?.text;
+    // 2. Direct fallback if edge function proxy didn't return text
+    if (!candidateText) {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: systemPrompt }]
+          },
+          contents,
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 1200,
+          }
+        })
+      });
+
+      if (response.ok) {
+        const resJson = await response.json();
+        candidateText = resJson.candidates?.[0]?.content?.parts?.[0]?.text;
+      }
+    }
+
     if (candidateText) {
       return candidateText;
     }

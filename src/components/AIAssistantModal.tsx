@@ -782,9 +782,18 @@ export default function AIAssistantModal() {
   const handlePrintBriefing = () => {
     const printWindow = window.open('', '_blank');
     if (printWindow) {
+      const safeText = (briefingText || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+
       printWindow.document.write(`
+        <!DOCTYPE html>
         <html>
           <head>
+            <meta charset="utf-8" />
             <title>Gün Sonu Yönetici Özeti - Parke ERP</title>
             <style>
               body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 30px; line-height: 1.6; color: #1e293b; }
@@ -794,7 +803,7 @@ export default function AIAssistantModal() {
           </head>
           <body>
             <h1>Parke ERP - Gün Sonu Yönetici Özeti</h1>
-            <pre>${briefingText}</pre>
+            <pre>${safeText}</pre>
           </body>
         </html>
       `);

@@ -81,18 +81,24 @@ function ProductionForm({ products, machines = [], onSave, onClose, initial, tar
 
   // Auto detect active scheduled plan item for date + machine + shift
   useEffect(() => {
-    supabase
-      .from('production_plan_items')
-      .select('*, products(*)')
-      .eq('planned_date', form.date)
-      .eq('machine_no', form.machine_no)
-      .eq('shift', form.shift)
-      .neq('status', 'completed')
-      .maybeSingle()
-      .then(
-        ({ data }) => setMatchedPlanItem(data || null),
-        () => setMatchedPlanItem(null)
-      );
+    let isMounted = true;
+    const fetchPlanItem = async () => {
+      try {
+        const { data } = await supabase
+          .from('production_plan_items')
+          .select('*, products(*)')
+          .eq('planned_date', form.date)
+          .eq('machine_no', form.machine_no)
+          .eq('shift', form.shift)
+          .neq('status', 'completed')
+          .maybeSingle();
+        if (isMounted) setMatchedPlanItem(data || null);
+      } catch {
+        if (isMounted) setMatchedPlanItem(null);
+      }
+    };
+    fetchPlanItem();
+    return () => { isMounted = false; };
   }, [form.date, form.machine_no, form.shift]);
 
   // Load Reçete (BOM) items for the selected product
@@ -101,12 +107,20 @@ function ProductionForm({ products, machines = [], onSave, onClose, initial, tar
       setBomItems([]);
       return;
     }
-    supabase
-      .from('bom_items')
-      .select('*, raw_materials(*)')
-      .eq('product_id', form.product_id)
-      .then(({ data }) => setBomItems(data || []))
-      .catch(() => setBomItems([]));
+    let isMounted = true;
+    const fetchBom = async () => {
+      try {
+        const { data } = await supabase
+          .from('bom_items')
+          .select('*, raw_materials(*)')
+          .eq('product_id', form.product_id);
+        if (isMounted) setBomItems(data || []);
+      } catch {
+        if (isMounted) setBomItems([]);
+      }
+    };
+    fetchBom();
+    return () => { isMounted = false; };
   }, [form.product_id]);
 
   // Load Current Warehouse Stock (Depo Stok Miktarı) for the selected product
@@ -118,47 +132,63 @@ function ProductionForm({ products, machines = [], onSave, onClose, initial, tar
       setCurrentStock(null);
       return;
     }
-    setStockLoading(true);
-    let q = supabase
-      .from('v_product_stock')
-      .select('current_stock')
-      .eq('product_id', form.product_id);
+    let isMounted = true;
+    const fetchStock = async () => {
+      setStockLoading(true);
+      try {
+        let q = supabase
+          .from('v_product_stock')
+          .select('current_stock')
+          .eq('product_id', form.product_id);
 
-    if (targetCompanyId) {
-      q = q.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
-    }
-
-    q.maybeSingle()
-      .then(({ data, error }) => {
-        if (!error && data) {
-          setCurrentStock(Number(data.current_stock) || 0);
-        } else {
-          setCurrentStock(0);
+        if (targetCompanyId) {
+          q = q.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
         }
-        setStockLoading(false);
-      })
-      .catch(() => {
-        setCurrentStock(0);
-        setStockLoading(false);
-      });
+
+        const { data, error } = await q.maybeSingle();
+        if (isMounted) {
+          if (!error && data) {
+            setCurrentStock(Number(data.current_stock) || 0);
+          } else {
+            setCurrentStock(0);
+          }
+        }
+      } catch {
+        if (isMounted) setCurrentStock(0);
+      } finally {
+        if (isMounted) setStockLoading(false);
+      }
+    };
+    fetchStock();
+    return () => { isMounted = false; };
   }, [form.product_id, targetCompanyId]);
 
   // Load molds and mold-product mappings for automatic mold association
   const [availableMolds, setAvailableMolds] = useState<Mold[]>([]);
 
   useEffect(() => {
-    let q = supabase
-      .from('molds')
-      .select('*, mold_products(*)')
-      .in('status', ['mounted', 'active']);
+    let isMounted = true;
+    const fetchMolds = async () => {
+      try {
+        let q = supabase
+          .from('molds')
+          .select('*, mold_products(*)')
+          .in('status', ['mounted', 'active']);
 
-    if (targetCompanyId) {
-      q = q.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
-    }
+        if (targetCompanyId) {
+          q = q.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+        }
 
-    q.then(({ data }) => {
-      setAvailableMolds((data as Mold[]) || []);
-    }).catch(() => setAvailableMolds([]));
+        const { data } = await q;
+        if (isMounted) {
+          setAvailableMolds((data as Mold[]) || []);
+        }
+      } catch {
+        if (isMounted) setAvailableMolds([]);
+      }
+    };
+    fetchMolds();
+    return () => { isMounted = false; };
   }, [targetCompanyId]);
 
   const selectedProduct = products.find(p => p.id === form.product_id);
@@ -259,6 +289,9 @@ function ProductionForm({ products, machines = [], onSave, onClose, initial, tar
     if (form.plan_item_id) {
       try {
         const netProduced = Math.max(0, form.total_m2 - form.waste_m2);
+        const oldProduced = initial ? Math.max(0, (initial.total_m2 || 0) - (initial.waste_m2 || 0)) : 0;
+        const delta = netProduced - oldProduced;
+
         const { data: curItem } = await supabase
           .from('production_plan_items')
           .select('produced_m2, planned_m2')
@@ -266,13 +299,13 @@ function ProductionForm({ products, machines = [], onSave, onClose, initial, tar
           .single();
 
         if (curItem) {
-          const newProduced = Number(curItem.produced_m2 || 0) + netProduced;
+          const newProduced = Math.max(0, Number(curItem.produced_m2 || 0) + delta);
           const isCompleted = newProduced >= Number(curItem.planned_m2);
           await supabase
             .from('production_plan_items')
             .update({
               produced_m2: newProduced,
-              status: isCompleted ? 'completed' : 'in_progress',
+              status: isCompleted ? 'completed' : (newProduced > 0 ? 'in_progress' : 'pending'),
             })
             .eq('id', form.plan_item_id);
         }
@@ -965,6 +998,32 @@ export default function Production({ onNavigate }: ProductionProps = {}) {
     try {
       const { error } = await supabase.from('production_entries').delete().eq('id', entry.id);
       if (error) throw error;
+
+      // Rollback plan progress if linked
+      if (entry.plan_item_id) {
+        try {
+          const netM2 = Number(entry.net_m2 || (Math.max(0, (entry.total_m2 || 0) - (entry.waste_m2 || 0))));
+          const { data: curItem } = await supabase
+            .from('production_plan_items')
+            .select('produced_m2, planned_m2')
+            .eq('id', entry.plan_item_id)
+            .single();
+
+          if (curItem) {
+            const newProduced = Math.max(0, Number(curItem.produced_m2 || 0) - netM2);
+            await supabase
+              .from('production_plan_items')
+              .update({
+                produced_m2: newProduced,
+                status: newProduced <= 0 ? 'pending' : (newProduced >= Number(curItem.planned_m2) ? 'completed' : 'in_progress'),
+              })
+              .eq('id', entry.plan_item_id);
+          }
+        } catch (planErr) {
+          console.error('Plan ilerlemesi geri alınamadı:', planErr);
+        }
+      }
+
       await load();
     } catch (err: any) {
       alert(`Silme hatası: ${err.message}`);

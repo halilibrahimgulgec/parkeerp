@@ -59,7 +59,9 @@ export const AIWalkieTalkieOverlay: React.FC<Props> = ({
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
-      } catch (e) {}
+      } catch (e) {
+        console.debug('Telsiz dinleme durdurma atlandı:', e);
+      }
     }
 
     try {
@@ -106,7 +108,9 @@ export const AIWalkieTalkieOverlay: React.FC<Props> = ({
           // Restart for continuous loop
           try {
             recognition.start();
-          } catch (e) {}
+          } catch (e) {
+            console.debug('Telsiz otomatik yeniden başlatma hatası:', e);
+          }
         } else {
           setIsTransmitting(false);
         }
@@ -124,7 +128,9 @@ export const AIWalkieTalkieOverlay: React.FC<Props> = ({
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
-      } catch (e) {}
+      } catch (e) {
+        console.debug('Telsiz durdurma:', e);
+      }
     }
     setIsTransmitting(false);
     playRogerBeep();
@@ -167,7 +173,9 @@ export const AIWalkieTalkieOverlay: React.FC<Props> = ({
       if (recognitionRef.current) {
         try {
           recognitionRef.current.stop();
-        } catch (e) {}
+        } catch (e) {
+          console.debug('Telsiz temizleme durdurması:', e);
+        }
       }
     };
   }, [isOpen, isAutoHandsFree]);

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { getSupplierInfo } from './Shipment';
 import { calculateAllQuotas } from '../utils/quotaCalculator';
+import { fetchAllPaged } from '../utils/supabasePagination';
 
 const getLocalDateStr = (d = new Date()) => {
   const year = d.getFullYear();
@@ -32,11 +33,12 @@ export function getQuotaUnitPrice(q: any): number {
   if (q?.unit_price !== undefined && q?.unit_price !== null && Number(q.unit_price) > 0) {
     return Number(q.unit_price);
   }
-  // Check localStorage for offline / unmigrated fallback
   try {
     const local = JSON.parse(localStorage.getItem('parke_quota_unit_prices') || '{}');
     if (q?.id && local[q.id] && Number(local[q.id]) > 0) return Number(local[q.id]);
-  } catch (e) {}
+  } catch (err) {
+    console.debug('Yerel fiyat önbelleği okunamadı:', err);
+  }
 
   // Check notes for [FİYAT: 195 ₺] or [FIYAT: 195] pattern
   if (q?.notes) {
@@ -151,7 +153,7 @@ export default function CustomerQuotas() {
   const [saving, setSaving] = useState(false);
 
   // History detail modal for Quotas
-  const [selectedQuotaForHistory, setSelectedQuotaForHistory] = useState<CustomerQuota | null>(null);
+  const [selectedQuotaForHistory, setSelectedQuotaForHistory] = useState<any | null>(null);
 
   // Quota list Filter & Search states
   const [search, setSearch] = useState('');
@@ -160,7 +162,7 @@ export default function CustomerQuotas() {
   const [unitFilter, setUnitFilter] = useState<'all' | 'm2' | 'metre' | 'adet'>('all');
 
   // ── PRINT STATES & HANDLERS ──
-  const [singlePrintQuota, setSinglePrintQuota] = useState<CustomerQuota | null>(null);
+  const [singlePrintQuota, setSinglePrintQuota] = useState<any | null>(null);
 
   const handlePrintAll = () => {
     setSinglePrintQuota(null);
@@ -169,7 +171,7 @@ export default function CustomerQuotas() {
     }, 100);
   };
 
-  const handlePrintSingle = (q: CustomerQuota) => {
+  const handlePrintSingle = (q: any) => {
     setSinglePrintQuota(q);
     setTimeout(() => {
       window.print();
@@ -218,11 +220,46 @@ export default function CustomerQuotas() {
         custQ = custQ.eq('company_id', targetCompanyId);
         siteQ = siteQ.eq('company_id', targetCompanyId);
         prodQ = prodQ.eq('company_id', targetCompanyId);
-        shipItemsQ = shipItemsQ.eq('shipments.company_id', targetCompanyId);
       }
 
-      const [quotasRes, custRes, sitesRes, prodRes, shipItemsRes] = await Promise.all([
-        quotaQ, custQ, siteQ, prodQ, shipItemsQ
+      const shipItemsPagedPromise = fetchAllPaged(async (from, to) => {
+        let q = supabase
+          .from('shipment_items')
+          .select(`
+            id,
+            shipment_id,
+            product_id,
+            m2,
+            unit,
+            pallets,
+            pallet_type,
+            shipments!inner (
+              id,
+              invoice_no,
+              shipment_date,
+              customer_id,
+              site_id,
+              vehicle_plate,
+              driver_name,
+              driver_phone,
+              gross_weight,
+              tare_weight,
+              notes,
+              status,
+              company_id
+            )
+          `)
+          .eq('shipments.status', 'completed')
+          .range(from, to);
+
+        if (targetCompanyId) {
+          q = q.eq('shipments.company_id', targetCompanyId);
+        }
+        return q;
+      });
+
+      const [quotasRes, custRes, sitesRes, prodRes, shipItemsAll] = await Promise.all([
+        quotaQ, custQ, siteQ, prodQ, shipItemsPagedPromise
       ]);
 
       if (quotasRes.data) {
@@ -248,7 +285,7 @@ export default function CustomerQuotas() {
       }
       if (sitesRes.data) setSites(sitesRes.data);
       if (prodRes.data) setProducts(prodRes.data);
-      if (shipItemsRes.data) setShipmentItems(shipItemsRes.data);
+      if (shipItemsAll) setShipmentItems(shipItemsAll);
     } catch (err) {
       console.error('Veri yükleme hatası:', err);
     } finally {
@@ -362,7 +399,7 @@ export default function CustomerQuotas() {
     setShowModal(true);
   };
 
-  const handleOpenEdit = (q: CustomerQuota) => {
+  const handleOpenEdit = (q: any) => {
     setEditingQuota(q);
     const existingPrice = getQuotaUnitPrice(q);
     // Strip [FİYAT: xxx ₺] from notes for clean editing display
@@ -493,7 +530,7 @@ export default function CustomerQuotas() {
     }
   };
 
-  const handleToggleActive = async (q: CustomerQuota) => {
+  const handleToggleActive = async (q: any) => {
     const isCurrentlyActive = q.is_active !== false;
     const newActive = !isCurrentlyActive;
     const pName = q.products?.name ? `${q.products.name} (${q.products.thickness || ''})` : 'bu genel kotayı';
@@ -1105,7 +1142,7 @@ export default function CustomerQuotas() {
 
                           <td className="px-3 py-3.5 text-center">
                             <div className="font-semibold text-slate-700 font-mono">
-                              {new Date(q.start_date).toLocaleDateString('tr-TR')}
+                              {q.start_date ? new Date(q.start_date).toLocaleDateString('tr-TR') : '-'}
                             </div>
                             {q.end_date && (
                               <div className="text-[10px] text-slate-400 font-mono">
@@ -1204,7 +1241,7 @@ export default function CustomerQuotas() {
                                 <Eye size={15} />
                               </button>
                               <button
-                                onClick={() => handleJumpToAnalysis(q.customer_id, q.start_date)}
+                                onClick={() => handleJumpToAnalysis(q.customer_id, q.start_date || undefined)}
                                 className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
                                 title="Tarih Aralıklı Sevk Raporuna Git"
                               >
@@ -1229,7 +1266,7 @@ export default function CustomerQuotas() {
                                 <Edit2 size={15} />
                               </button>
                               <button
-                                onClick={() => handleDelete(q.id, q.customers?.name || '')}
+                                onClick={() => handleDelete(q.id, q.customer_name || q.customers?.name || '')}
                                 className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                                 title="Sil"
                               >

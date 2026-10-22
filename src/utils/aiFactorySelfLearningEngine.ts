@@ -228,8 +228,7 @@ export function handleDynamicInvoiceQuery(invoiceNo: string, data: FactorySnapsh
     const isTransit = Boolean(
       found.isTransit ||
       found.isExternal ||
-      found.invoice === '2453' ||
-      (found.notes && (found.notes.toLowerCase().includes('transit') || found.notes.toLowerCase().includes('dis alim') || found.notes.toLowerCase().includes('dış alım')))
+      (found.notes && (found.notes.toLowerCase().includes('transit') || found.notes.toLowerCase().includes('dis alim') || found.notes.toLowerCase().includes('dış alım') || found.notes.toLowerCase().includes('tedarikçi') || found.notes.toLowerCase().includes('tedarikci')))
     );
 
     let text = isTransit
@@ -264,20 +263,6 @@ export function handleDynamicInvoiceQuery(invoiceNo: string, data: FactorySnapsh
     return text;
   }
 
-  // Fallback if 2453 is specifically asked and todayRecent list is empty or not yet loaded
-  if (cleanInv === '2453') {
-    return `📄 **İrsaliye No: 2453 Detayı (🔄 TRANSİT SEVKİYAT)**\n\n` +
-      `* 🏢 **Cari / Müşteri:** **MEDİKENT**\n` +
-      `* 📍 **Teslim Şantiyesi:** **ALTINOVA**\n` +
-      `* 🚛 **Araç / Plaka:** **46AFB273** (Şoför: HÜSEYİN)\n` +
-      `* 📦 **Sevk Edilen Malzeme:**\n` +
-      `   • **140 m²** 10 LUK NATUREL PARKE TAŞI\n` +
-      `* ⚖️ **Kantar Net Tonajı:** **31,22 Ton** (31.220 kg)\n` +
-      `* 🔄 **Sevkiyat Türü:** **TRANSİT SEVK (Dış Tedarik)**\n` +
-      `* ℹ️ **Özel Durum:** Bu irsaliye fabrikamız imalatından veya fabrika stok sahasından değil; doğrudan dış tedarikçiden temin edilip fabrikaya girmeden şantiyeye sevk edilmiştir.\n` +
-      `* ⏱️ **Durum:** ✅ Kantar tartımı ve irsaliyeli teslimat tamamlandı.`;
-  }
-
   return `ℹ️ **${cleanInv} nolu irsaliye bugünkü (${data.todayDate}) sevkiyatlar arasında bulunamadı.**\n\n` +
     `Bugün çıkan irsaliyeleri listelemek için *"Bugün çıkan son sevkiyatlar hangileri?"* sorusunu sorabilirsiniz.`;
 }
@@ -293,17 +278,16 @@ export function handleTransitShipmentQuery(query: string, data: FactorySnapshot)
   if (qNorm.includes('nedir') || qNorm.includes('ne demek') || qNorm.includes('tanim') || qNorm.includes('anlamina') || qNorm.includes('neden')) {
     return `🔄 **Transit Sevk (Transit Sevkiyat) Nedir?**\n\n` +
       `• 📋 **Fabrika Tanımı:** Fabrikamızın kendi imalat makinelerinde (1 Nolu Parke veya 2 Nolu Bordür) üretilmeyen veya fabrika stok sahasına girmeyen; doğrudan dış tedarikçiden alınıp müşterinin şantiyesine sevk edilen malzemelerdir.\n` +
-      `• 🚚 **Canlı Örnek:** Bugün sevk edilen **2453 nolu irsaliye** (Medikent Altınova - 140 m² 10'luk parke taşı) transit sevkiyattır.\n` +
       `• ⚙️ **ERP & Üretim İşleyişi:**\n` +
-      `   1. Fabrika üretim makineleri (1 ve 2 nolu) sayaçlarına ve imalat firelerine girmez.\n` +
+      `   1. Fabrika üretim makineleri sayaçlarına ve imalat firelerine girmez.\n` +
       `   2. Fabrika depo stoklarından düşülmez.\n` +
-      `   3. Müşterinin (Medikent) irsaliye, sözleşme kotası ve kantar teslimat kayıtlarına dahil edilir.\n\n` +
-      `💡 *Transit irsaliyelerde ürünün dış tedarikten doğrudan şantiyeye gittiği irsaliye kartında açıkça belirtilir.*`;
+      `   3. Müşterinin irsaliye, sözleşme kotası ve kantar teslimat kayıtlarına dahil edilir.\n\n` +
+      `💡 *Transit irsaliyelerde ürünün dış tedarikten doğrudan şantiyeye sevk edildiği irsaliye kartında açıkça belirtilir.*`;
   }
 
   // Case B: Transit sevkiyat listesi: "hangi irsaliyeler transit", "transit sevk var mi", "transit sevkiyatlar"
   const transitShipments = data.todayRecentShipments.filter(s =>
-    s.isTransit || s.isExternal || s.invoice === '2453' || (s.notes && (s.notes.toLowerCase().includes('transit') || s.notes.toLowerCase().includes('dis alim') || s.notes.toLowerCase().includes('dış alım')))
+    s.isTransit || s.isExternal || (s.notes && (s.notes.toLowerCase().includes('transit') || s.notes.toLowerCase().includes('dis alim') || s.notes.toLowerCase().includes('dış alım') || s.notes.toLowerCase().includes('tedarikçi') || s.notes.toLowerCase().includes('tedarikci')))
   );
 
   let text = `🔄 **Bugünkü Transit Sevkiyatlar (Dış Tedarik Raporu)**\n\n`;
@@ -321,12 +305,9 @@ export function handleTransitShipmentQuery(query: string, data: FactorySnapshot)
     return text;
   }
 
-  // If no explicit list in shipments, still mention 2453
+  // If no explicit list in shipments
   return `🔄 **Bugünkü Transit Sevkiyatlar (Dış Tedarik Raporu)**\n\n` +
-    `• 🚚 **İrsaliye No: 2453** ➔ **MEDİKENT (ALTINOVA)**\n` +
-    `  - **Malzeme:** 140 m² 10 LUK NATUREL PARKE TAŞI\n` +
-    `  - **Kantar Tartımı:** 31,22 Ton [Plaka: 46AFB273]\n` +
-    `  - **Durum:** Dış tedarikçiden transit olarak doğrudan şantiyeye sevk edilmiştir.\n\n` +
+    `Bugün fabrikaya girmeden doğrudan dış tedarikçiden sevk edilen herhangi bir transit sevkiyat bulunmamaktadır.\n\n` +
     `💡 *Fabrika Kuralı: Transit sevkiyatlar fabrika imalat veya stok düşümüne girmez, doğrudan müşteri şantiyesine teslim edilir.*`;
 }
 
@@ -344,37 +325,25 @@ export function handleConversationalRuleLearning(query: string): string | null {
 
   if (!isTeaching) return null;
 
-  // Specifically detect 2453 / transit rule teaching
-  if (qNorm.includes('transit') || qNorm.includes('2453')) {
-    addLearnedRule(
-      '2453 nolu irsaliye (Medikent Altınova) TRANSİT SEVKİYATTIR. Dış tedarikçiden temin edilip fabrikaya girmeden doğrudan şantiyeye sevk edilmiştir. Fabrika üretimi veya depo stok düşümü değildir.',
-      'shipment',
-      query
-    );
-
-    return `🎓 **Fabrika Kuralı Başarıyla Öğrenildi & Hafızaya Kaydedildi!**\n\n` +
-      `✅ **Öğrenilen Bilgi:**\n` +
-      `• **2453 Nolu İrsaliye:** **TRANSİT SEVKİYAT (Dış Tedarik)**\n` +
-      `• **Cari / Şantiye:** **MEDİKENT (ALTINOVA)**\n` +
-      `• **İşleyiş Mantığı:** Bu irsaliyedeki 140 m² 10'luk Parke Taşı, fabrika imalatımızdan veya fabrika depo stok sahasından değil; doğrudan dış tedarikçiden temin edilip fabrikaya girmeden şantiyeye sevk edilmiştir.\n` +
-      `• **Muhasebe & ERP:**\n` +
-      `  1. Fabrika makineleri (1 ve 2 Nolu) sayaçlarına ve firelerine girmez.\n` +
-      `  2. Fabrika stoklarından düşülmez.\n` +
-      `  3. Müşteri (Medikent) irsaliye ve kantar teslimat kayıtlarına işlenir.\n\n` +
-      `Bundan sonra 2453 nolu irsaliye veya transit sevkiyatlar sorulduğunda model bu kuralı uygulayarak cevap verecektir.`;
-  }
-
   // Generic rule learning
   const cleanedRule = query
     .replace(/bunun cevabini da ogret modele/gi, '')
+    .replace(/bunun nedeni de ogret modele/gi, '')
     .replace(/modele ogret/gi, '')
     .replace(/ogret modele/gi, '')
     .replace(/bunu ogren/gi, '')
+    .replace(/^kural:\s*/i, '')
+    .replace(/^ogren:\s*/i, '')
     .trim();
 
   if (cleanedRule.length > 5) {
-    addLearnedRule(cleanedRule, 'general', query);
-    return `🎓 **Yeni Fabrika Kuralı Öğrenildi & Kaydedildi!**\n\n` +
+    const category = (qNorm.includes('transit') || qNorm.includes('sevk') || qNorm.includes('irsaliye'))
+      ? 'shipment'
+      : (qNorm.includes('palet') ? 'pallet' : (qNorm.includes('uretim') || qNorm.includes('makine')) ? 'production' : 'general');
+
+    addLearnedRule(cleanedRule, category as any, query);
+    return `🎓 **Yeni Fabrika Kuralı Öğrenildi & Hafızaya Kaydedildi!**\n\n` +
+      `• **Kategori:** ${category === 'shipment' ? 'Sevkiyat' : category === 'pallet' ? 'Palet' : category === 'production' ? 'Üretim' : 'Genel'}\n` +
       `• **Kural:** *"${cleanedRule}"*\n\n` +
       `Fabrika zekası bu kuralı hafızasına aldı ve analizlerinde öncelikli olarak uygulayacaktır.`;
   }
@@ -1134,18 +1103,21 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
     // Soru 24: Medikent den ne kadar üretim paleti alacağımız var?
     case 24: {
       const med = data.palletDebtors.find(d => normalizeTurkish(d.customer).includes('medikent'));
-      const u = med ? med.uretim : 0;
-      const t = med ? med.tahta : 0;
-      const s = med ? (med.sevkiyat || 0) : 0;
-      const tot = med ? med.total : 0;
+      if (!med) {
+        return `ℹ️ Sistemde "Medikent" adına kayıtlı aktif bir palet borcu veya müşteri kaydı bulunamadı.`;
+      }
+      const u = med.uretim || 0;
+      const t = med.tahta || 0;
+      const s = med.sevkiyat || 0;
+      const tot = med.balance ?? med.total ?? (u + t + s);
       const uVal = u * uretimPrice;
       const totVal = (u * uretimPrice) + (t * tahtaPrice) + (s * 200);
 
-      let text = `🪵 **MEDİKENT - Üretim Paleti Alacağı**\n\n`;
+      let text = `🪵 **${med.customer} - Üretim Paleti Alacağı**\n\n`;
       text += `🎯 **ÜRETİM PALETİ ALACAĞIMIZ: ${u.toLocaleString('tr-TR')} Adet**\n`;
       text += `• **Birim Değeri:** ₺${uretimPrice.toLocaleString('tr-TR')} / Adet\n`;
       text += `• **Üretim Paleti Tutarı:** **₺${uVal.toLocaleString('tr-TR')}**\n\n`;
-      text += `ℹ️ *Ayrıca Medikent firmasında **${t.toLocaleString('tr-TR')} Adet Tahta Palet**${s > 0 ? ` ve **${s} Adet Sevkiyat Paleti**` : ''} bulunmaktadır (Genel Toplam: **${tot.toLocaleString('tr-TR')} Adet**).*\n`;
+      text += `ℹ️ *Ayrıca firmada **${t.toLocaleString('tr-TR')} Adet Tahta Palet**${s > 0 ? ` ve **${s} Adet Sevkiyat Paleti**` : ''} bulunmaktadır (Genel Toplam: **${tot.toLocaleString('tr-TR')} Adet**).*\n`;
       text += `💰 *Toplam Palet Rehin Değeri: ~₺${totVal.toLocaleString('tr-TR')}*`;
       return text;
     }
@@ -1153,13 +1125,16 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
     // Soru 25: Medikent firmasının toplam tahta ve üretim palet borcu ne kadar?
     case 25: {
       const med = data.palletDebtors.find(d => normalizeTurkish(d.customer).includes('medikent'));
-      const u = med ? med.uretim : 0;
-      const t = med ? med.tahta : 0;
-      const s = med ? (med.sevkiyat || 0) : 0;
-      const tot = med ? med.total : 0;
+      if (!med) {
+        return `ℹ️ Sistemde "Medikent" adına kayıtlı aktif bir palet borcu veya müşteri kaydı bulunamadı.`;
+      }
+      const u = med.uretim || 0;
+      const t = med.tahta || 0;
+      const s = med.sevkiyat || 0;
+      const tot = med.balance ?? med.total ?? (u + t + s);
       const totVal = (u * uretimPrice) + (t * tahtaPrice) + (s * 200);
 
-      let text = `🪵 **MEDİKENT - Güncel Şantiye Palet Durumu**\n\n`;
+      let text = `🪵 **${med.customer} - Güncel Şantiye Palet Durumu**\n\n`;
       text += `• 🏭 **Üretim Paleti:** **${u.toLocaleString('tr-TR')} Adet** (Değer: ₺${(u * uretimPrice).toLocaleString('tr-TR')})\n`;
       text += `• 🪵 **Tahta Palet:** **${t.toLocaleString('tr-TR')} Adet** (Değer: ₺${(t * tahtaPrice).toLocaleString('tr-TR')})\n`;
       if (s > 0) {
@@ -1180,13 +1155,16 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
     // Soru 26: Onikişubat Belediyesi şantiyelerinde kaç paletimiz kalmış?
     case 26: {
       const onik = data.palletDebtors.find(d => normalizeTurkish(d.customer).includes('onikisubat'));
-      const u = onik ? onik.uretim : 0;
-      const t = onik ? onik.tahta : 0;
-      const s = onik ? (onik.sevkiyat || 0) : 0;
-      const tot = onik ? onik.total : 0;
+      if (!onik) {
+        return `ℹ️ Sistemde "Onikişubat Belediyesi" adına kayıtlı aktif bir palet borcu veya müşteri kaydı bulunamadı.`;
+      }
+      const u = onik.uretim || 0;
+      const t = onik.tahta || 0;
+      const s = onik.sevkiyat || 0;
+      const tot = onik.balance ?? onik.total ?? (u + t + s);
       const val = (u * uretimPrice) + (t * tahtaPrice) + (s * 200);
 
-      let text = `🪵 **ONİKİŞUBAT BELEDİYESİ - Şantiye Paletleri**\n\n`;
+      let text = `🪵 **${onik.customer} - Şantiye Paletleri**\n\n`;
       text += `• 🏭 **Üretim Paleti:** **${u.toLocaleString('tr-TR')} Adet** (₺${(u * uretimPrice).toLocaleString('tr-TR')})\n`;
       text += `• 🪵 **Tahta Palet:** **${t.toLocaleString('tr-TR')} Adet** (₺${(t * tahtaPrice).toLocaleString('tr-TR')})\n`;
       if (s > 0) {
@@ -1209,7 +1187,8 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
       if (data.palletDebtors.length > 0) {
         data.palletDebtors.slice(0, 5).forEach((d, idx) => {
           const val = (d.uretim * uretimPrice) + (d.tahta * tahtaPrice) + ((d.sevkiyat || 0) * 200);
-          text += `${idx + 1}. **${d.customer}:** **${d.total.toLocaleString('tr-TR')} Adet** (Üretim: ${d.uretim} ad, Tahta: ${d.tahta} ad${d.sevkiyat ? `, Sevkiyat: ${d.sevkiyat} ad` : ''}) ➔ ~₺${val.toLocaleString('tr-TR')}\n`;
+          const debtorTot = d.balance ?? d.total ?? (d.uretim + d.tahta + (d.sevkiyat || 0));
+          text += `${idx + 1}. **${d.customer}:** **${debtorTot.toLocaleString('tr-TR')} Adet** (Üretim: ${d.uretim} ad, Tahta: ${d.tahta} ad${d.sevkiyat ? `, Sevkiyat: ${d.sevkiyat} ad` : ''}) ➔ ~₺${val.toLocaleString('tr-TR')}\n`;
         });
       } else {
         text += `Kayıtlı palet borcu bulunmamaktadır.\n`;
@@ -1220,13 +1199,16 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
     // Soru 28: Aykach firmasında kaç adet paletimiz var?
     case 28: {
       const ayk = data.palletDebtors.find(d => normalizeTurkish(d.customer).includes('aykach'));
-      const u = ayk ? ayk.uretim : 0;
-      const t = ayk ? ayk.tahta : 0;
-      const s = ayk ? (ayk.sevkiyat || 0) : 0;
-      const tot = ayk ? ayk.total : 0;
+      if (!ayk) {
+        return `ℹ️ Sistemde "Aykach" adına kayıtlı aktif bir palet borcu veya müşteri kaydı bulunamadı.`;
+      }
+      const u = ayk.uretim || 0;
+      const t = ayk.tahta || 0;
+      const s = ayk.sevkiyat || 0;
+      const tot = ayk.balance ?? ayk.total ?? (u + t + s);
       const val = (u * uretimPrice) + (t * tahtaPrice) + (s * 200);
 
-      let text = `🪵 **AYKACH - Şantiye Palet Durumu**\n\n`;
+      let text = `🪵 **${ayk.customer} - Şantiye Palet Durumu**\n\n`;
       text += `• 🏭 **Üretim Paleti:** **${u.toLocaleString('tr-TR')} Adet** (₺${(u * uretimPrice).toLocaleString('tr-TR')})\n`;
       text += `• 🪵 **Tahta Palet:** **${t.toLocaleString('tr-TR')} Adet** (₺${(t * tahtaPrice).toLocaleString('tr-TR')})\n`;
       if (s > 0) {
@@ -1651,8 +1633,10 @@ function answerQuestion(id: number, data: FactorySnapshot): string {
     // Soru 60: Şu an fabrika genelinde en kritik operasyonel risk nedir?
     case 60: {
       const val = (data.totalUnreturnedUretim * uretimPrice) + (data.totalUnreturnedTahta * tahtaPrice) + ((data.totalUnreturnedSevkiyat || 0) * (FACTORY_CORE_RULES.PALLET_PRICES.sevkiyat || 200));
+      const topDebtorNames = data.palletDebtors.slice(0, 2).map(d => `**${d.customer}**`).join(' ve ');
+      const debtorText = topDebtorNames ? `Özellikle ${topDebtorNames} şantiyelerinden` : 'Özellikle borçlu şantiyelerden';
       return `🚨 **Fabrika Genelindeki En Kritik Operasyonel Risk**\n\n` +
-        `1. 🪵 **Dönmeyen Palet Riski:** Şantiyelerde bekleyen ${data.totalUnreturnedPallets.toLocaleString('tr-TR')} adet paletin **₺${val.toLocaleString('tr-TR')}** rehin değeri dışarıdadır. Özellikle **Medikent** ve **Onikişubat** şantiyelerinden boş palet toplanması nakit akışı ve imalat sürekliliği için şarttır.\n` +
+        `1. 🪵 **Dönmeyen Palet Riski:** Şantiyelerde bekleyen ${data.totalUnreturnedPallets.toLocaleString('tr-TR')} adet paletin **₺${val.toLocaleString('tr-TR')}** rehin değeri dışarıdadır. ${debtorText} boş palet toplanması nakit akışı ve imalat sürekliliği için şarttır.\n` +
         `2. 📦 **Kritik Stoklar:** ${data.lowStockItems.length > 0 ? `${data.lowStockItems.length} ürün emniyet stoğunun altındadır.` : 'Stok riski düşüktür.'}\n` +
         `💡 *Öneri: Sevkiyat kamyonlarının şantiyelerden boş palet almadan dönmesine izin verilmemelidir.*`;
     }

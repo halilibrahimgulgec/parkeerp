@@ -4,10 +4,15 @@ export interface CalculatedQuotaItem {
   id: string;
   customer_id: string;
   customer_name: string;
+  customers?: { name: string; is_active?: boolean; phone?: string | null; [key: string]: any } | null;
   site_id?: string | null;
   site_name?: string | null;
+  sites?: { name: string; [key: string]: any } | null;
   product_id?: string | null;
   product_name?: string | null;
+  products?: { name: string; unit: string; thickness?: string | null; color?: string | null; [key: string]: any } | null;
+  created_at?: string;
+  company_id?: string | null;
   target_quantity: number;
   shipped_quantity: number;
   remaining_quantity: number; // Kalan açık sipariş miktarı (asla eksiye düşmez: Math.max(0, target - shipped))

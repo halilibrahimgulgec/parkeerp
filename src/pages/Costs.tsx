@@ -250,9 +250,15 @@ export default function Costs() {
   const handleDelete = async (id: string) => {
     if (!confirm('Bu gider kaydını silmek istediğinize emin misiniz?')) return;
     setDeleting(id);
-    await supabase.from('cost_entries').delete().eq('id', id);
-    setDeleting(null);
-    load();
+    try {
+      const { error } = await supabase.from('cost_entries').delete().eq('id', id);
+      if (error) throw error;
+      await load();
+    } catch (err: any) {
+      alert(`Gider kaydı silinemedi: ${err.message || 'Yetki veya bağlantı hatası.'}`);
+    } finally {
+      setDeleting(null);
+    }
   };
 
   const filtered = entries.filter(e => {

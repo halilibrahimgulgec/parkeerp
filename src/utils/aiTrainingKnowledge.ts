@@ -32,12 +32,6 @@ const DEFAULT_RULES: AILearnedRule[] = [
     createdAt: new Date().toISOString(),
   },
   {
-    id: 'default-4',
-    rule: '2453 nolu irsaliye (Medikent Altınova) TRANSİT SEVKİYATTIR. Malzeme fabrika içi üretiminden veya deposundan değil, dış tedarikçiden temin edilip fabrikaya girmeden doğrudan şantiyeye sevk edilmiştir.',
-    category: 'shipment',
-    createdAt: new Date().toISOString(),
-  },
-  {
     id: 'default-5',
     rule: 'Transit sevkiyatlar doğrudan dış tedarikçiden şantiyeye sevk edilen malzemelerdir. Fabrika imalatına veya depo stok düşümüne girmez, irsaliye detayında "TRANSİT SEVKİYAT" olarak raporlanır.',
     category: 'shipment',
@@ -75,16 +69,17 @@ export function getLearnedRules(): AILearnedRule[] {
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
-      // Ensure any new default rules are merged if not already present
-      let hasNew = false;
-      const merged = [...parsed];
+      // Purge legacy hardcoded test rules from user's storage
+      const cleaned = parsed.filter(r => r.id !== 'default-4' && !r.rule?.includes('2453') && !r.rule?.toLowerCase().includes('medikent altinova'));
+      let hasChange = cleaned.length !== parsed.length;
+      const merged = [...cleaned];
       DEFAULT_RULES.forEach(def => {
         if (!merged.some(r => r.id === def.id || r.rule === def.rule)) {
           merged.push(def);
-          hasNew = true;
+          hasChange = true;
         }
       });
-      if (hasNew) {
+      if (hasChange) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
       }
       return merged;

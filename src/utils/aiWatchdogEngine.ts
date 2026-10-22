@@ -214,10 +214,10 @@ export async function runFactoryWatchdogScan(
   try {
     if (snapshot.palletDebtors && snapshot.palletDebtors.length > 0) {
       snapshot.palletDebtors.forEach((debtor) => {
-        const uretimCount = debtor.unreturnedUretim || 0;
-        const tahtaCount = debtor.unreturnedTahta || 0;
-        const totalPallets = debtor.unreturned || (uretimCount + tahtaCount);
-        const financialRisk = debtor.financialRisk || (
+        const uretimCount = debtor.uretim || 0;
+        const tahtaCount = debtor.tahta || 0;
+        const totalPallets = debtor.balance || (uretimCount + tahtaCount);
+        const financialRisk = (
           uretimCount * FACTORY_CORE_RULES.PALLET_PRICES.uretim +
           tahtaCount * FACTORY_CORE_RULES.PALLET_PRICES.tahta
         );

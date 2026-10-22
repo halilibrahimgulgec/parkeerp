@@ -27,6 +27,7 @@ import {
   DollarSign,
   AlertCircle
 } from 'lucide-react';
+import { trackDemoRequest, trackApkDownload, trackSavingsCalculator } from '../utils/analytics';
 
 interface LandingPageProps {
   onGoToLogin: () => void;
@@ -70,6 +71,7 @@ export default function LandingPage({ onGoToLogin }: LandingPageProps) {
   const handleDemoSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    trackDemoRequest({ company: formCompany, city: formCity, phone: formPhone });
     setTimeout(() => {
       setLoading(false);
       setSubmitted(true);
@@ -159,6 +161,7 @@ export default function LandingPage({ onGoToLogin }: LandingPageProps) {
             </button>
             <a
               href={apkDownloadUrl}
+              onClick={trackApkDownload}
               className="w-full sm:w-auto px-6 py-4 bg-emerald-950/40 hover:bg-emerald-900/50 text-emerald-300 border border-emerald-500/30 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2"
             >
               <Download size={16} />
@@ -551,6 +554,7 @@ export default function LandingPage({ onGoToLogin }: LandingPageProps) {
                 <div className="flex flex-col sm:flex-row items-center gap-4">
                   <a
                     href={apkDownloadUrl}
+                    onClick={trackApkDownload}
                     className="w-full sm:w-auto px-7 py-4 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-slate-950 font-black rounded-2xl shadow-xl shadow-emerald-500/20 transition-all flex items-center justify-center gap-2.5"
                   >
                     <Download size={20} />

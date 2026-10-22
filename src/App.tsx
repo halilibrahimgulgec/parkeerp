@@ -23,6 +23,7 @@ import SuperAdminCompanies from './pages/SuperAdminCompanies';
 import MoldsPage from './pages/Molds';
 import CustomerBalancesPage from './pages/CustomerBalances';
 import ErrorBoundary from './components/ErrorBoundary';
+import { initAnalytics, trackPageView } from './utils/analytics';
 
 export type Page =
   | 'dashboard'
@@ -82,6 +83,14 @@ function AppContent() {
   const { user, loading, pendingApproval } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    initAnalytics();
+  }, []);
+
+  useEffect(() => {
+    trackPageView(location.pathname);
+  }, [location.pathname]);
 
   // URL rotasından aktif Page'i türet (Sidebar, Layout ve BottomNav senkronizasyonu için)
   const currentPage: Page = useMemo(() => {

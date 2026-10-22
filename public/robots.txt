@@ -1,0 +1,17 @@
+# https://www.robotstxt.org/robotstxt.html
+User-agent: *
+Allow: /
+Allow: /login
+Allow: /giris
+Disallow: /dashboard
+Disallow: /production
+Disallow: /shipment
+Disallow: /customer-balances
+Disallow: /customer-quotas
+Disallow: /costs
+Disallow: /reports
+Disallow: /admin-users
+Disallow: /super-admin-companies
+
+# Sitemaps
+Sitemap: https://parkesaha.com/sitemap.xml

@@ -17,6 +17,7 @@ import {
   SiteQuotaSummary,
   QuotaMetric,
 } from '../utils/quotaCalculator';
+import { fetchAllPaged } from '../utils/supabasePagination';
 
 const getLocalDateStr = (d = new Date()) => {
   const year = d.getFullYear();
@@ -175,24 +176,6 @@ export default function DailyShipmentStockMatrixReport() {
         .from('customer_quotas')
         .select('*, products(*), sites(*)')
         .eq('is_active', true);
-      let cumShipItemsQuery = supabase
-        .from('shipment_items')
-        .select(`
-          id,
-          product_id,
-          m2,
-          unit,
-          shipments!inner (
-            id,
-            shipment_date,
-            customer_id,
-            site_id,
-            supplier_name,
-            status
-          )
-        `)
-        .eq('shipments.status', 'completed')
-        .limit(50000);
 
       // Multi-tenant isolation: strictly filter all tables and views by targetCompanyId
       const isDefaultCompany =
@@ -211,7 +194,6 @@ export default function DailyShipmentStockMatrixReport() {
           stockQuery = stockQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
           latestShipQuery = latestShipQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
           quotasQuery = quotasQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
-          cumShipItemsQuery = cumShipItemsQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
         } else {
           prodQuery = prodQuery.eq('company_id', targetCompanyId);
           custQuery = custQuery.eq('company_id', targetCompanyId);
@@ -222,11 +204,41 @@ export default function DailyShipmentStockMatrixReport() {
           stockQuery = stockQuery.eq('company_id', targetCompanyId);
           latestShipQuery = latestShipQuery.eq('company_id', targetCompanyId);
           quotasQuery = quotasQuery.eq('company_id', targetCompanyId);
-          cumShipItemsQuery = cumShipItemsQuery.eq('company_id', targetCompanyId);
         }
       }
 
-      const [prodRes, custRes, sitesRes, palletBalRes, shipRes, prodEntriesRes, stockRes, latestShipRes, quotasRes, cumShipItemsRes] = await Promise.all([
+      const fetchCumShipItems = () =>
+        fetchAllPaged(async (from, to) => {
+          let q = supabase
+            .from('shipment_items')
+            .select(`
+              id,
+              product_id,
+              m2,
+              unit,
+              shipments!inner (
+                id,
+                shipment_date,
+                customer_id,
+                site_id,
+                supplier_name,
+                status
+              )
+            `)
+            .eq('shipments.status', 'completed')
+            .range(from, to);
+
+          if (targetCompanyId) {
+            if (isDefaultCompany) {
+              q = q.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
+            } else {
+              q = q.eq('company_id', targetCompanyId);
+            }
+          }
+          return q;
+        });
+
+      const [prodRes, custRes, sitesRes, palletBalRes, shipRes, prodEntriesRes, stockRes, latestShipRes, quotasRes, cumShipItemsAll] = await Promise.all([
         prodQuery,
         custQuery,
         sitesQuery,
@@ -236,7 +248,7 @@ export default function DailyShipmentStockMatrixReport() {
         stockQuery,
         latestShipQuery,
         quotasQuery,
-        cumShipItemsQuery,
+        fetchCumShipItems(),
       ]);
 
       if (prodRes.data) setProducts(prodRes.data);
@@ -245,7 +257,7 @@ export default function DailyShipmentStockMatrixReport() {
       if (palletBalRes.data) setPalletBalances(palletBalRes.data);
       if (stockRes.data) setStockViewData(stockRes.data);
       if (quotasRes.data) setQuotas(quotasRes.data);
-      if (cumShipItemsRes.data) setCumulativeShipmentItems(cumShipItemsRes.data);
+      if (cumShipItemsAll) setCumulativeShipmentItems(cumShipItemsAll);
 
       if (latestShipRes.data && latestShipRes.data.length > 0) {
         setLatestShipmentDate(latestShipRes.data[0].shipment_date);

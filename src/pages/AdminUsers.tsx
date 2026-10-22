@@ -214,6 +214,11 @@ export default function AdminUsers() {
       setEditError('Lütfen kullanıcı adını doldurun.');
       return;
     }
+    // Self-demotion protection
+    if (editingUser.id === profile?.id && editRole !== profile?.role) {
+      setEditError('Kendi yönetici rolünüzü düşüremez veya değiştiremezsiniz.');
+      return;
+    }
     setEditLoading(true);
     setEditError('');
     try {
@@ -242,6 +247,12 @@ export default function AdminUsers() {
 
   const handleDeleteUser = async () => {
     if (!deletingUser) return;
+    // Self-deletion protection
+    if (deletingUser.id === profile?.id) {
+      alert('Kendi hesabınızı silemezsiniz.');
+      setDeletingUser(null);
+      return;
+    }
     setDeleteLoading(true);
     try {
       const { error } = await supabase
@@ -280,6 +291,10 @@ export default function AdminUsers() {
       const targetCompany = profile?.is_super_admin ? addCompanyId : profile?.company_id;
       if (!targetCompany) {
         throw new Error('Lütfen kullanıcının atanacağı firmayı seçin.');
+      }
+
+      if (!addPassword || addPassword.length < 8) {
+        throw new Error('Şifre en az 8 karakter olmalıdır.');
       }
 
       // Create user via isolated client so current admin session is not lost

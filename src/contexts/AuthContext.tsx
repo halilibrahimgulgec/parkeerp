@@ -106,9 +106,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session?.user) {
         const p = await fetchProfileFromDb(session.user.id, session.user.email);
-        if (p && p.is_approved === false) {
+        if (!p || p.is_approved !== true) {
           await supabase.auth.signOut();
-        } else if (p && p.company && p.company.is_active === false && !p.is_super_admin) {
+          setPendingApproval(true);
+        } else if (p.company && p.company.is_active === false && !p.is_super_admin) {
           await supabase.auth.signOut();
           setCompanySuspended(true);
         } else {
@@ -147,13 +148,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     if (data.user) {
       const p = await fetchProfileFromDb(data.user.id, data.user.email);
-      // Only block if profile explicitly has is_approved = false
-      if (p && p.is_approved === false) {
+      // Strictly require approval (Fail-Closed)
+      if (!p || p.is_approved !== true) {
         await supabase.auth.signOut();
         setPendingApproval(true);
         return { error: null };
       }
-      if (p && p.company && p.company.is_active === false && !p.is_super_admin) {
+      if (p.company && p.company.is_active === false && !p.is_super_admin) {
         await supabase.auth.signOut();
         setCompanySuspended(true);
         return { error: new Error('Firma hesabınız askıya alınmıştır. Lütfen sistem yöneticisi ile iletişime geçin.') };

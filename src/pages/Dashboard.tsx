@@ -193,7 +193,9 @@ export default function Dashboard({ onNavigate }: DashboardProps = {}) {
       const next = !prev;
       try {
         localStorage.setItem('parke_mobile_theme', next ? 'dark' : 'light');
-      } catch {}
+      } catch (err) {
+        console.warn('Tema tercihi yerel depoya kaydedilemedi:', err);
+      }
       return next;
     });
   };

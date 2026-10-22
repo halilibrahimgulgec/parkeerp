@@ -223,14 +223,14 @@ export const AIActionApprovalCard: React.FC<Props> = ({ draft, currentUser, onUp
             <div className="flex items-center justify-between border-t border-slate-700 pt-1.5 text-emerald-400 font-bold">
               <span>Kantar Net Miktarı:</span>
               <span className="text-sm">
-                {pur.net_quantity.toLocaleString('tr-TR')} {pur.unit}
+                {(pur.net_quantity ?? 0).toLocaleString('tr-TR')} {pur.unit || ''}
               </span>
             </div>
 
             {pur.total_amount && pur.total_amount > 0 ? (
               <div className="flex items-center justify-between text-[11px] bg-slate-800/30 px-2 py-1 rounded border border-slate-700/40 text-slate-300">
                 <span>Fatura / Fiş Tutarı:</span>
-                <span className="font-bold text-amber-300">{pur.total_amount.toLocaleString('tr-TR')} {pur.currency || 'TL'}</span>
+                <span className="font-bold text-amber-300">{(pur.total_amount ?? 0).toLocaleString('tr-TR')} {pur.currency || 'TL'}</span>
               </div>
             ) : null}
           </div>

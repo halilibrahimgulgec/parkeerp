@@ -1775,7 +1775,17 @@ function ShipmentForm({
       }
       resultShipment = { ...initial, ...shipPayload };
 
-      // Update shipment items
+      // Update shipment items with rollback protection
+      const { data: previousItems } = await supabase
+        .from('shipment_items')
+        .select('*')
+        .eq('shipment_id', initial.id);
+
+      const { data: previousPallets } = await supabase
+        .from('pallet_transactions')
+        .select('*')
+        .eq('shipment_id', initial.id);
+
       await supabase.from('shipment_items').delete().eq('shipment_id', initial.id);
       const itemsToInsertWithPrice = form.items
         .filter((i) => i.product_id)
@@ -1808,7 +1818,14 @@ function ShipmentForm({
         itemsErr = fallbackRes.error;
       }
       if (itemsErr) {
-        setError(itemsErr.message);
+        // Otomatik Geri Alma (Rollback): Kalemler silindiği halde yenisi eklenemediyse eski kayıtları geri yükle
+        if (previousItems && previousItems.length > 0) {
+          await supabase.from('shipment_items').insert(previousItems);
+        }
+        if (previousPallets && previousPallets.length > 0) {
+          await supabase.from('pallet_transactions').insert(previousPallets);
+        }
+        setError(`Sevkiyat kalemleri güncellenirken hata oluştu: ${itemsErr.message}. Önceki kayıtlar silinmedi, korundu.`);
         setSaving(false);
         return;
       }
@@ -3363,11 +3380,22 @@ export default function ShipmentPage() {
     if (!confirm(`"${s.invoice_no}" numaralı sevkiyatı silmek istediğinize emin misiniz?\nBu işlem geri alınamaz.`))
       return;
     setDeleting(s.id);
-    await supabase.from('pallet_transactions').delete().eq('shipment_id', s.id);
-    await supabase.from('shipment_items').delete().eq('shipment_id', s.id);
-    await supabase.from('shipments').delete().eq('id', s.id);
-    setDeleting(null);
-    load();
+    try {
+      const { error: pErr } = await supabase.from('pallet_transactions').delete().eq('shipment_id', s.id);
+      if (pErr) console.warn('Palet kayıtları silinirken uyarı:', pErr);
+
+      const { error: iErr } = await supabase.from('shipment_items').delete().eq('shipment_id', s.id);
+      if (iErr) console.warn('Sevkiyat kalemleri silinirken uyarı:', iErr);
+
+      const { error: sErr } = await supabase.from('shipments').delete().eq('id', s.id);
+      if (sErr) throw sErr;
+
+      await load();
+    } catch (err: any) {
+      alert(`Sevkiyat silinemedi: ${err.message || 'Yetki veya bağlantı hatası.'}`);
+    } finally {
+      setDeleting(null);
+    }
   };
 
   const handleSaveSuccess = (savedShipment: Shipment) => {

@@ -1,3 +1,4 @@
+import { supabase } from '../lib/supabase';
 import { FactorySnapshot } from './aiFactoryBrain';
 import { WatchdogScanResult } from '../types/aiWatchdogTypes';
 import { FACTORY_CORE_RULES } from './aiFactorySelfLearningEngine';
@@ -74,7 +75,7 @@ export function formatExecutiveReportForMessaging(
   lines.push(`• Toplam Finansal Risk: *₺${totalRiskTL.toLocaleString('tr-TR')}*`);
 
   if (snapshot.palletDebtors && snapshot.palletDebtors.length > 0) {
-    const topDebtors = snapshot.palletDebtors.slice(0, 2).map((d) => `${d.customer}: ${d.unreturned} adet`);
+    const topDebtors = snapshot.palletDebtors.slice(0, 2).map((d) => `${d.customer}: ${d.balance} adet`);
     lines.push(`• En Yüksek Cariler: ${topDebtors.join(' • ')}`);
   }
   lines.push('');
@@ -167,6 +168,29 @@ export async function sendBriefingViaTelegram(
     };
   }
 
+  // 1. Try secure Edge Function proxy first
+  try {
+    const { data: edgeData, error: edgeErr } = await supabase.functions.invoke('ai-proxy', {
+      body: {
+        action: 'telegram_send',
+        botToken: botToken.trim(),
+        chatId: chatId.trim(),
+        text: reportText,
+        parseMode: 'Markdown',
+      },
+    });
+
+    if (!edgeErr && edgeData?.ok) {
+      return {
+        success: true,
+        message: 'Yönetici brifingi Telegram üzerinden güvenle iletildi.',
+      };
+    }
+  } catch (proxyErr) {
+    console.debug('Telegram proxy çağrısı denenmedi veya hata verdi, doğrudan API çağrısına geçiliyor:', proxyErr);
+  }
+
+  // 2. Direct fallback
   try {
     const url = `https://api.telegram.org/bot${botToken.trim()}/sendMessage`;
     const res = await fetch(url, {

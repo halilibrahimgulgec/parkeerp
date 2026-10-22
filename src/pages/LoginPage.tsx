@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import ParkeSahaLogo from '../components/ParkeSahaLogo';
-import { Factory, LogIn, UserPlus, Eye, EyeOff, Mail, ArrowLeft, CheckCircle, Clock } from 'lucide-react';
+import { LogIn, UserPlus, Eye, EyeOff, Mail, ArrowLeft, CheckCircle, Clock } from 'lucide-react';
+
+type Mode = 'login' | 'register' | 'forgot';
 
 interface LoginPageProps {
   onGoToLanding?: () => void;

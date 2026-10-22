@@ -1,4 +1,4 @@
-﻿-- ================================================================
+-- ================================================================
 -- TEDARİKÇİ CARİLERİ VE MÜŞTERİ CARİ HESAP & BAKİYE ŞEMASI
 -- ================================================================
 
@@ -60,24 +60,24 @@ CREATE INDEX IF NOT EXISTS idx_customer_payments_date ON public.customer_payment
 ALTER TABLE public.suppliers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.customer_payments ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS Authenticated users can view suppliers ON public.suppliers;
-CREATE POLICY Authenticated users can view suppliers
+DROP POLICY IF EXISTS "Authenticated users can view suppliers" ON public.suppliers;
+CREATE POLICY "Authenticated users can view suppliers"
   ON public.suppliers FOR SELECT TO authenticated USING (true);
 
-DROP POLICY IF EXISTS Authenticated users can manage suppliers ON public.suppliers;
-CREATE POLICY Authenticated users can manage suppliers
+DROP POLICY IF EXISTS "Authenticated users can manage suppliers" ON public.suppliers;
+CREATE POLICY "Authenticated users can manage suppliers"
   ON public.suppliers FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
-DROP POLICY IF EXISTS Authenticated users can view customer_payments ON public.customer_payments;
-CREATE POLICY Authenticated users can view customer_payments
+DROP POLICY IF EXISTS "Authenticated users can view customer_payments" ON public.customer_payments;
+CREATE POLICY "Authenticated users can view customer_payments"
   ON public.customer_payments FOR SELECT TO authenticated USING (true);
 
-DROP POLICY IF EXISTS Authenticated users can manage customer_payments ON public.customer_payments;
-CREATE POLICY Authenticated users can manage customer_payments
+DROP POLICY IF EXISTS "Authenticated users can manage customer_payments" ON public.customer_payments;
+CREATE POLICY "Authenticated users can manage customer_payments"
   ON public.customer_payments FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 -- 5. Otomatik Seeding: Önceden girilmiş olan tedarikçi isimlerini suppliers tablosuna aktarma
-DO 
+DO $$
 BEGIN
   -- shipments tablosundaki tekil tedarikçi isimlerini aktar
   IF EXISTS (
@@ -119,7 +119,7 @@ BEGIN
 EXCEPTION
   WHEN OTHERS THEN
     NULL;
-END ;
+END $$;
 
 -- 6. v_customer_balances Görünümü (Müşteri Kümülatif Borç, Alacak ve Kalan Bakiye)
 CREATE OR REPLACE VIEW public.v_customer_balances

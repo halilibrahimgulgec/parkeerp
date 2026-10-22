@@ -6,6 +6,7 @@ import {
   Layers, TrendingUp, Package, Boxes, Truck, Scale,
   Building2, ChevronDown, Users
 } from 'lucide-react';
+import { fetchAllPaged } from '../utils/supabasePagination';
 
 const getLocalDateStr = (d = new Date()) => {
   const year = d.getFullYear();
@@ -112,32 +113,40 @@ export default function CustomerShipmentAnalysis({
   const loadInternalData = async () => {
     setLoading(true);
     try {
-      const [custRes, sitesRes, prodRes, shipItemsRes] = await Promise.all([
+      const shipItemsPagedPromise = fetchAllPaged(async (from, to) => {
+        return supabase
+          .from('shipment_items')
+          .select(`
+            id,
+            product_id,
+            m2,
+            unit,
+            pallets,
+            pallet_type,
+            shipments!inner (
+              id,
+              invoice_no,
+              shipment_date,
+              customer_id,
+              site_id,
+              vehicle_plate,
+              driver_name,
+              driver_phone,
+              gross_weight,
+              tare_weight,
+              notes,
+              status
+            )
+          `)
+          .eq('shipments.status', 'completed')
+          .range(from, to);
+      });
+
+      const [custRes, sitesRes, prodRes, shipItemsAll] = await Promise.all([
         supabase.from('customers').select('*').eq('is_active', true).order('name'),
         supabase.from('sites').select('*').eq('is_active', true).order('name'),
         supabase.from('products').select('*').eq('is_active', true).order('name'),
-        supabase.from('shipment_items').select(`
-          id,
-          product_id,
-          m2,
-          unit,
-          pallets,
-          pallet_type,
-          shipments!inner (
-            id,
-            invoice_no,
-            shipment_date,
-            customer_id,
-            site_id,
-            vehicle_plate,
-            driver_name,
-            driver_phone,
-            gross_weight,
-            tare_weight,
-            notes,
-            status
-          )
-        `).eq('shipments.status', 'completed').limit(50000)
+        shipItemsPagedPromise,
       ]);
 
       if (custRes.data) {
@@ -148,7 +157,7 @@ export default function CustomerShipmentAnalysis({
       }
       if (sitesRes.data) setSites(sitesRes.data);
       if (prodRes.data) setProducts(prodRes.data);
-      if (shipItemsRes.data) setShipmentItems(shipItemsRes.data);
+      if (shipItemsAll) setShipmentItems(shipItemsAll);
     } catch (err) {
       console.error('Veri yükleme hatası:', err);
     } finally {
