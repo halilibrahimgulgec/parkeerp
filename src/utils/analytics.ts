@@ -13,7 +13,7 @@ declare global {
 const GA_ID =
   (import.meta as any).env?.VITE_GA_MEASUREMENT_ID ||
   (typeof localStorage !== 'undefined' ? localStorage.getItem('parke_ga_id') : null) ||
-  'G-7N07Y6XH1D';
+  'G-7N02Y6XH1D';
 
 /**
  * Initializes Google Analytics 4 script tag dynamically
