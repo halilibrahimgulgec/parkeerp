@@ -131,9 +131,9 @@ export default function DailyShipmentStockMatrixReport() {
       const qStart = dateMode === 'single' ? selectedDate : startDate;
       const qEnd = dateMode === 'single' ? selectedDate : endDate;
 
-      let prodQuery = supabase.from('products').select('*').eq('is_active', true).order('name');
-      let custQuery = supabase.from('customers').select('*').eq('is_active', true).order('name');
-      let sitesQuery = supabase.from('sites').select('*').order('name');
+      let prodQuery = supabase.from('products').select('*').or('is_active.eq.true,is_active.is.null').order('name');
+      let custQuery = supabase.from('customers').select('*').or('is_active.eq.true,is_active.is.null').order('name');
+      let sitesQuery = supabase.from('sites').select('*').or('is_active.eq.true,is_active.is.null').order('name');
       let palletBalQuery = supabase.from('v_pallet_balances').select('*');
       let shipQuery = supabase
         .from('shipments')
@@ -175,7 +175,7 @@ export default function DailyShipmentStockMatrixReport() {
       let quotasQuery = supabase
         .from('customer_quotas')
         .select('*, products(*), sites(*)')
-        .eq('is_active', true);
+        .or('is_active.eq.true,is_active.is.null');
 
       // Multi-tenant isolation: strictly filter all tables and views by targetCompanyId
       const isDefaultCompany =

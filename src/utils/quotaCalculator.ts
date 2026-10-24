@@ -195,7 +195,7 @@ export function calculateCustomerQuotaMap(
 
   customerIds.forEach((custId) => {
     const custQuotas = calculatedQuotas.filter(
-      (q) => q.customer_id === custId && q.is_active
+      (q) => q.customer_id === custId && q.is_active !== false
     );
 
     if (custQuotas.length === 0) {
@@ -285,7 +285,7 @@ export function calculateSiteQuotaMap(
   customerIds.forEach((custId) => {
     map[custId] = {};
     const custQuotas = calculatedQuotas.filter(
-      (q) => q.customer_id === custId && q.is_active
+      (q) => q.customer_id === custId && q.is_active !== false
     );
 
     custQuotas.forEach((q) => {

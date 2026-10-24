@@ -186,13 +186,14 @@ function CustomerFormComp({ initial, onSave, onClose, onDelete }: { initial?: Cu
     e.preventDefault();
     setSaving(true); setError('');
     if (initial) {
-      const { error: err } = await supabase.from('customers').update(form).eq('id', initial.id);
+      const { error: err } = await supabase.from('customers').update({ ...form, is_active: initial.is_active ?? true }).eq('id', initial.id);
       if (err) { setError(err.message); setSaving(false); return; }
       setSaving(false);
       onSave({ ...initial, ...form });
     } else {
       const payload = {
         ...form,
+        is_active: true,
         ...(profile?.company_id ? { company_id: profile.company_id } : {})
       };
       const { data, error: err } = await supabase.from('customers').insert(payload).select().single();
