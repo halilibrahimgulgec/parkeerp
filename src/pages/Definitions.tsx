@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Product, Customer, Site, BOMItem, RawMaterial, Supplier } from '../types';
 import Modal from '../components/Modal';
-import { Package, Users, MapPin, BookOpen, Plus, CreditCard as Edit2, Trash2, AlertCircle, ChevronDown, ChevronRight, Building2 } from 'lucide-react';
+import { Package, Users, MapPin, BookOpen, Plus, Pencil as Edit2, Trash2, AlertCircle, ChevronDown, ChevronRight, Building2 } from 'lucide-react';
 
 type Tab = 'products' | 'customers' | 'suppliers' | 'bom';
 
@@ -19,7 +19,7 @@ function InputField({ label, value, onChange, type = 'text', placeholder = '', r
   );
 }
 
-function ProductFormComp({ initial, onSave, onClose }: { initial?: Product; onSave: () => void; onClose: () => void }) {
+function ProductFormComp({ initial, onSave, onClose, onDelete }: { initial?: Product; onSave: () => void; onClose: () => void; onDelete?: () => void }) {
   const { profile } = useAuth();
   const [form, setForm] = useState({
     name: initial?.name || '',
@@ -135,19 +135,30 @@ function ProductFormComp({ initial, onSave, onClose }: { initial?: Product; onSa
         <input type="checkbox" id="is_active" checked={form.is_active} onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} className="rounded" />
         <label htmlFor="is_active" className="text-sm text-slate-700">Aktif Ürün</label>
       </div>
-      {error && <div className="flex items-center gap-2 p-3 bg-red-50 text-red-700 rounded-lg text-sm"><AlertCircle size={16} />{error}</div>}
-      <div className="flex justify-end gap-3 pt-2">
-        <button type="button" onClick={onClose} className="px-4 py-2 border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 text-sm">İptal</button>
-        <button type="submit" disabled={saving} className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm disabled:opacity-60 flex items-center gap-2">
-          {saving && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-          {initial ? 'Güncelle' : 'Kaydet'}
-        </button>
+      <div className="flex justify-between items-center gap-3 pt-2">
+        {initial && onDelete ? (
+          <button
+            type="button"
+            onClick={onDelete}
+            className="px-3.5 py-2 text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-colors"
+          >
+            <Trash2 size={15} />
+            <span>Ürünü Sil</span>
+          </button>
+        ) : <div />}
+        <div className="flex gap-3">
+          <button type="button" onClick={onClose} className="px-4 py-2 border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 text-sm">İptal</button>
+          <button type="submit" disabled={saving} className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm disabled:opacity-60 flex items-center gap-2">
+            {saving && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+            {initial ? 'Güncelle' : 'Kaydet'}
+          </button>
+        </div>
       </div>
     </form>
   );
 }
 
-function CustomerFormComp({ initial, onSave, onClose }: { initial?: Customer; onSave: (customer: Customer) => void; onClose: () => void }) {
+function CustomerFormComp({ initial, onSave, onClose, onDelete }: { initial?: Customer; onSave: (customer: Customer) => void; onClose: () => void; onDelete?: () => void }) {
   const { profile } = useAuth();
   const [form, setForm] = useState({
     name: initial?.name || '',
@@ -268,23 +279,35 @@ function CustomerFormComp({ initial, onSave, onClose }: { initial?: Customer; on
       )}
 
       {error && <div className="flex items-center gap-2 p-3 bg-red-50 text-red-700 rounded-lg text-sm"><AlertCircle size={16} />{error}</div>}
-      <div className="flex justify-end gap-3 pt-2">
-        <button type="button" onClick={() => { if (savedCustomer) onSave(savedCustomer); else onClose(); }}
-          className="px-4 py-2 border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 text-sm">
-          {isNewlySaved ? 'Kapat' : 'Iptal'}
-        </button>
-        {!isNewlySaved && (
-          <button type="submit" disabled={saving} className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm disabled:opacity-60 flex items-center gap-2">
-            {saving && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-            {initial ? 'Guncelle' : 'Kaydet'}
+      <div className="flex justify-between items-center gap-3 pt-2">
+        {initial && onDelete && !isNewlySaved ? (
+          <button
+            type="button"
+            onClick={onDelete}
+            className="px-3.5 py-2 text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-colors"
+          >
+            <Trash2 size={15} />
+            <span>Müşteriyi Sil</span>
           </button>
-        )}
+        ) : <div />}
+        <div className="flex gap-3">
+          <button type="button" onClick={() => { if (savedCustomer) onSave(savedCustomer); else onClose(); }}
+            className="px-4 py-2 border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 text-sm">
+            {isNewlySaved ? 'Kapat' : 'İptal'}
+          </button>
+          {!isNewlySaved && (
+            <button type="submit" disabled={saving} className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm disabled:opacity-60 flex items-center gap-2">
+              {saving && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+              {initial ? 'Güncelle' : 'Kaydet'}
+            </button>
+          )}
+        </div>
       </div>
     </form>
   );
 }
 
-function SupplierFormComp({ initial, onSave, onClose }: { initial?: Supplier; onSave: () => void; onClose: () => void }) {
+function SupplierFormComp({ initial, onSave, onClose, onDelete }: { initial?: Supplier; onSave: () => void; onClose: () => void; onDelete?: () => void }) {
   const { profile } = useAuth();
   const [form, setForm] = useState({
     name: initial?.name || '',
@@ -343,12 +366,24 @@ function SupplierFormComp({ initial, onSave, onClose }: { initial?: Supplier; on
         <label htmlFor="sup_active" className="text-sm text-slate-700">Aktif Tedarikçi</label>
       </div>
       {error && <div className="flex items-center gap-2 p-3 bg-red-50 text-red-700 rounded-lg text-sm"><AlertCircle size={16} />{error}</div>}
-      <div className="flex justify-end gap-3 pt-2">
-        <button type="button" onClick={onClose} className="px-4 py-2 border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 text-sm">İptal</button>
-        <button type="submit" disabled={saving} className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm disabled:opacity-60 flex items-center gap-2">
-          {saving && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-          {initial ? 'Güncelle' : 'Kaydet'}
-        </button>
+      <div className="flex justify-between items-center gap-3 pt-2">
+        {initial && onDelete ? (
+          <button
+            type="button"
+            onClick={onDelete}
+            className="px-3.5 py-2 text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-colors"
+          >
+            <Trash2 size={15} />
+            <span>Tedarikçiyi Sil</span>
+          </button>
+        ) : <div />}
+        <div className="flex gap-3">
+          <button type="button" onClick={onClose} className="px-4 py-2 border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 text-sm">İptal</button>
+          <button type="submit" disabled={saving} className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm disabled:opacity-60 flex items-center gap-2">
+            {saving && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+            {initial ? 'Güncelle' : 'Kaydet'}
+          </button>
+        </div>
       </div>
     </form>
   );
@@ -528,6 +563,108 @@ export default function Definitions() {
 
   useEffect(() => { load(); }, []);
 
+  const handleDeleteProduct = async (product: Product) => {
+    if (!window.confirm(`"${product.name}" adlı ürünü sistemden tamamen silmek istediğinize emin misiniz?\n\nBu işlem geri alınamaz.`)) {
+      return;
+    }
+
+    try {
+      // 1. Varsa bu ürüne ait reçete (BOM) kayıtlarını temizle
+      await supabase.from('bom_items').delete().eq('product_id', product.id);
+
+      // 2. Ürünü silmeyi dene
+      const { error } = await supabase.from('products').delete().eq('id', product.id);
+
+      if (error) {
+        // Eğer sevkiyat veya üretim gibi tablolarda kullanılmışsa foreign key uyarısı verir
+        if (
+          error.message?.includes('foreign key') ||
+          error.message?.includes('violates foreign key constraint') ||
+          (error as any).code === '23503'
+        ) {
+          const makePassive = window.confirm(
+            `⚠️ DİKKAT: "${product.name}" ürünü daha önce sevkiyat veya üretim kayıtlarında kullanıldığı için geçmiş raporların ve muhasebe kayıtlarının bozulmaması adına veritabanından tamamen silinemez.\n\nBunun yerine ürünün durumunu "Pasif" yaparak listeden ve yeni sevkiyat/üretim seçimlerinden gizlemek ister misiniz?`
+          );
+          if (makePassive) {
+            await supabase.from('products').update({ is_active: false }).eq('id', product.id);
+            if (showModal) setShowModal(false);
+            await load();
+          }
+          return;
+        }
+        alert(`Silme işlemi başarısız: ${error.message}`);
+        return;
+      }
+
+      // Local storage liste fiyatı önbelleğini temizle
+      try {
+        const localPrices = JSON.parse(localStorage.getItem('parke_product_list_prices') || '{}');
+        delete localPrices[product.id];
+        localStorage.setItem('parke_product_list_prices', JSON.stringify(localPrices));
+      } catch (e) {
+        console.error('LocalStorage clean error:', e);
+      }
+
+      if (showModal) setShowModal(false);
+      await load();
+    } catch (err: any) {
+      alert(`Bir hata oluştu: ${err?.message || 'Bilinmeyen hata'}`);
+    }
+  };
+
+  const handleDeleteCustomer = async (customer: Customer) => {
+    if (!window.confirm(`"${customer.name}" müşterisini sistemden tamamen silmek istediğinize emin misiniz?\n\nBu işlem geri alınamaz.`)) return;
+    try {
+      await supabase.from('sites').delete().eq('customer_id', customer.id);
+      const { error } = await supabase.from('customers').delete().eq('id', customer.id);
+      if (error) {
+        if (error.message?.includes('foreign key') || (error as any).code === '23503') {
+          const makePassive = window.confirm(
+            `⚠️ DİKKAT: "${customer.name}" müşterisine ait geçmiş sevkiyat veya bakiye hareketleri bulunduğu için tamamen silinemez.\n\nDurumunu "Pasif" yapmak ister misiniz?`
+          );
+          if (makePassive) {
+            await supabase.from('customers').update({ is_active: false }).eq('id', customer.id);
+            if (showModal) setShowModal(false);
+            await load();
+          }
+          return;
+        }
+        alert(`Silinemedi: ${error.message}`);
+        return;
+      }
+      if (showModal) setShowModal(false);
+      await load();
+    } catch (err: any) {
+      alert(`Hata: ${err?.message}`);
+    }
+  };
+
+  const handleDeleteSupplier = async (supplier: Supplier) => {
+    if (!window.confirm(`"${supplier.name}" tedarikçisini sistemden tamamen silmek istediğinize emin misiniz?\n\nBu işlem geri alınamaz.`)) return;
+    try {
+      const { error } = await supabase.from('suppliers').delete().eq('id', supplier.id);
+      if (error) {
+        if (error.message?.includes('foreign key') || (error as any).code === '23503') {
+          const makePassive = window.confirm(
+            `⚠️ DİKKAT: "${supplier.name}" tedarikçisine ait geçmiş alım veya palet hareketleri bulunduğu için tamamen silinemez.\n\nDurumunu "Pasif" yapmak ister misiniz?`
+          );
+          if (makePassive) {
+            await supabase.from('suppliers').update({ is_active: false }).eq('id', supplier.id);
+            if (showModal) setShowModal(false);
+            await load();
+          }
+          return;
+        }
+        alert(`Silinemedi: ${error.message}`);
+        return;
+      }
+      if (showModal) setShowModal(false);
+      await load();
+    } catch (err: any) {
+      alert(`Hata: ${err?.message}`);
+    }
+  };
+
   const TABS = [
     { id: 'products' as Tab, label: 'Ürün Kartları', icon: Package, count: products.length },
     { id: 'customers' as Tab, label: 'Müşteriler', icon: Users, count: customers.length },
@@ -613,11 +750,19 @@ export default function Definitions() {
                       {p.is_active ? 'Aktif' : 'Pasif'}
                     </span>
                   </td>
-                  <td className="px-4 py-3">
-                    <button onClick={() => { setEditItem(p); setShowModal(true); }}
-                      className="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-colors">
-                      <Edit2 size={14} />
-                    </button>
+                  <td className="px-4 py-3 text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <button onClick={() => { setEditItem(p); setShowModal(true); }}
+                        title="Düzenle"
+                        className="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-colors">
+                        <Edit2 size={15} />
+                      </button>
+                      <button onClick={() => handleDeleteProduct(p)}
+                        title="Ürünü Sil"
+                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -648,11 +793,19 @@ export default function Definitions() {
                       {c.is_active ? 'Aktif' : 'Pasif'}
                     </span>
                   </td>
-                  <td className="px-4 py-3">
-                    <button onClick={() => { setEditItem(c); setShowModal(true); }}
-                      className="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-colors">
-                      <Edit2 size={14} />
-                    </button>
+                  <td className="px-4 py-3 text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <button onClick={() => { setEditItem(c); setShowModal(true); }}
+                        title="Düzenle"
+                        className="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-colors">
+                        <Edit2 size={15} />
+                      </button>
+                      <button onClick={() => handleDeleteCustomer(c)}
+                        title="Müşteriyi Sil"
+                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -683,11 +836,19 @@ export default function Definitions() {
                       {s.is_active ? 'Aktif' : 'Pasif'}
                     </span>
                   </td>
-                  <td className="px-4 py-3">
-                    <button onClick={() => { setEditItem(s); setShowModal(true); }}
-                      className="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-colors">
-                      <Edit2 size={14} />
-                    </button>
+                  <td className="px-4 py-3 text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <button onClick={() => { setEditItem(s); setShowModal(true); }}
+                        title="Düzenle"
+                        className="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-colors">
+                        <Edit2 size={15} />
+                      </button>
+                      <button onClick={() => handleDeleteSupplier(s)}
+                        title="Tedarikçiyi Sil"
+                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -707,11 +868,26 @@ export default function Definitions() {
           size="lg"
         >
           {tab === 'products' ? (
-            <ProductFormComp initial={editItem} onSave={() => { setShowModal(false); load(); }} onClose={() => setShowModal(false)} />
+            <ProductFormComp
+              initial={editItem}
+              onSave={() => { setShowModal(false); load(); }}
+              onClose={() => setShowModal(false)}
+              onDelete={editItem ? () => handleDeleteProduct(editItem) : undefined}
+            />
           ) : tab === 'customers' ? (
-            <CustomerFormComp initial={editItem} onSave={(_c) => { setShowModal(false); load(); }} onClose={() => setShowModal(false)} />
+            <CustomerFormComp
+              initial={editItem}
+              onSave={(_c) => { setShowModal(false); load(); }}
+              onClose={() => setShowModal(false)}
+              onDelete={editItem ? () => handleDeleteCustomer(editItem) : undefined}
+            />
           ) : (
-            <SupplierFormComp initial={editItem} onSave={() => { setShowModal(false); load(); }} onClose={() => setShowModal(false)} />
+            <SupplierFormComp
+              initial={editItem}
+              onSave={() => { setShowModal(false); load(); }}
+              onClose={() => setShowModal(false)}
+              onDelete={editItem ? () => handleDeleteSupplier(editItem) : undefined}
+            />
           )}
         </Modal>
       )}
